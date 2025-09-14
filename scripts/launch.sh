@@ -1,4 +1,4 @@
-source scripts/apply.sh
+source $ZHH_SCRIPT_ROOT/scripts/apply.sh
 
 ckpt_to_gs(){
     path=$1

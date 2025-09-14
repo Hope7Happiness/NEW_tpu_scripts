@@ -1,10 +1,12 @@
-set -ex
+#!/bin/bash
 
+set -ex
+export ZHH_SCRIPT_ROOT=$(realpath "$(dirname "${BASH_SOURCE[0]}")")
 # source ka.sh
 
 # ka.sh has to be sourced in each TMUX window
 
-source scripts/launch.sh
+source $ZHH_SCRIPT_ROOT/scripts/launch.sh
 
 if [ "$1" = "rr" ]; then
     zrerun

@@ -1,4 +1,5 @@
-source scripts/setup.sh
+source $ZHH_SCRIPT_ROOT/scripts/setup.sh
+
 if [ "$DO_TPU_SETUP" = "1" ]; then
     echo -e "\033[33m[Env Hint] TPU setup will be performed.\033[0m"
 else
