@@ -12,7 +12,7 @@ ckpt_to_gs(){
 stage(){
     if [ -z "$PROJECT" ]; then
         echo "Error: PROJECT is not set. Default to unknown"
-        $PROJECT=unknown
+        PROJECT=unknown
         return 1
     fi
 
