@@ -1,0 +1,31 @@
+work(){
+    export SIRI_WORKDIR=$(pwd)
+}
+
+zg() {
+    cd $SIRI_WORKDIR
+}
+
+# alias ka="echo -e '\033[32m'; cat ka.sh | grep -v '#' | head -n1; echo -e '\033[0m'"
+ka(){ if [ -z "$VM_NAME" ]; then echo "no ka is set"; return 1; fi; echo -e "\033[32m${VM_NAME}\033[0m"; }
+
+zzz(){
+    if [[ $1 == k ]]; then
+	    if [ -z "$2" ]; then echo "no ka provided"; return 1; fi;
+	    echo removing $2
+	    sudo rm /kmh-nfs-us-mount/staging/.sscript/$2
+    fi
+
+    # show all vm_name -> command pairs
+    for file in /kmh-nfs-us-mount/staging/.sscript/*; do
+        vm_name=$(basename $file)
+        command=$(cat $file)
+        echo -e "\n\033[32m$vm_name\033[0m -> $command\n"
+    done;
+}
+
+alias semail="python /kmh-nfs-us-mount/code/siri/scripts/pemail.py "
+
+# main alias
+alias zhh="/kmh-nfs-us-mount/code/siri/scripts/main.sh"
+
