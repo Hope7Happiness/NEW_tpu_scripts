@@ -15,6 +15,28 @@ mount_disk(){
 
         level=$((level+1))
 
+        if [ $level -gt 1 ]; then 
+
+            # more advanced check
+            gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+            --worker=all --command "
+            ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}'
+            ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}' | sh
+            ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}' | sh
+            sleep 5
+            sudo apt-get -y update
+            sudo apt-get -y install nfs-common
+            ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}'
+            ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}' | sh
+            ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}' | sh
+            sleep 6
+            "
+
+            for i in {1..10}; do echo Mount Mount 妈妈; done
+            sleep 7
+
+        fi
+
         gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
         --worker=all --command "
         sleep 8
@@ -28,27 +50,6 @@ mount_disk(){
         sudo chmod go+rw /kmh-nfs-ssd-eu-mount
         ls /kmh-nfs-ssd-eu-mount
         "
-
-        if [ $level -le 1 ]; then continue; fi
-
-        # mount NFS Filestore
-        gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-        --worker=all --command "
-        ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}'
-        ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}' | sh
-        ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}' | sh
-        sleep 5
-        sudo apt-get -y update
-        sudo apt-get -y install nfs-common
-        ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}'
-        ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}' | sh
-        ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}' | sh
-        sleep 6
-        "
-
-        for i in {1..10}; do echo Mount Mount 妈妈; done
-        sleep 7
-
     done;
 }
 
@@ -81,7 +82,7 @@ setup_env(){
         return 1
     fi
 
-    COMMAND=$(cat scripts/install.sh)
+    COMMAND=$(cat $ZHH_SCRIPT_ROOT/scripts/install.sh)
     COMMAND="$COMMAND
     python -m wandb login $WANDB_API_KEY
     "
