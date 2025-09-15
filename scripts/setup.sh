@@ -14,7 +14,7 @@ mount_disk(){
     while true; do
         # test if the disk is already mounted
         gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-            --worker=all --command "ls /kmh-nfs-us-mount/code/siri"
+            --worker=all --command "ls /kmh-nfs-us-mount/code/siri" > /dev/null
         if [ $? -eq 0 ]; then
             echo "Disk is already mounted."
             break
@@ -74,7 +74,7 @@ check_env(){
 
     TEST="sudo rm -rf /tmp/tpu_logs; python3 -c 'import jax; print(jax.devices())'"
     result=$(gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-    --worker=all --command "$TEST")
+    --worker=all --command "$TEST" 2>/dev/null) 
     if [[ $result == *"TpuDevice"* ]]; then
         echo "Environment setup successful."
     else
@@ -124,7 +124,7 @@ wandb_login(){
 
     # pip install step
     gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-    --worker=all --command "$COMMAND"
+    --worker=all --command "$COMMAND" > /dev/null 2>&1
     if [ $? -ne 0 ]; then
         echo -e "\033[31m[Error] Wandb login failed.\033[0m"
         return 1

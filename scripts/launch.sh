@@ -45,7 +45,7 @@ run_job(){
 
     NOW_STR=$(date +'%Y%m%d_%H%M%S')
     RND_STR=$(cat /dev/urandom | tr -cd 'a-f0-9' | head -c 8)
-    exist_logs=$(ls $LOG_ROOT | wc -l)
+    exist_logs=$(ls $LOG_ROOT 2>/dev/null | wc -l)
     cur_log_id=$((exist_logs+1))
     LOG_DIR=$LOG_ROOT/log${cur_log_id}_${NOW_STR}_${RND_STR}
 
@@ -157,21 +157,21 @@ zrerun(){
 
 check_config_sanity(){
     if [ -z "$VM_NAME" ]; then
-        echo -e "\033[31mError: VM_NAME is not set. Please run \`source ka.sh\`.\033[0m" >&2
+        echo -e "\033[31m[Error] VM_NAME is not set. Please run \`source ka.sh\`.\033[0m" >&2
         return 1
     fi
 
     if [ -z "$ZONE" ]; then
-        echo -e "\033[31mError: ZONE is not set. Please run \`source ka.sh\`.\033[0m" >&2
+        echo -e "\033[31m[Error] ZONE is not set. Please run \`source ka.sh\`.\033[0m" >&2
         return 1
     fi
 
     if [ -z "$WANDB_API_KEY" ]; then
-        echo -e "\033[31mError: WANDB_API_KEY is not set. Please run \`source ka.sh\`.\033[0m" >&2
+        echo -e "\033[31m[Error] WANDB_API_KEY is not set. Please run \`source ka.sh\`.\033[0m" >&2
         return 1
     fi
 
-    echo -e "\033[32mrunning with VM_NAME=$VM_NAME, ZONE=$ZONE\033[0m"
+    echo -e "\033[32m[INFO] running with VM_NAME=$VM_NAME, ZONE=$ZONE\033[0m"
     sleep 2
 }
 

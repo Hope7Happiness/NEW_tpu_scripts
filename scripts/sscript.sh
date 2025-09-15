@@ -13,8 +13,8 @@ log_command(){
     COMMAND=$1
 
     sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
-    echo "$COMMAND" > $SSCRIPT_HOME/$VM_NAME/command
-    echo -e "\033[32mSTARTED\033[0m" > $SSCRIPT_HOME/$VM_NAME/status
+    echo "$COMMAND" | sudo tee $SSCRIPT_HOME/$VM_NAME/command
+    echo -e "\033[32mSTARTED\033[0m" | sudo tee $SSCRIPT_HOME/$VM_NAME/status
 }
 
 fail_command(){
@@ -24,7 +24,7 @@ fail_command(){
     fi
 
     sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
-    echo "FAILED" > $SSCRIPT_HOME/$VM_NAME/status
+    echo "FAILED" | sudo tee $SSCRIPT_HOME/$VM_NAME/status
 }
 
 success_command(){
@@ -34,7 +34,7 @@ success_command(){
     fi
 
     sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
-    echo "FINISHED" > $SSCRIPT_HOME/$VM_NAME/status
+    echo "FINISHED" | sudo tee $SSCRIPT_HOME/$VM_NAME/status
 }
 
 get_command(){
@@ -48,5 +48,5 @@ get_command(){
         return 1
     fi
 
-    cat $SSCRIPT_HOME/$VM_NAME/command
+    sudo cat $SSCRIPT_HOME/$VM_NAME/command
 }
