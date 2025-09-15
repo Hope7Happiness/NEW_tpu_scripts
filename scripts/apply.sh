@@ -82,6 +82,8 @@ setup_tpu(){
         echo "Skipping TPU environment setup as DO_TPU_SETUP is not set."
         check_env $VM_NAME $ZONE
     fi
+
+    wandb_login $VM_NAME $ZONE # enforce wandb login for each run
 }
 
 kill_tpu(){
@@ -97,8 +99,10 @@ kill_tpu(){
 
     sleep 2
     gcloud compute tpus tpu-vm ssh $VM_NAME --zone=$ZONE --worker=all --command "
-    ps -ef | grep main.py | grep -v grep | awk '{print \"kill -9 \" \$2}'
+    ps -ef | grep main.py | grep -v grep | awk '{print \"kill -9 \" \$2}' | sort | uniq
     ps -ef | grep main.py | grep -v grep | awk '{print \"kill -9 \" \$2}' | sh
+    sudo lsof -w /dev/accel0 | grep 'python' | grep -v 'grep' | awk '{print \"kill -9 \" \$2}' | sort | uniq
+    sudo lsof -w /dev/accel0 | grep 'python' | grep -v 'grep' | awk '{print \"kill -9 \" \$2}' | sh
     echo job killed
     "
 }

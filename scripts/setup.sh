@@ -1,8 +1,15 @@
+VM_UNFOUND_ERROR="\033[31m[Internal Error] VM_NAME is not set. Contact admin.\033[0m"
+
 mount_disk(){
     VM_NAME=$1
     ZONE=$2
 
-    level=0
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    level=0 # if level >= 2, will do more advanced mount op
     
     while true; do
         # test if the disk is already mounted
@@ -17,7 +24,7 @@ mount_disk(){
 
         if [ $level -gt 1 ]; then 
 
-            # more advanced check
+            # more advanced mount op
             gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
             --worker=all --command "
             ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}'
@@ -37,6 +44,7 @@ mount_disk(){
 
         fi
 
+        # standard mount op
         gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
         --worker=all --command "
         sleep 8
@@ -54,11 +62,13 @@ mount_disk(){
 }
 
 check_env(){
+    # Check whether JAX can run
+
     VM_NAME=$1
     ZONE=$2
 
     if [ -z "$VM_NAME" ]; then
-        echo "Error: VM_NAME is not set."
+        echo -e $VM_UNFOUND_ERROR
         return 1
     fi
 
@@ -77,23 +87,48 @@ setup_env(){
     VM_NAME=$1
     ZONE=$2
 
-    if [ -z "$WANDB_API_KEY" ]; then
-        echo "Error: WANDB_API_KEY is not set. Please set WANDB_API_KEY in ka.sh."
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
         return 1
     fi
 
     COMMAND=$(cat $ZHH_SCRIPT_ROOT/scripts/install.sh)
-    COMMAND="$COMMAND
-    python -m wandb login $WANDB_API_KEY
-    "
 
     # pip install step
     gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
     --worker=all --command "$COMMAND"
     if [ $? -ne 0 ]; then
-        echo "Environment setup failed during pip install:"
+        echo -e "\033[31m[Error] Environment setup failed during pip install:\033[0m"
         return 1
     fi
 
     check_env $VM_NAME $ZONE
+}
+
+wandb_login(){
+    VM_NAME=$1
+    ZONE=$2
+
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    if [ -z "$WANDB_API_KEY" ]; then
+        echo -e "\033[31m[Internal Error] WANDB_API_KEY is not set. Contact admin.\033[0m"
+        # echo -e "\033[31m[Error] WANDB_API_KEY is not set. Please set WANDB_API_KEY in ka.sh.\033[0m"
+        return 1
+    fi
+
+    COMMAND="python -m wandb login $WANDB_API_KEY"
+
+    # pip install step
+    gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+    --worker=all --command "$COMMAND"
+    if [ $? -ne 0 ]; then
+        echo -e "\033[31m[Error] Wandb login failed.\033[0m"
+        return 1
+    fi
+
+    echo "Wandb login successful."
 }

@@ -1,19 +1,20 @@
 source $ZHH_SCRIPT_ROOT/scripts/apply.sh
+source $ZHH_SCRIPT_ROOT/scripts/sscript.sh
 
 ckpt_to_gs(){
     path=$1
-    # path: /kmh-nfs-us-mount/staging/siri/unknown/launch_20250910_025630_git_5351ee2c/logs/log2_20250910_030359_39a8088a
-    # output: gs://kmh-gcp-us-central2/qiao_zhicheng_hanhong_files/unknown/launch_20250910_025630_git_5351ee2c/logs/log2_20250910_030359_39a8088a
+    # path: /kmh-nfs-us-mount/staging/siri/PROJECT/other_parts
+    # output: gs://kmh-gcp-us-central2/qiao_zhicheng_hanhong_files/PROJECT/other_parts
     subpath=$(echo $path | sed 's|/kmh-nfs-us-mount/staging/siri/||')
     output=gs://kmh-gcp-us-central2/qiao_zhicheng_hanhong_files/$subpath
     echo $output
 }
 
 stage(){
+    # DO NOT modify the output format, it is parsed in zrun
     if [ -z "$PROJECT" ]; then
-        echo "Error: PROJECT is not set. Default to unknown"
+        echo -e "\033[31m[Warning]: PROJECT is not set. Default to 'unknown'\033[0m" >&2
         PROJECT=unknown
-        return 1
     fi
 
     STAGE_ROOT=/kmh-nfs-us-mount/staging/siri/$PROJECT
@@ -26,7 +27,7 @@ stage(){
 
     sudo mkdir -p $STAGE_DIR
     sudo chmod 777 $STAGE_DIR
-    echo staging files
+    echo "[INFO] staging files"
     sudo rsync -a -O --exclude '.git' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' . $STAGE_DIR
 }
 
@@ -38,12 +39,6 @@ zkill(){
 run_job(){
     # args: $1=STAGE_DIR, $2...=extra args (passed to main.py)
     HERE=$PWD
-
-    # VM_NAME must exists
-    if [ -z "$VM_NAME" ]; then
-        echo "Error: VM_NAME is not set."
-        return 1
-    fi
 
     STAGE_DIR=$1
     LOG_ROOT=$STAGE_DIR/logs
@@ -58,24 +53,25 @@ run_job(){
     EXTRA_ARGS=()
 
     # check whether a checkpoint exists
+    echo "[INFO] finding checkpoints..."
     for check_id in $(seq $((cur_log_id-1)) -1 1); do
         LAST_LOG_DIR=$(ls $LOG_ROOT | grep log${check_id}_ | tail -n 1)
         
         # convert to gs bucket
         GS_DIR=$(ckpt_to_gs $LOG_ROOT/$LAST_LOG_DIR)
-        echo "checking previous log dir $LOG_ROOT/$LAST_LOG_DIR -> $GS_DIR"
+        echo "[INFO] |___checking previous log dir $LOG_ROOT/$LAST_LOG_DIR -> $GS_DIR"
         # check if checkpoints exist in the gs bucket
         if gsutil ls $GS_DIR/checkpoint_* > /dev/null; then
-            echo found previous checkpoint dir $LOG_ROOT/$LAST_LOG_DIR in gs $GS_DIR
+            echo "[INFO]   ===>found previous checkpoint dir $LOG_ROOT/$LAST_LOG_DIR in gs $GS_DIR"
             EXTRA_ARGS+=("--config.load_from=$LOG_ROOT/$LAST_LOG_DIR")
             break
         fi
-        echo no checkpoints found in $LOG_ROOT/$LAST_LOG_DIR
+        echo "[INFO] no checkpoints found in $LOG_ROOT/$LAST_LOG_DIR"
     done;
 
     sudo mkdir -p $LOG_DIR
     sudo chmod 777 $LOG_DIR
-    echo logging to $LOG_DIR
+    echo "[INFO] logging to $LOG_DIR"
 
     # extra args is $@[2:]
     # EXTRA_ARGS=("${EXTRA_ARGS[@]}" "${@:2}")
@@ -89,19 +85,30 @@ run_job(){
 
     # if EXTRA_ARGS exists:
     if [ -z "$EXTRA_ARGS" ]; then
-        echo "No extra args provided."
+        echo "[INFO] No extra args provided."
     else
         EXTRA_ARGS_STR=$(printf "'%s' " "${EXTRA_ARGS[@]}")
     fi
 
-    COMMAND="python3 main.py --workdir=$LOG_DIR --mode=remote_run --config=configs/load_config.py:remote_run $EXTRA_ARGS_STR 2>&1 | tee $LOG_DIR/output.log"
+    COMMAND="python3 main.py --workdir=$LOG_DIR --mode=remote_run --config=configs/load_config.py:remote_run $EXTRA_ARGS_STR 2>&1 | tee -a $LOG_DIR/output.log"
 
-    # register "$VM_NAME" -> "COMMAND" in /kmh-nfs-us-mount/staging/.sscript
-    echo $COMMAND > /kmh-nfs-us-mount/staging/.sscript/$VM_NAME
+    # register command
+    log_command "$COMMAND"
+    echo "[INFO] running command: $COMMAND"
+    (echo "$COMMAND"; echo ========; echo; ) > $LOG_DIR/output.log
 
-    cd $STAGE_DIR && \
-    gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command "$DBG_COMMANDS && cd $STAGE_DIR && $COMMAND" && \
-    cd $HERE
+    (
+        cd $STAGE_DIR && \
+        gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command "$DBG_COMMANDS && cd $STAGE_DIR && $COMMAND"
+    ) || (
+        echo -e "\033[31m[Error] Job failed. Check logs in $LOG_DIR/output.log\033[0m" >&2
+        fail_command
+        return 1
+    ) && (
+        echo -e "\033[32m[Success] Job finished. Check logs in $LOG_DIR/output.log\033[0m" >&2
+        success_command
+        cd $HERE
+    )
 }
 
 zrun(){
@@ -112,11 +119,10 @@ zrun(){
 
     STAGE_DIR=$(stage)
     STAGE_DIR=$(echo $STAGE_DIR | head -n 1 | awk '{print $3}')
-    echo "Staged to $STAGE_DIR"
 
     # if EXTRA_ARGS exists, write to a file in STAGE_DIR
     if [ -z "$EXTRA_ARGS" ]; then
-        echo "No extra args provided."
+        echo "[INFO] No extra args provided."
     else
         printf "'%s' " "${EXTRA_ARGS[@]}" | sudo tee $STAGE_DIR/.extra_args
     fi
@@ -128,13 +134,19 @@ zrun(){
 }
 
 zrerun(){
+    # check if in staging dir
+    if [[ ! $(pwd) =~ /kmh-nfs-us-mount/staging/ ]]; then
+        echo -e "\033[31m[Error] You are NOT in a staging directory. Aborted.\033[0m" >&2
+        return 1
+    fi
+
     # check if .extra_args exists
     EXTRA_ARGS=""
     if [ -f .extra_args ]; then
         EXTRA_ARGS=$(cat .extra_args)
-        echo "Using extra args: $EXTRA_ARGS"
+        echo "[INFO] Using extra args: $EXTRA_ARGS"
     else
-        echo "No extra args file found."
+        echo "[INFO] No extra args found."
     fi
     
     # prepare TPU
@@ -142,3 +154,43 @@ zrerun(){
     setup_tpu $VM_NAME $ZONE && \
     run_job $(pwd) "$EXTRA_ARGS"
 }
+
+check_config_sanity(){
+    if [ -z "$VM_NAME" ]; then
+        echo -e "\033[31mError: VM_NAME is not set. Please run \`source ka.sh\`.\033[0m" >&2
+        return 1
+    fi
+
+    if [ -z "$ZONE" ]; then
+        echo -e "\033[31mError: ZONE is not set. Please run \`source ka.sh\`.\033[0m" >&2
+        return 1
+    fi
+
+    if [ -z "$WANDB_API_KEY" ]; then
+        echo -e "\033[31mError: WANDB_API_KEY is not set. Please run \`source ka.sh\`.\033[0m" >&2
+        return 1
+    fi
+
+    echo -e "\033[32mrunning with VM_NAME=$VM_NAME, ZONE=$ZONE\033[0m"
+    sleep 2
+}
+
+# infer_stagedir has problem, since the command may be overwrite
+# infer_stagedir(){
+#     if [ -z "$VM_NAME" ]; then
+#         echo -e "\033[31m[Internal Error] VM_NAME is not set. Contact admin.\033[0m" >&2
+#         return 1
+#     fi
+
+#     LAST_COMMAND=$(get_command)
+
+#     # parse: --workdir=(.*)/logs/\w+\s
+#     STAGE_DIR=$(echo "$LAST_COMMAND" | grep -oP -- '--workdir=\K.*/logs/\w+\s' | sed 's|/logs/\w\+\s||')
+#     # check STAGE_DIR exists
+#     if [ ! -d "$STAGE_DIR" ]; then
+#         echo -e "\033[31m[Error] Failed to infer staging directory\033[0m" >&2
+#         return 1
+#     fi
+
+#     echo "$STAGE_DIR"
+# }
