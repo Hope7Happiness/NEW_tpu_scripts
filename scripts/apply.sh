@@ -6,7 +6,7 @@ else
     echo -e "\033[33m[Env Hint] TPU setup will be skipped.\033[0m"
 fi
 
-alias semail="python3 /kmh-nfs-us-mount/code/siri/pemail.py"
+alias semail="python3 /kmh-nfs-us-mount/code/siri/scripts/pemail.py"
 
 get_tpu(){
     VM_NAME=$1
@@ -50,7 +50,7 @@ get_tpu(){
         if [ $success -eq 1 ]; then
             echo -e "\033[32m[INFO] TPU VM $VM_NAME created successfully.\033[0m"
             # if available, send email
-            semail $VM_NAME $try_start "$(date)" $outer_loop || echo -e "\033[33m[Warning] Failed to send email.\033[0m"
+            semail $VM_NAME "$try_start" "$(date)" $outer_loop || echo -e "\033[33m[Warning] Failed to send email.\033[0m"
             # for this case, TPU must be set up
             export DO_TPU_SETUP=1
             return
@@ -59,7 +59,7 @@ get_tpu(){
         outer_loop=$((outer_loop+1))
         # if outer_loop % 100 == 0, send email
         if [ $((outer_loop % 100)) -eq 0 ]; then
-            semail $VM_NAME $try_start "$(date)" $outer_loop --fail || echo -e "\033[33m[Warning] Failed to send email.\033[0m"
+            semail $VM_NAME "$try_start" "$(date)" $outer_loop --fail || echo -e "\033[33m[Warning] Failed to send email.\033[0m"
         fi
     done;
 }
