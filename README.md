@@ -1,5 +1,11 @@
 # New TPU Scripts
 
+## TODO
+
+- [ ] IPC char missing issue
+
+## Usage
+
 **ENV VARS**:
 - `DO_TPU_SETUP`: if set to 1, do tpu setup (skipped by default)
 - `SCRIPT_DEBUG`: if set to 1, enable script debugging mode (skipped by default)

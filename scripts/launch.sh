@@ -1,6 +1,5 @@
 source $ZHH_SCRIPT_ROOT/scripts/apply.sh
 source $ZHH_SCRIPT_ROOT/scripts/sscript.sh
-source $ZHH_SCRIPT_ROOT/scripts/queue.sh
 
 ckpt_to_gs(){
     path=$1
@@ -91,7 +90,8 @@ run_job(){
         EXTRA_ARGS_STR=$(printf "'%s' " "${EXTRA_ARGS[@]}")
     fi
 
-    COMMAND="python3 main.py --workdir=$LOG_DIR --mode=remote_run --config=configs/load_config.py:remote_run $EXTRA_ARGS_STR 2>&1 | sudo tee -a $LOG_DIR/output.log"
+    # COMMAND="python3 main.py --workdir=$LOG_DIR --mode=remote_run --config=configs/load_config.py:remote_run $EXTRA_ARGS_STR 2>&1 | sudo tee -a $LOG_DIR/output.log"
+    COMMAND="ls /foo/bar | sudo tee -a $LOG_DIR/output.log"
 
     # register command
     log_command "$COMMAND"
@@ -142,11 +142,12 @@ zrun(){
     # if ret==7 (job failed), auto-check card status, if bad, re-setup env and re-run
     while [ $ret -eq 7 ]; do
         echo -e "\033[31m[Error] Job failed, auto-checking card status...\033[0m"
-        if check_env $VM_NAME $ZONE; then
+        sleep 60 # wait for a minute to let TPU recover
+        if has_tpu $VM_NAME $ZONE; then
             echo -e "\033[32m[Info] Card status looks good, then it is probably a code bug. Please fix it and re-run.\033[0m"
             return 1
         else
-            echo -e "\033[33m[Info] Card status looks bad, re-setup the environment and re-run.\033[0m"
+            echo -e "\033[33m[Info] Card is PREEMPTED, will re-apply and re-run.\033[0m"
             get_tpu $VM_NAME $ZONE && \
             setup_tpu $VM_NAME $ZONE && \
             run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
@@ -199,17 +200,14 @@ zqueue(){
     fi
 
     queue_job $STAGE_DIR && \
+    setup_tpu $VM_NAME $ZONE && \
     run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
-}
-
-zqueue_cancel(){
-    echo -e "\033[31m[Internal Error] Canceling is NOT implemented yet.\033[0m"
-    return 1
 }
 
 zqueue_pop(){
     # release a queue slot
     release_queue
+    echo "[INFO] Released a queue slot."
 }
 
 check_config_sanity(){
@@ -228,7 +226,7 @@ check_config_sanity(){
         return 1
     fi
 
-    echo -e "\033[32m[INFO] running with VM_NAME=$VM_NAME, ZONE=$ZONE\033[0m"
+    echo -e "\033[32m[INFO] You are using VM_NAME=$VM_NAME (ZONE=$ZONE)\033[0m"
     sleep 2
 }
 

@@ -19,8 +19,6 @@ if check_config_sanity; then
         zkill
     elif [ "$1" = "q" ]; then
         zqueue "${@:2}"
-    elif [ "$1" = "cancel" ]; then
-        zqueue_cancel "${@:2}"
     elif [ "$1" = "qq" ]; then
         zqueue_pop
     else

@@ -65,6 +65,25 @@ get_tpu(){
     done;
 }
 
+has_tpu(){
+    VM_NAME=$1
+    ZONE=$2
+
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    status=$(
+        gcloud compute tpus tpu-vm describe $VM_NAME --zone=$ZONE --format="value(state)" 2>/dev/null
+    )
+    if [ "$status" = "READY" ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 setup_tpu(){
     VM_NAME=$1
     ZONE=$2

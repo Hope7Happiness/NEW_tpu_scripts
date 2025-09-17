@@ -17,8 +17,13 @@ if [[ $role == "A" ]]; then
     exec 3>&- 3<&-
 
 elif [[ $role == "B" ]]; then
+P    # echo "[B] 等待 A 的通知"
+    # read msg < $FIFO
+    # echo "[B] 收到 A 的消息: $msg"
+
+    exec 3<>"$FIFO"
     echo "[B] 等待 A 的通知"
-    read msg < $FIFO
+    read -r msg <&3
     echo "[B] 收到 A 的消息: $msg"
 
     echo "[B] 开始执行工作..."

@@ -38,7 +38,7 @@ def queue_start(stage_dir, start_time, end_time, vm_name):
     end_time = datetime.datetime.strptime(end_time, "%a %b %d %H:%M:%S %Z %Y")
     duration = end_time - start_time
 
-    msg = MIMEText("The job at {}, that has been queued at {}, is now starting on {}. (totally {} since queued). EOM".format(stage_dir, start_time, duration, card_name))
+    msg = MIMEText("The job at {}, that has been queued at {}, is now starting on {}. (totally {} since queued). EOM".format(stage_dir, start_time, card_name, duration))
     msg["Subject"] = "Job at {} starting on {}".format(stage_dir, card_name)
     msg["From"] = sender
     msg["To"] = receiver

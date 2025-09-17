@@ -62,28 +62,25 @@ queue_job(){
 
     # make a FIFO
     FIFO=$SSCRIPT_HOME/$VM_NAME/queue.fifo
-    [[ -p $FIFO ]] || sudo mkfifo $FIFO
+    [[ -p $FIFO ]] || sudo mkfifo $FIFO && sudo chmod 666 $FIFO
 
     # write STAGE_DIR using date
     NOW=$(date +"%Y%m%d_%H%M%S")
     echo $STAGE_DIR | sudo tee $SSCRIPT_HOME/$VM_NAME/queue/$NOW # This is only for record
 
-    echo -e "\033[32m[Info] Queued job $STAGE_DIR at $NOW. You can cancel it with 'zhh cancel' command. Now, the program will stuck, which is EXPECTED.\033[0m"
+    echo -e "\033[32m[Info] Queued job $STAGE_DIR at $NOW. Now, the program will stuck, which is EXPECTED. If you want to dequeue, just press Ctrl+C.\033[0m"
 
-    read msg < $FIFO
+    exec 3<>"$FIFO"
+    trap "echo 'Interrupted, finishing...'; sudo rm -f $SSCRIPT_HOME/$VM_NAME/queue/$NOW" EXIT # remove record
+    read -r msg <&3
 
-    still_run=0
-    if [ "$msg" == "CANCEL" ]; then
-        echo -e "\033[31m[Info] Job $STAGE_DIR is canceled.\033[0m"
-    elif [ "$msg" == "START" ]; then
+    if [ "$msg" == "START" ]; then
         echo -e "\033[32m[Info] Job $STAGE_DIR is starting.\033[0m"
         semail --queue-start $STAGE_DIR $NOW "$(date)" $VM_NAME
-        still_run=1
     else
-        echo -e "\033[33m[Warning] Unknown message: $msg\033[0m"
+        echo -e "\033[33m[Internal WARNING] Got message $msg, expected to be START\033[0m"
+        # return 2
     fi
-    sudo rm -f $SSCRIPT_HOME/$VM_NAME/queue/$NOW # remove record
-    return $still_run
 }
 
 release_queue(){
@@ -93,7 +90,7 @@ release_queue(){
     fi
 
     FIFO=$SSCRIPT_HOME/$VM_NAME/queue.fifo
-    [[ -p $FIFO ]] || sudo mkfifo $FIFO
+    [[ -p $FIFO ]] || sudo mkfifo $FIFO && sudo chmod 666 $FIFO
 
     # # check if there is any job in queue
     # if [ ! -d $SSCRIPT_HOME/$VM_NAME/queue ] || [ -z "$(ls -A $SSCRIPT_HOME/$VM_NAME/queue)" ]; then
