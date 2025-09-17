@@ -116,9 +116,8 @@ setup_tpu(){
         setup_env $VM_NAME $ZONE
     else
         echo "[INFO] Skipping TPU environment setup as DO_TPU_SETUP is not set."
-        check_env $VM_NAME $ZONE
     fi
-
+    check_env $VM_NAME $ZONE && \
     wandb_login $VM_NAME $ZONE # enforce wandb login for each run
 }
 

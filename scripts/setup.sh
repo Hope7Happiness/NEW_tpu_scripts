@@ -73,12 +73,21 @@ check_env(){
     fi
 
     TEST="sudo rm -rf /tmp/tpu_logs; python3 -c 'import jax; print(jax.devices())'"
+    # read both stdout and stderr
     result=$(gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-    --worker=all --command "$TEST" 2>/dev/null) 
+    --worker=all --command "$TEST" 2>&1)
+    if [ ! -z "$SCRIPT_DEBUG" ]; then
+        echo "Debug info from environment check:"
+        echo "$result"
+    fi
+
     if [[ $result == *"TpuDevice"* ]]; then
         echo "Environment setup successful."
+    elif [[ $result == *"jaxlib.xla_extension.XlaRuntimeError: ABORTED: The TPU is already in use by process with pid"* ]]; then
+        echo "TPU is already in use. If you want to persist, use \`zhh k\` and try again."
+        return 1
     else
-        echo "Environment setup failed. Retrying..."
+        echo "Environment setup failed. Use \`SCRIPT_DEBUG=1\` for more info."
         return 1
     fi
 }
@@ -101,8 +110,6 @@ setup_env(){
         echo -e "\033[31m[Error] Environment setup failed during pip install:\033[0m"
         return 1
     fi
-
-    check_env $VM_NAME $ZONE
 }
 
 wandb_login(){
