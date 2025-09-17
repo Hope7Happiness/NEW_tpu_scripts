@@ -71,16 +71,20 @@ queue_job(){
     echo -e "\033[32m[Info] Queued job $STAGE_DIR at $NOW. Now, the program will stuck, which is EXPECTED. If you want to dequeue, just press Ctrl+C.\033[0m"
 
     exec 3<>"$FIFO"
-    trap "echo 'Interrupted, finishing...'; sudo rm -f $SSCRIPT_HOME/$VM_NAME/queue/$NOW" EXIT # remove record
-    read -r msg <&3
 
-    if [ "$msg" == "START" ]; then
-        echo -e "\033[32m[Info] Job $STAGE_DIR is starting.\033[0m"
-        semail --queue-start $STAGE_DIR $NOW "$(date)" $VM_NAME
-    else
-        echo -e "\033[33m[Internal WARNING] Got message $msg, expected to be START\033[0m"
-        # return 2
-    fi
+    (
+        trap "echo 'Interrupted, finishing...'; sudo rm -f $SSCRIPT_HOME/$VM_NAME/queue/$NOW" EXIT # remove record
+        read -r msg <&3
+
+        if [ "$msg" == "START" ]; then
+            echo -e "\033[32m[Info] Job $STAGE_DIR is starting.\033[0m"
+        else
+            echo -e "\033[33m[Internal WARNING] Got message $msg, expected to be START\033[0m"
+            # return 2
+        fi
+    )
+    
+    semail --queue-start $STAGE_DIR $NOW "$(date)" $VM_NAME
 }
 
 release_queue(){
