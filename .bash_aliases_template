@@ -28,6 +28,18 @@ zzz(){
 
         echo -e "\n[$status] \033[1m$vm_name\033[0m -> $command\n"
     done;
+
+    echo -e "\033[1mQueued jobs:\033[0m"
+    for folder in /kmh-nfs-us-mount/staging/.sscript/*; do
+        vm_name=$(basename $folder)
+	echo -e "\t$vm_name:"
+	for q in $(ls /kmh-nfs-us-mount/staging/.sscript/$vm_name/queue/* 2>/dev/null); do
+		job_id=$(basename $q)
+		stage_dir=$(cat $q)
+		echo -e "\t\t$job_id --> $stage_dir"
+	done;
+	echo;
+    done;
 }
 
 # main alias
