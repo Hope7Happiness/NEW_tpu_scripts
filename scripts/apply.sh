@@ -6,7 +6,9 @@ else
     echo -e "\033[33m[Env Hint] TPU setup will be skipped.\033[0m"
 fi
 
-alias semail="python3 /kmh-nfs-us-mount/code/siri/scripts/pemail.py"
+semail(){
+    python3 $ZHH_SCRIPT_ROOT/pemail.py "$@"
+}
 
 get_tpu(){
     VM_NAME=$1
