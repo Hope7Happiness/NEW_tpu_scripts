@@ -207,7 +207,6 @@ zqueue(){
 zqueue_pop(){
     # release a queue slot
     release_queue
-    echo "[INFO] Released a queue slot."
 }
 
 check_config_sanity(){
