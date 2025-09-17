@@ -2,8 +2,6 @@
 
 ## TODO
 
-- [ ] IPC char missing issue
-
 ## Usage
 
 **ENV VARS**:

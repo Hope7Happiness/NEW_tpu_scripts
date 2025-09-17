@@ -84,6 +84,21 @@ has_tpu(){
     fi
 }
 
+good_tpu(){
+    VM_NAME=$1
+    ZONE=$2
+
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    if ! has_tpu $VM_NAME $ZONE; then
+        return 1
+    fi
+    return $(check_env $VM_NAME $ZONE)
+}
+
 setup_tpu(){
     VM_NAME=$1
     ZONE=$2

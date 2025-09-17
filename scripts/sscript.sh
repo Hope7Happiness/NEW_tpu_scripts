@@ -51,6 +51,24 @@ get_command(){
     sudo cat $SSCRIPT_HOME/$VM_NAME/command
 }
 
+has_failure(){
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    if [ ! -f $SSCRIPT_HOME/$VM_NAME/status ]; then
+        return 1
+    fi
+
+    status=$(sudo cat $SSCRIPT_HOME/$VM_NAME/status)
+    if [ "$status" = "FAILED" ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 queue_job(){
     # assert 1 arg
     if [ "$#" -ne 1 ]; then
@@ -95,7 +113,7 @@ release_queue(){
     fi
 
     # check if there is any job in queue
-    if [ ! -d $SSCRIPT_HOME/$VM_NAME/queue ] || [ -z "$(ls -A $SSCRIPT_HOME/$VM_NAME/queue)" ]; then
+    if queue_isempty; then
         echo -e "\033[33m[Info] No job in queue to release.\033[0m"
         return 0
     fi
@@ -123,4 +141,17 @@ release_queue(){
     # }
     # exec 3>&-
     echo -e "\033[32m[Info] Started job id $item.\033[0m"
+}
+
+queue_isempty(){
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    if [ ! -d $SSCRIPT_HOME/$VM_NAME/queue ] || [ -z "$(ls -A $SSCRIPT_HOME/$VM_NAME/queue)" ]; then
+        return 0
+    else
+        return 1
+    fi
 }

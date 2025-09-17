@@ -117,6 +117,34 @@ run_job(){
     )
 }
 
+while_run(){
+    STAGE_DIR=$1
+    # extra args are $2...
+    EXTRA_ARGS=("${@:2}")
+
+    run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
+    ret=$?
+
+    # if ret==7 (job failed), auto-check card status, if bad, re-setup env and re-run
+    while [ $ret -eq 7 ]; do
+        echo -e "\033[31m[Error] Job failed, auto-checking card status...\033[0m" l
+        sleep 60 # wait for a minute to let TPU recover
+        if has_tpu $VM_NAME $ZONE; then
+            # note: better make the code more likely to enter this branch
+            # this will avoid infinite loop
+
+            echo -e "\033[32m[Info] Card status looks good, then it is probably a code bug. Please fix it and re-run.\033[0m"
+            return 1
+        else
+            echo -e "\033[33m[Info] Card is PREEMPTED, will re-apply and re-run.\033[0m"
+            get_tpu $VM_NAME $ZONE && \
+            setup_tpu $VM_NAME $ZONE && \
+            run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
+            ret=$?
+        fi
+    done
+}
+
 zrun(){
     # extra args are $@
     EXTRA_ARGS=("$@")
@@ -136,24 +164,7 @@ zrun(){
     # prepare TPU
     get_tpu $VM_NAME $ZONE && \
     setup_tpu $VM_NAME $ZONE && \
-    run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
-    ret=$?
-
-    # if ret==7 (job failed), auto-check card status, if bad, re-setup env and re-run
-    while [ $ret -eq 7 ]; do
-        echo -e "\033[31m[Error] Job failed, auto-checking card status...\033[0m"
-        sleep 60 # wait for a minute to let TPU recover
-        if has_tpu $VM_NAME $ZONE; then
-            echo -e "\033[32m[Info] Card status looks good, then it is probably a code bug. Please fix it and re-run.\033[0m"
-            return 1
-        else
-            echo -e "\033[33m[Info] Card is PREEMPTED, will re-apply and re-run.\033[0m"
-            get_tpu $VM_NAME $ZONE && \
-            setup_tpu $VM_NAME $ZONE && \
-            run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
-            ret=$?
-        fi
-    done
+    while_run $STAGE_DIR "${EXTRA_ARGS[@]}"
 }
 
 zrerun(){
@@ -175,7 +186,7 @@ zrerun(){
     # prepare TPU
     get_tpu $VM_NAME $ZONE && \
     setup_tpu $VM_NAME $ZONE && \
-    run_job $(pwd) "$EXTRA_ARGS"
+    while_run "$(pwd)" $EXTRA_ARGS
 }
 
 zqueue(){
@@ -199,9 +210,16 @@ zqueue(){
         printf "'%s' " "${EXTRA_ARGS[@]}" | sudo tee $STAGE_DIR/.extra_args
     fi
 
+    if good_tpu $VM_NAME $ZONE && queue_isempty $VM_NAME && ! has_failure $VM_NAME; then
+        echo -e "\033[32m[INFO] TPU VM $VM_NAME is already free and no jobs in queue. Directly running...\033[0m"
+        setup_tpu $VM_NAME $ZONE && \
+        while_run $STAGE_DIR "${EXTRA_ARGS[@]}"
+        return $?
+    fi
+
     queue_job $STAGE_DIR && \
     setup_tpu $VM_NAME $ZONE && \
-    run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
+    while_run $STAGE_DIR "${EXTRA_ARGS[@]}"
 }
 
 zqueue_pop(){
