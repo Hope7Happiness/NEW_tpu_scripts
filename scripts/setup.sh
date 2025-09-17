@@ -1,4 +1,4 @@
-VM_UNFOUND_ERROR="\033[31m[Internal Error] VM_NAME is not set. Contact admin.\033[0m"
+source $ZHH_SCRIPT_ROOT/scripts/common.sh
 
 mount_disk(){
     VM_NAME=$1

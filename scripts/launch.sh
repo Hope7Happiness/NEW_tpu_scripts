@@ -1,5 +1,6 @@
 source $ZHH_SCRIPT_ROOT/scripts/apply.sh
 source $ZHH_SCRIPT_ROOT/scripts/sscript.sh
+source $ZHH_SCRIPT_ROOT/scripts/queue.sh
 
 ckpt_to_gs(){
     path=$1
@@ -103,11 +104,16 @@ run_job(){
     ) || (
         echo -e "\033[31m[Error] Job failed. Check logs in $LOG_DIR/output.log\033[0m" >&2
         fail_command
-        return 1
+        # NOTE: default, we don't release queue slot on failure
+        return 7
     ) && (
         echo -e "\033[32m[Success] Job finished. Check logs in $LOG_DIR/output.log\033[0m" >&2
         success_command
         cd $HERE
+
+        # release a queue slot
+        echo "[INFO] Releasing a queue slot..."
+        release_queue
     )
 }
 
@@ -131,6 +137,22 @@ zrun(){
     get_tpu $VM_NAME $ZONE && \
     setup_tpu $VM_NAME $ZONE && \
     run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
+    ret=$?
+
+    # if ret==7 (job failed), auto-check card status, if bad, re-setup env and re-run
+    while [ $ret -eq 7 ]; do
+        echo -e "\033[31m[Error] Job failed, auto-checking card status...\033[0m"
+        if check_env $VM_NAME $ZONE; then
+            echo -e "\033[32m[Info] Card status looks good, then it is probably a code bug. Please fix it and re-run.\033[0m"
+            return 1
+        else
+            echo -e "\033[33m[Info] Card status looks bad, re-setup the environment and re-run.\033[0m"
+            get_tpu $VM_NAME $ZONE && \
+            setup_tpu $VM_NAME $ZONE && \
+            run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
+            ret=$?
+        fi
+    done
 }
 
 zrerun(){
@@ -153,6 +175,41 @@ zrerun(){
     get_tpu $VM_NAME $ZONE && \
     setup_tpu $VM_NAME $ZONE && \
     run_job $(pwd) "$EXTRA_ARGS"
+}
+
+zqueue(){
+    EXTRA_ARGS=("$@")
+
+    # confirm
+    read -p "Queue the job on $VM_NAME, with args $EXTRA_ARGS ? (y/N) " yn
+    if [ "$yn" != "y" ]; then
+        echo "[INFO] Aborted."
+        return 1
+    fi
+
+    # staging to $STAGE_DIR
+    STAGE_DIR=$(stage)
+    STAGE_DIR=$(echo $STAGE_DIR | head -n 1 | awk '{print $3}')
+
+    # if EXTRA_ARGS exists, write to a file in STAGE_DIR
+    if [ -z "$EXTRA_ARGS" ]; then
+        echo "[INFO] No extra args provided."
+    else
+        printf "'%s' " "${EXTRA_ARGS[@]}" | sudo tee $STAGE_DIR/.extra_args
+    fi
+
+    queue_job $STAGE_DIR && \
+    run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
+}
+
+zqueue_cancel(){
+    echo -e "\033[31m[Internal Error] Canceling is NOT implemented yet.\033[0m"
+    return 1
+}
+
+zqueue_pop(){
+    # release a queue slot
+    release_queue
 }
 
 check_config_sanity(){

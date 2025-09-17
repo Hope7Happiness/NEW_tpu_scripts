@@ -1,3 +1,4 @@
+source $ZHH_SCRIPT_ROOT/scripts/common.sh
 source $ZHH_SCRIPT_ROOT/scripts/setup.sh
 
 if [ "$DO_TPU_SETUP" = "1" ]; then
@@ -6,9 +7,7 @@ else
     echo -e "\033[33m[Env Hint] TPU setup will be skipped.\033[0m"
 fi
 
-semail(){
-    python3 $ZHH_SCRIPT_ROOT/pemail.py "$@"
-}
+
 
 get_tpu(){
     VM_NAME=$1
@@ -52,7 +51,7 @@ get_tpu(){
         if [ $success -eq 1 ]; then
             echo -e "\033[32m[INFO] TPU VM $VM_NAME created successfully.\033[0m"
             # if available, send email
-            semail $VM_NAME "$try_start" "$(date)" $outer_loop || echo -e "\033[33m[Warning] Failed to send email.\033[0m"
+            semail --apply-success $VM_NAME "$try_start" "$(date)" $outer_loop
             # for this case, TPU must be set up
             export DO_TPU_SETUP=1
             return
@@ -61,7 +60,7 @@ get_tpu(){
         outer_loop=$((outer_loop+1))
         # if outer_loop % 100 == 0, send email
         if [ $((outer_loop % 100)) -eq 0 ]; then
-            semail $VM_NAME "$try_start" "$(date)" $outer_loop --fail || echo -e "\033[33m[Warning] Failed to send email.\033[0m"
+            semail --apply-fail $VM_NAME "$try_start" "$(date)" $outer_loop
         fi
     done;
 }
