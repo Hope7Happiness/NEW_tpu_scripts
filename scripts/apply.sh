@@ -96,7 +96,8 @@ good_tpu(){
     if ! has_tpu $VM_NAME $ZONE; then
         return 1
     fi
-    return $(check_env $VM_NAME $ZONE)
+    check_env $VM_NAME $ZONE
+    return $?
 }
 
 setup_tpu(){
