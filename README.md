@@ -2,6 +2,8 @@
 
 ## TODO
 
+This script only support v4-32. Can simply fix it in `scripts/setup.sh`
+
 ## Usage
 
 **ENV VARS**:
@@ -29,14 +31,34 @@ Usage:
     zhh k
     ```
 
-2. run
+2. run (`YOUR_ARGS` are the arguments passed into the `main.py` program)
 
     ```bash
     zhh YOUR_ARGS
     ```
 
-3. rerun (rerun requires **NO** arguments)
+3. rerun (rerun requires **NO** arguments, but **REQUIRES** to tun at the **STAGING** directory)
 
     ```bash
     zhh rr
     ```
+
+4. show all status
+
+    ```bash
+    zhh s
+    ```
+
+5. queue a job (if runable, then directly run; otherwise stuck until runable)
+
+    ```bash
+    zhh q YOUR_ARGS
+    ```
+
+6. release a queue slot (submit the first element in queue to running)
+
+    NOTE: usually you shouldn't manually run this
+
+   ```bash
+    zhh qq YOUR_ARGS
+   ```
