@@ -191,7 +191,7 @@ zqueue(){
     EXTRA_ARGS=("$@")
 
     # confirm
-    read -p "Queue the job on $VM_NAME, with args $EXTRA_ARGS ? (y/N) " yn
+    read -p "Queue the job on $VM_NAME, with args $EXTRA_ARGS... ? (y/N) " yn
     if [ "$yn" != "y" ]; then
         echo "[INFO] Aborted."
         return 1
