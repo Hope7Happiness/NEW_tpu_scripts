@@ -122,12 +122,11 @@ while_run(){
     # extra args are $2...
     EXTRA_ARGS=("${@:2}")
 
-    run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
-    ret=$?
+    run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
 
     # if ret==7 (job failed), auto-check card status, if bad, re-setup env and re-run
     while [ $ret -eq 7 ]; do
-        echo -e "\033[31m[Error] Job failed, auto-checking card status...\033[0m" l
+        echo -e "\033[31m[Error] Job failed, auto-checking card status...\033[0m"
         sleep 60 # wait for a minute to let TPU recover
         if has_tpu $VM_NAME $ZONE; then
             # note: better make the code more likely to enter this branch
@@ -139,8 +138,7 @@ while_run(){
             echo -e "\033[33m[Info] Card is PREEMPTED, will re-apply and re-run.\033[0m"
             get_tpu $VM_NAME $ZONE && \
             setup_tpu $VM_NAME $ZONE && \
-            run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
-            ret=$?
+            run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
         fi
     done
 }
@@ -213,8 +211,8 @@ zqueue(){
     if good_tpu $VM_NAME $ZONE && queue_isempty $VM_NAME && ! has_failure $VM_NAME; then
         echo -e "\033[32m[INFO] TPU VM $VM_NAME is already free and no jobs in queue. Directly running...\033[0m"
         setup_tpu $VM_NAME $ZONE && \
-        while_run $STAGE_DIR "${EXTRA_ARGS[@]}"
-        return $?
+        while_run $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
+        return $ret
     fi
 
     queue_job $STAGE_DIR && \
@@ -225,6 +223,35 @@ zqueue(){
 zqueue_pop(){
     # release a queue slot
     release_queue
+}
+
+zstatus(){
+    # the original "zzz"
+    show_tpu_status
+    echo
+    show_queue_status
+}
+
+zwhat(){
+    good_tpu $VM_NAME $ZONE && ret=0 || ret=$?
+    # match ret
+    case $ret in
+        0)
+            echo -e "\033[32m[Info] TPU VM $VM_NAME is ready.\033[0m"
+            ;;
+        1)
+            echo -e "\033[31m[Internal Error] $VM_NAME is unset.\033[0m"
+            ;;
+        2)
+            echo -e "\033[31m[Bad] TPU VM $VM_NAME is deleted.\033[0m"
+            ;;
+        3)
+            echo -e "\033[31m[Bad] TPU VM $VM_NAME is in use.\033[0m"
+            ;;
+        *)
+            echo -e "\033[31m[Internal Error] Unknown error occurred when checking TPU VM $VM_NAME. Please use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
+            ;;
+    esac
 }
 
 check_config_sanity(){

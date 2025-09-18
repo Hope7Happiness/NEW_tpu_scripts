@@ -75,7 +75,7 @@ check_env(){
     TEST="sudo rm -rf /tmp/tpu_logs; python3 -c 'import jax; print(jax.devices())'"
     # read both stdout and stderr
     result=$(gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-    --worker=all --command "$TEST" 2>&1)
+    --worker=all --command "$TEST" 2>&1 || true)
     if [ ! -z "$SCRIPT_DEBUG" ]; then
         echo "Debug info from environment check:"
         echo "$result"
@@ -85,10 +85,10 @@ check_env(){
         echo "Environment setup successful."
     elif [[ $result == *"jaxlib.xla_extension.XlaRuntimeError: ABORTED: The TPU is already in use by process with pid"* ]]; then
         echo "TPU is already in use. If you want to persist, use \`zhh k\` and try again."
-        return 1
+        return 3
     else
         echo "Environment setup failed. Use \`SCRIPT_DEBUG=1\` for more info."
-        return 1
+        return 4
     fi
 }
 

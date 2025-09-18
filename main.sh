@@ -12,6 +12,12 @@ source $ZHH_SCRIPT_ROOT/scripts/launch.sh
 # ka.sh has to be sourced in each TMUX window
 # source ka.sh
 
+if [ "$1" = "s" ]; then
+    # for status, no need to check config sanity
+    zstatus
+    exit 0
+fi
+
 if check_config_sanity; then
     if [ "$1" = "rr" ]; then
         zrerun
@@ -21,6 +27,8 @@ if check_config_sanity; then
         zqueue "${@:2}"
     elif [ "$1" = "qq" ]; then
         zqueue_pop
+    elif [ "$1" = "w" ]; then
+        zwhat
     else
         zrun "$@"
     fi

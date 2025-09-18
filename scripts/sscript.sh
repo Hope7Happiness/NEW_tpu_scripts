@@ -14,7 +14,7 @@ log_command(){
 
     sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
     echo "$COMMAND" | sudo tee $SSCRIPT_HOME/$VM_NAME/command
-    echo -e "\033[32mSTARTED\033[0m" | sudo tee $SSCRIPT_HOME/$VM_NAME/status
+    echo "STARTED" | sudo tee $SSCRIPT_HOME/$VM_NAME/status
 }
 
 fail_command(){
@@ -68,6 +68,44 @@ has_failure(){
         return 1
     fi
 }
+
+show_tpu_status(){
+    for folder in $SSCRIPT_HOME/*; do
+        vm_name=$(basename $folder)
+        raw_command=$(cat $folder/command 2>/dev/null || echo "NO COMMAND FOUND")
+
+        # highlight command
+        # for str like *staging/\w+/(\w+)/launch*, highlight the (\w+)
+        command=$(echo $raw_command | sed -E 's#(staging/\w+/)(\w+)(/launch)#\1\\033[33m\2\\033[0m\3#g')
+        # grep log dir: --workdir=/kmh-nfs-us-mount/staging/siri/mf_rev/launch_20250917_203208_gitfd6ce86_f72f4085/logs/log1_20250917_203225_9912f3e1/output.log
+        log_dir=$(echo $raw_command | grep -oE -- '--workdir=[^ ]+' | sed 's#--workdir=##g')
+        log_file="$log_dir/output.log"
+
+        raw_status=$(cat $SSCRIPT_HOME/$vm_name/status 2>/dev/null || echo "UNKNOWN")
+        status=$(echo $raw_status | sed -E 's/STARTED/\\033[34m&\\033[0m/g' | sed -E 's/FAILED/\\033[31m&\\033[0m/g' | sed -E 's/FINISHED/\\033[32m&\\033[0m/g')
+
+
+        # if no log for 30 min, switch "STARTED" to "STALED"
+        # grep last log time from logdir
+        # I0918 00:10:41.255399 139818289895424
+        last_time=$(cat $log_file 2>/dev/null | grep -a -oE '^[IWE][0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]+' | tail -n 1 | awk '{print $1, $2}')
+        if [ ! -z "$last_time" ]; then
+            last_epoch=$(date -d "$(date +%Y)${last_time:1:4} ${last_time:6:8}" +%s)
+            now_epoch=$(date +%s)
+            diff_min=$(( (now_epoch - last_epoch) / 60 ))
+            if [ $diff_min -ge 30 ]; then
+                # if status is STARTED, switch to STALED
+                if [ "$raw_status" = "STARTED" ]; then
+                    status="\033[33mSTALED\033[0m"
+                fi
+            fi
+        fi
+
+        echo -e "\n[$status] (last log: $diff_min min ago) \033[1m$vm_name\033[0m -> $command\n"
+    done;
+}
+
+# Queue Management
 
 queue_job(){
     # assert 1 arg
@@ -154,4 +192,18 @@ queue_isempty(){
     else
         return 1
     fi
+}
+
+show_queue_status(){
+    echo -e "\033[1mQueued jobs:\033[0m"
+    for folder in $SSCRIPT_HOME/*; do
+        vm_name=$(basename $folder)
+        echo -e "\t$vm_name:"
+        for q in $(ls $SSCRIPT_HOME/$vm_name/queue/* 2>/dev/null); do
+            job_id=$(basename $q)
+            stage_dir=$(cat $q)
+            echo -e "\t\t$job_id --> $stage_dir"
+        done;
+        echo;
+    done;
 }
