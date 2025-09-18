@@ -116,30 +116,11 @@ setup_tpu(){
     else
         echo "[INFO] Skipping TPU environment setup as DO_TPU_SETUP is not set."
     fi
-    check_env $VM_NAME $ZONE && \
+    # check_env $VM_NAME $ZONE && \
+    while_check_env $VM_NAME $ZONE && \
     wandb_login $VM_NAME $ZONE # enforce wandb login for each run
 }
 
-kill_tpu(){
-    VM_NAME=$1
-    ZONE=$2
-
-    echo -e "\033[1m[INFO] killing tpu vm $VM_NAME in $ZONE...\033[0m"
-
-    if [ -z "$VM_NAME" ]; then
-        echo -e $VM_UNFOUND_ERROR
-        return 1
-    fi
-
-    sleep 2
-    gcloud compute tpus tpu-vm ssh $VM_NAME --zone=$ZONE --worker=all --command "
-    ps -ef | grep main.py | grep -v grep | awk '{print \"kill -9 \" \$2}' | sort | uniq
-    ps -ef | grep main.py | grep -v grep | awk '{print \"kill -9 \" \$2}' | sh
-    sudo lsof -w /dev/accel0 | grep 'python' | grep -v 'grep' | awk '{print \"kill -9 \" \$2}' | sort | uniq
-    sudo lsof -w /dev/accel0 | grep 'python' | grep -v 'grep' | awk '{print \"kill -9 \" \$2}' | sh
-    echo job killed
-    "
-}
 # This haven't been used
 # check_and_kill(){
 #     VM_NAME=$1

@@ -92,6 +92,26 @@ check_env(){
     fi
 }
 
+while_check_env(){
+    # allow user to run "kill" to interrupt
+    VM_NAME=$1
+    ZONE=$2
+
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    check_env $VM_NAME $ZONE && ret=0 || ret=$?
+    if [ $ret -eq 3 ]; then
+        read -p "Kill the TPU process right now? (y/n) " yn
+        if [ "$yn" = "y" ]; then
+            kill_tpu $VM_NAME $ZONE
+        fi
+    fi
+    return $ret
+}
+
 setup_env(){
     VM_NAME=$1
     ZONE=$2
@@ -138,4 +158,25 @@ wandb_login(){
     fi
 
     echo "Wandb login successful."
+}
+
+kill_tpu(){
+    VM_NAME=$1
+    ZONE=$2
+
+    echo -e "\033[1m[INFO] killing tpu vm $VM_NAME in $ZONE...\033[0m"
+
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    sleep 2
+    gcloud compute tpus tpu-vm ssh $VM_NAME --zone=$ZONE --worker=all --command "
+    ps -ef | grep main.py | grep -v grep | awk '{print \"kill -9 \" \$2}' | sort | uniq
+    ps -ef | grep main.py | grep -v grep | awk '{print \"kill -9 \" \$2}' | sh
+    sudo lsof -w /dev/accel0 | grep 'python' | grep -v 'grep' | awk '{print \"kill -9 \" \$2}' | sort | uniq
+    sudo lsof -w /dev/accel0 | grep 'python' | grep -v 'grep' | awk '{print \"kill -9 \" \$2}' | sh
+    echo job killed
+    "
 }
