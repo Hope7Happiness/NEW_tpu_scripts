@@ -60,5 +60,5 @@ Usage:
     NOTE: usually you shouldn't manually run this
 
    ```bash
-    zhh qq YOUR_ARGS
+    zhh qq
    ```
