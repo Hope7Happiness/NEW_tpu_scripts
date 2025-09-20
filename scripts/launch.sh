@@ -222,6 +222,8 @@ zqueue(){
 
 zqueue_pop(){
     # release a queue slot
+    get_tpu $VM_NAME $ZONE && \
+    setup_tpu $VM_NAME $ZONE && \
     release_queue
 }
 
@@ -260,10 +262,32 @@ check_config_sanity(){
         return 1
     fi
 
-    if [ -z "$ZONE" ]; then
-        echo -e "\033[31m[Error] ZONE is not set. Please run \`source ka.sh\`.\033[0m" >&2
-        return 1
+    if [[ $VM_NAME =~ v4 ]]; then
+        export INF_ZONE=us-central2-b
+    elif [[ $VM_NAME =~ v5litepod ]]; then
+        export INF_ZONE=us-central1-a
     fi
+
+    if [ -z "$ZONE" ]; then
+        echo -e "\033[33m[Info] ZONE is not set. Will automatically infer zone.\033[0m" >&2
+
+        if [[ -z "$INF_ZONE" ]]; then
+            echo -e "\033[31m[Error] Cannot infer ZONE from VM_NAME. Please set ZONE manually in ka.sh.\033[0m" >&2
+            return 1
+        fi
+        ZONE=$INF_ZONE
+        echo -e "\033[32m[Info] Inferred ZONE=$ZONE from VM_NAME=$VM_NAME.\033[0m"
+        sleep 2
+    else
+        if [ "$ZONE" != "$INF_ZONE" ]; then
+            read -p "ZONE=$ZONE does not match the inferred zone $INF_ZONE from VM_NAME=$VM_NAME. Continue? (y/N) " yn
+            if [ "$yn" != "y" ]; then
+                echo "[INFO] Aborted."
+                return 1
+            fi
+        fi
+    fi
+
 
     if [ -z "$WANDB_API_KEY" ]; then
         echo -e "\033[31m[Error] WANDB_API_KEY is not set. Please run \`source ka.sh\`.\033[0m" >&2

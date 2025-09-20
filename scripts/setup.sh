@@ -106,7 +106,7 @@ while_check_env(){
     if [ $ret -eq 3 ]; then
         read -p "Kill the TPU process right now? (y/n) " yn
         if [ "$yn" = "y" ]; then
-            kill_tpu $VM_NAME $ZONE
+            kill_tpu $VM_NAME $ZONE && ret=0 || ret=$?
         fi
     fi
     return $ret

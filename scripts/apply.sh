@@ -7,7 +7,17 @@ else
     echo -e "\033[33m[Env Hint] TPU setup will be skipped.\033[0m"
 fi
 
+get_accelerator_args(){
+    VM_NAME=$1
 
+    # if match kmh-tpuvm-(v\d-\d+) in name
+    if [[ $VM_NAME =~ kmh-tpuvm-(v[a-zA-Z0-9]+-[0-9]+) ]]; then
+        echo "${BASH_REMATCH[1]}"
+    else
+        echo -e "\033[31m[Internal Error] Cannot parse accelerator type from VM name $VM_NAME. Contact admin.\033[0m"
+        return 1
+    fi
+}
 
 get_tpu(){
     VM_NAME=$1
@@ -19,6 +29,13 @@ get_tpu(){
         echo -e $VM_UNFOUND_ERROR
         return 1
     fi
+
+    # get accelerator args
+    accelerator_type=$(get_accelerator_args $VM_NAME)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+
     outer_loop=0
     try_start=$(date)
     while true; do
