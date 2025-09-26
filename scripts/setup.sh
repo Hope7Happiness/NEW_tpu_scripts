@@ -1,5 +1,13 @@
 source $ZHH_SCRIPT_ROOT/scripts/common.sh
 
+wrap_gcloud(){
+    if [ ! -z "$SCRIPT_DEBUG" ]; then
+        gcloud "$@"
+    else
+        gcloud "$@" > /dev/null 2>&1
+    fi
+}
+
 mount_disk(){
     VM_NAME=$1
     ZONE=$2
@@ -13,8 +21,8 @@ mount_disk(){
     
     while true; do
         # test if the disk is already mounted
-        gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-            --worker=all --command "ls /kmh-nfs-us-mount/code/siri" > /dev/null
+        wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+            --worker=all --command "ls /kmh-nfs-us-mount/code/siri"
         if [ $? -eq 0 ]; then
             echo "Disk is already mounted."
             break
@@ -25,7 +33,7 @@ mount_disk(){
         if [ $level -gt 1 ]; then 
 
             # more advanced mount op
-            gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+            wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
             --worker=all --command "
             ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}'
             ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}' | sh
@@ -45,7 +53,7 @@ mount_disk(){
         fi
 
         # standard mount op
-        gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+        wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
         --worker=all --command "
         sleep 8
         sudo mkdir -p /kmh-nfs-us-mount
@@ -124,7 +132,7 @@ setup_env(){
     COMMAND=$(cat $ZHH_SCRIPT_ROOT/scripts/install.sh)
 
     # pip install step
-    gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+    wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
     --worker=all --command "$COMMAND"
     if [ $? -ne 0 ]; then
         echo -e "\033[31m[Error] Environment setup failed during pip install:\033[0m"
@@ -150,8 +158,8 @@ wandb_login(){
     COMMAND="python -m wandb login $WANDB_API_KEY"
 
     # pip install step
-    gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-    --worker=all --command "$COMMAND" > /dev/null 2>&1
+    wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+    --worker=all --command "$COMMAND"
     if [ $? -ne 0 ]; then
         echo -e "\033[31m[Error] Wandb login failed.\033[0m"
         return 1

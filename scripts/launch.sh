@@ -143,6 +143,13 @@ while_run(){
     done
 }
 
+zget(){
+    # get tpu only
+    get_tpu $VM_NAME $ZONE && \
+    setup_tpu $VM_NAME $ZONE && \
+    register_tpu
+}
+
 zrun(){
     # extra args are $@
     EXTRA_ARGS=("$@")
@@ -235,25 +242,32 @@ zstatus(){
 }
 
 zwhat(){
-    good_tpu $VM_NAME $ZONE && ret=0 || ret=$?
-    # match ret
-    case $ret in
-        0)
-            echo -e "\033[32m[Info] TPU VM $VM_NAME is ready.\033[0m"
-            ;;
-        1)
-            echo -e "\033[31m[Internal Error] $VM_NAME is unset.\033[0m"
-            ;;
-        2)
-            echo -e "\033[31m[Bad] TPU VM $VM_NAME is deleted.\033[0m"
-            ;;
-        3)
-            echo -e "\033[31m[Bad] TPU VM $VM_NAME is in use.\033[0m"
-            ;;
-        *)
-            echo -e "\033[31m[Internal Error] Unknown error occurred when checking TPU VM $VM_NAME. Please use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
-            ;;
-    esac
+    COMMON_ERR_MSG="\033[31m[Error] Please use '--all' to show all tpu status, or use the \$VM_NAME env var to show current tpu status.\033[0m"
+
+    if [ ! -z "$1" ]; then
+        if [[ "$1" =~ .*all.* ]]; then
+            res=$(list_tpus)
+            VM_NAMES=($(echo "$res" | awk '{print $1}'))
+            ZONES=($(echo "$res" | awk '{print $2}'))
+        else
+            echo -e $COMMON_ERR_MSG
+            return 1
+        fi
+    else
+        if [ -z "$VM_NAME" ]; then
+            echo -e $COMMON_ERR_MSG
+            return 1
+        fi
+        VM_NAMES=($VM_NAME)
+        ZONES=($ZONE)
+    fi
+
+    for i in "${!VM_NAMES[@]}"; do
+        VM_NAME=${VM_NAMES[$i]}
+        ZONE=${ZONES[$i]}
+        echo -e "\n=== TPU VM: $VM_NAME (zone: $ZONE) ==="
+        good_tpu_verbose $VM_NAME $ZONE
+    done;
 }
 
 check_config_sanity(){

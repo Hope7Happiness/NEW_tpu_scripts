@@ -35,6 +35,7 @@ get_tpu(){
     if [ $? -ne 0 ]; then
         return 1
     fi
+    create_cmd="gcloud compute tpus tpu-vm create $VM_NAME --zone=$ZONE --accelerator-type=$accelerator_type --version=tpu-ubuntu2204-base --spot"
 
     outer_loop=0
     try_start=$(date)
@@ -52,16 +53,21 @@ get_tpu(){
             gcloud compute tpus tpu-vm delete $VM_NAME --zone=$ZONE --quiet
         else
             echo "[INFO] TPU VM status: $status. Waiting..."
+            sleep 60 # Wait for 1 minutes before checking again
             continue
         fi
         success=0
         for i in {1..3}; do
             echo "[INFO] Creating TPU VM... Round $outer_loop Attempt $i (time: " $(date) ")"
-            if gcloud compute tpus tpu-vm create $VM_NAME --zone=$ZONE --accelerator-type=v4-32 --version=tpu-ubuntu2204-base --spot --quiet 2>/dev/null ; then
+            if eval $create_cmd ; then
                 echo -e "\033[32m[INFO] TPU VM created successfully.\033[0m"
                 success=1
                 break
             fi
+
+            # all other calls are quiet
+            if [ $i -eq 1 ] && [ $outer_loop -eq 0 ]; then create_cmd="$create_cmd --quiet 2>/dev/null"; fi
+
             echo "[INFO] Failed to create TPU VM. Retrying in 10 seconds..."
             sleep 10 # Wait for 10 seconds before retrying
         done
@@ -114,6 +120,28 @@ good_tpu(){
         return 2
     fi
     check_env $VM_NAME $ZONE || return $?
+}
+
+good_tpu_verbose(){
+    good_tpu $VM_NAME $ZONE && ret=0 || ret=$?
+    # match ret
+    case $ret in
+        0)
+            echo -e "\033[32m[Info] TPU VM $VM_NAME is ready.\033[0m"
+            ;;
+        1)
+            echo -e "\033[31m[Internal Error] $VM_NAME is unset.\033[0m"
+            ;;
+        2)
+            echo -e "\033[31m[Bad] TPU VM $VM_NAME is deleted.\033[0m"
+            ;;
+        3)
+            echo -e "\033[31m[Bad] TPU VM $VM_NAME is in use.\033[0m"
+            ;;
+        *)
+            echo -e "\033[31m[Internal Error] Unknown error occurred when checking TPU VM $VM_NAME. Please use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
+            ;;
+    esac
 }
 
 setup_tpu(){

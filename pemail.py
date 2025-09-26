@@ -13,6 +13,10 @@ password = secret['password']
 receiver = secret['receiver']
 
 def apply_success(card_name, start_time, end_time, trials):
+    start_time = datetime.datetime.strptime(start_time, "%a %b %d %H:%M:%S %Z %Y")
+    end_time = datetime.datetime.strptime(end_time, "%a %b %d %H:%M:%S %Z %Y")
+    card_name = '-'.join(card_name.split('-')[-2:])
+
     duration = end_time - start_time
     msg = MIMEText("The card {} has been successfully created, after applying for {} (totally {} trials) EOM".format(card_name, duration, trials))
     msg["Subject"] = "Card {} created".format(card_name)

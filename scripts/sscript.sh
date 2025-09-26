@@ -2,7 +2,7 @@
 
 source $ZHH_SCRIPT_ROOT/scripts/common.sh
 
-SSCRIPT_HOME=/kmh-nfs-us-mount/staging/.sscript
+SSCRIPT_HOME=/kmh-nfs-ssd-us-mount/staging/.sscript
 
 log_command(){
     if [ -z "$VM_NAME" ]; then
@@ -69,10 +69,37 @@ has_failure(){
     fi
 }
 
-show_tpu_status(){
+list_tpus(){
+    # ls $SSCRIPT_HOME
     for folder in $SSCRIPT_HOME/*; do
         vm_name=$(basename $folder)
+        zone=$(cat $folder/zone 2>/dev/null || echo "INTERNAL ERROR")
+        echo -e "$vm_name $zone"
+    done;
+}
+
+register_tpu(){
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    if [ -z "$ZONE" ]; then
+        echo -e "\033[31m[Internal Error] ZONE is unset.\033[0m"
+        return 1
+    fi
+
+    sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
+    echo "$ZONE" | sudo tee $SSCRIPT_HOME/$VM_NAME/zone
+}
+
+show_tpu_status(){
+    for folder in $SSCRIPT_HOME/*; do
+        raw_vm_name=$(basename $folder)
         raw_command=$(cat $folder/command 2>/dev/null || echo "NO COMMAND FOUND")
+
+        # highlight vm name
+        vm_name=$(echo $raw_vm_name | sed -E 's/kmh-tpuvm-(v[^-]+-[0-9]+)-(.+)([0-9]+)/kmh-tpuvm-\\033[34m\1\\033[0m-\2\\033[32m\3\\033[0m/')
 
         # highlight command
         # for str like *staging/\w+/(\w+)/launch*, highlight the (\w+)
@@ -81,7 +108,7 @@ show_tpu_status(){
         log_dir=$(echo $raw_command | grep -oE -- '--workdir=[^ ]+' | sed 's#--workdir=##g')
         log_file="$log_dir/output.log"
 
-        raw_status=$(cat $SSCRIPT_HOME/$vm_name/status 2>/dev/null || echo "UNKNOWN")
+        raw_status=$(cat $SSCRIPT_HOME/$raw_vm_name/status 2>/dev/null || echo "UNKNOWN")
         status=$(echo $raw_status | sed -E 's/STARTED/\\033[34m&\\033[0m/g' | sed -E 's/FAILED/\\033[31m&\\033[0m/g' | sed -E 's/FINISHED/\\033[32m&\\033[0m/g')
 
 
@@ -99,9 +126,15 @@ show_tpu_status(){
                     status="\033[33mSTALED\033[0m"
                 fi
             fi
+
+            # convert unit
+            diff_msg="$diff_min min"
+            if [ $diff_min -ge 1440 ]; then
+                diff_msg="$((diff_min / 1440)) days"
+            fi
         fi
 
-        echo -e "\n[$status] (last log: $diff_min min ago) \033[1m$vm_name\033[0m -> $command\n"
+        echo -e "\n[$status] (last log: $diff_msg ago) \033[1m$vm_name\033[0m -> $command\n"
     done;
 }
 
