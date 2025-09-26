@@ -107,7 +107,7 @@ run_job(){
         # NOTE: default, we don't release queue slot on failure
         return 7
     ) && (
-        echo -e "\033[32m[Success] Job finished. Check logs in $LOG_DIR/output.log\033[0m" >&2
+        echo -e "\033[32m[Success] Job finished (maybe failed). Check logs in $LOG_DIR/output.log\033[0m" >&2
         success_command
         cd $HERE
 
@@ -169,6 +169,7 @@ zrun(){
     # prepare TPU
     get_tpu $VM_NAME $ZONE && \
     setup_tpu $VM_NAME $ZONE && \
+    register_tpu && \
     while_run $STAGE_DIR "${EXTRA_ARGS[@]}"
 }
 
@@ -191,6 +192,7 @@ zrerun(){
     # prepare TPU
     get_tpu $VM_NAME $ZONE && \
     setup_tpu $VM_NAME $ZONE && \
+    register_tpu && \
     while_run "$(pwd)" $EXTRA_ARGS
 }
 
@@ -224,6 +226,7 @@ zqueue(){
 
     queue_job $STAGE_DIR && \
     setup_tpu $VM_NAME $ZONE && \
+    register_tpu && \
     while_run $STAGE_DIR "${EXTRA_ARGS[@]}"
 }
 
@@ -231,12 +234,13 @@ zqueue_pop(){
     # release a queue slot
     get_tpu $VM_NAME $ZONE && \
     setup_tpu $VM_NAME $ZONE && \
+    register_tpu && \
     release_queue
 }
 
 zstatus(){
     # the original "zzz"
-    show_tpu_status
+    show_all_tpu_status
     echo
     show_queue_status
 }
@@ -266,7 +270,17 @@ zwhat(){
         VM_NAME=${VM_NAMES[$i]}
         ZONE=${ZONES[$i]}
         echo -e "\n=== TPU VM: $VM_NAME (zone: $ZONE) ==="
-        good_tpu_verbose $VM_NAME $ZONE
+        # if ZONE is *INTERNAL*
+        if [[ "$ZONE" =~ INTERNAL ]]; then
+            echo -e "\033[33m[Internal Error] Zone is unset. Contact ZHH\033[0m"
+        else
+            out=$(good_tpu_verbose $VM_NAME $ZONE)
+            echo -e "$out"
+            # grep TPU VM \w+ is *\. 
+            # status=$(echo "$out" | sed -oP 'TPU VM \w+ is (.*)\.')
+            status=$(echo "$out" | sed -n 's/.*TPU VM [^\ ]\+ is \([^\\]*\)\..*/\1/p')
+            log_tpu_check_result $status
+        fi
     done;
 }
 

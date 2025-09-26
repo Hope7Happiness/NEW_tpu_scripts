@@ -93,7 +93,19 @@ register_tpu(){
     echo "$ZONE" | sudo tee $SSCRIPT_HOME/$VM_NAME/zone
 }
 
-show_tpu_status(){
+log_tpu_check_result(){
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    RESULT=$1
+
+    sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
+    echo "$RESULT" | sudo tee $SSCRIPT_HOME/$VM_NAME/check_result
+}
+
+show_all_tpu_status(){
     for folder in $SSCRIPT_HOME/*; do
         raw_vm_name=$(basename $folder)
         raw_command=$(cat $folder/command 2>/dev/null || echo "NO COMMAND FOUND")
@@ -111,6 +123,8 @@ show_tpu_status(){
         raw_status=$(cat $SSCRIPT_HOME/$raw_vm_name/status 2>/dev/null || echo "UNKNOWN")
         status=$(echo $raw_status | sed -E 's/STARTED/\\033[34m&\\033[0m/g' | sed -E 's/FAILED/\\033[31m&\\033[0m/g' | sed -E 's/FINISHED/\\033[32m&\\033[0m/g')
 
+        raw_tpu_check_result=$(cat $SSCRIPT_HOME/$raw_vm_name/check_result 2>/dev/null || echo "NO CHECK RESULT")
+        tpu_check_result=$(echo $raw_tpu_check_result | sed -E 's/ready/\\033[32m&\\033[0m/g' | sed -E 's/deleted/\\033[31m&\\033[0m/g' | sed -E 's/in\ use/\\033[33m&\\033[0m/g')
 
         # if no log for 30 min, switch "STARTED" to "STALED"
         # grep last log time from logdir
@@ -134,8 +148,9 @@ show_tpu_status(){
             fi
         fi
 
-        echo -e "\n[$status] (last log: $diff_msg ago) \033[1m$vm_name\033[0m -> $command\n"
+        echo -e "\n[$status] (last log: $diff_msg ago) \033[1m$vm_name\033[0m ($tpu_check_result) -> $command\n"
     done;
+    echo -e "\033[1mHint\033[0m: The TPU status may not be new. Use \`zhh wall\` to refresh."
 }
 
 # Queue Management
