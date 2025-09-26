@@ -5,7 +5,7 @@ ckpt_to_gs(){
     path=$1
     # path: /kmh-nfs-us-mount/staging/siri/PROJECT/other_parts
     # output: gs://kmh-gcp-us-central2/qiao_zhicheng_hanhong_files/PROJECT/other_parts
-    subpath=$(echo $path | sed 's|/kmh-nfs-us-mount/staging/siri/||')
+    subpath=$(echo $path | sed 's|/kmh-nfs-ssd-us-mount/staging/siri/||')
     output=gs://kmh-gcp-us-central2/qiao_zhicheng_hanhong_files/$subpath
     echo $output
 }
@@ -17,7 +17,7 @@ stage(){
         PROJECT=unknown
     fi
 
-    STAGE_ROOT=/kmh-nfs-us-mount/staging/siri/$PROJECT
+    STAGE_ROOT=/kmh-nfs-ssd-us-mount/staging/siri/$PROJECT
     NOW_STR=$(date +'%Y%m%d_%H%M%S')
     RND_STR=$(cat /dev/urandom | tr -cd 'a-f0-9' | head -c 8)
     GIT_STR=$(git rev-parse --short HEAD)
@@ -174,7 +174,7 @@ zrun(){
 
 zrerun(){
     # check if in staging dir
-    if [[ ! $(pwd) =~ /kmh-nfs-us-mount/staging/ ]]; then
+    if [[ ! $(pwd) =~ /kmh-nfs-ssd-us-mount/staging/ ]]; then
         echo -e "\033[31m[Error] You are NOT in a staging directory. Aborted.\033[0m" >&2
         return 1
     fi
@@ -273,6 +273,7 @@ zwhat(){
 check_config_sanity(){
     if [ -z "$VM_NAME" ]; then
         echo -e "\033[31m[Error] VM_NAME is not set. Please run \`source ka.sh\`.\033[0m" >&2
+        echo -e "\033[33m[Hint] Use \`zhh help\` for more info.\033[0m" >&2
         return 1
     fi
 

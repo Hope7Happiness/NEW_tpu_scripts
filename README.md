@@ -1,16 +1,6 @@
 # New TPU Scripts
 
-## TODO
-
-This script only support v4-32. Can simply fix it in `scripts/setup.sh`
-
 ## Usage
-
-**ENV VARS**:
-- `DO_TPU_SETUP`: if set to 1, do tpu setup (skipped by default)
-- `SCRIPT_DEBUG`: if set to 1, enable script debugging mode (skipped by default)
-
-Usage:
 
 0. setup `ka.sh`:
 
@@ -62,3 +52,11 @@ Usage:
    ```bash
     zhh qq
    ```
+
+**ENV VARS**:
+- `DO_TPU_SETUP`: if set to 1, do tpu setup (skipped by default)
+- `SCRIPT_DEBUG`: if set to 1, enable script debugging mode (skipped by default)
+
+## TODO
+
+This script only support v4-32. Can simply fix it in `scripts/setup.sh`
