@@ -81,7 +81,8 @@ run_job(){
         fi
     done
 
-    DBG_COMMANDS="which python"
+    # DBG_COMMANDS="which python"
+    DBG_COMMANDS="ls $CONDA_PY_PATH"
 
     # if EXTRA_ARGS exists:
     if [ -z "$EXTRA_ARGS" ]; then
@@ -90,7 +91,7 @@ run_job(){
         EXTRA_ARGS_STR=$(printf "'%s' " "${EXTRA_ARGS[@]}")
     fi
 
-    COMMAND="python3 main.py --workdir=$LOG_DIR --mode=remote_run --config=configs/load_config.py:remote_run $EXTRA_ARGS_STR 2>&1 | sudo tee -a $LOG_DIR/output.log"
+    COMMAND="$CONDA_PY_PATH main.py --workdir=$LOG_DIR --mode=remote_run --config=configs/load_config.py:remote_run $EXTRA_ARGS_STR 2>&1 | sudo tee -a $LOG_DIR/output.log"
     # COMMAND="ls /foo/bar | sudo tee -a $LOG_DIR/output.log"
 
     # register command

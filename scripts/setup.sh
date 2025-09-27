@@ -22,7 +22,7 @@ mount_disk(){
     while true; do
         # test if the disk is already mounted
         wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-            --worker=all --command "ls /kmh-nfs-ssd-us-mount/code/siri"
+            --worker=all --command "sudo umount -l /kmh-nfs-ssd-eu-mount || true; ls /kmh-nfs-ssd-us-mount/code/siri"
         if [ $? -eq 0 ]; then
             echo "Disk is already mounted."
             break
@@ -60,12 +60,13 @@ mount_disk(){
         sudo mount -o vers=3 10.97.81.98:/kmh_nfs_ssd_us /kmh-nfs-ssd-us-mount
         sudo chmod go+rw /kmh-nfs-ssd-us-mount
         ls /kmh-nfs-ssd-us-mount
-
-        sudo mkdir -p /kmh-nfs-ssd-eu-mount
-        sudo mount -o vers=3 10.150.179.250:/kmh_nfs_ssd_eu /kmh-nfs-ssd-eu-mount
-        sudo chmod go+rw /kmh-nfs-ssd-eu-mount
-        ls /kmh-nfs-ssd-eu-mount
-        "
+	
+	sudo mkdir -p /kmh-nfs-us-mount
+	sudo mount -o vers=3 10.26.72.146:/kmh_nfs_us /kmh-nfs-us-mount
+	sudo chmod go+rw /kmh-nfs-us-mount
+	ls /kmh-nfs-us-mount
+	
+	"
     done;
 }
 
@@ -80,7 +81,7 @@ check_env(){
         return 1
     fi
 
-    TEST="sudo rm -rf /tmp/tpu_logs; python3 -c 'import jax; print(jax.devices())'"
+    TEST="$CONDA_PY_PATH -c 'import jax; print(jax.devices())'"
     # read both stdout and stderr
     result=$(gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
     --worker=all --command "$TEST" 2>&1 || true)
@@ -155,7 +156,7 @@ wandb_login(){
         return 1
     fi
 
-    COMMAND="python -m wandb login $WANDB_API_KEY"
+    COMMAND="$CONDA_PY_PATH -m wandb login $WANDB_API_KEY"
 
     # pip install step
     wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
