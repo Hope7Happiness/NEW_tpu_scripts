@@ -19,6 +19,17 @@ get_accelerator_args(){
     fi
 }
 
+get_accelerator_version(){
+    VM_NAME=$1
+
+    # if card is *v6*
+    if [[ $VM_NAME =~ v6 ]]; then
+        echo "v2-alpha-tpuv6e"
+    else
+        echo "tpu-ubuntu2204-base"
+    fi
+}
+
 get_tpu(){
     VM_NAME=$1
     ZONE=$2
@@ -32,10 +43,11 @@ get_tpu(){
 
     # get accelerator args
     accelerator_type=$(get_accelerator_args $VM_NAME)
+    accelerator_version=$(get_accelerator_version $VM_NAME)
     if [ $? -ne 0 ]; then
         return 1
     fi
-    create_cmd="gcloud compute tpus tpu-vm create $VM_NAME --zone=$ZONE --accelerator-type=$accelerator_type --version=tpu-ubuntu2204-base --spot"
+    create_cmd="gcloud compute tpus tpu-vm create $VM_NAME --zone=$ZONE --accelerator-type=$accelerator_type --version=$accelerator_version --spot"
 
     outer_loop=0
     try_start=$(date)
@@ -136,7 +148,7 @@ good_tpu_verbose(){
             echo -e "\033[31m[Bad] TPU VM $VM_NAME is deleted.\033[0m"
             ;;
         3)
-            echo -e "\033[31m[Bad] TPU VM $VM_NAME is in use.\033[0m"
+            echo -e "\033[33m[Info] TPU VM $VM_NAME is in use.\033[0m"
             ;;
         *)
             echo -e "\033[31m[Internal Error] Unknown error occurred when checking TPU VM $VM_NAME. Please use \`SCRIPT_DEBUG=1\` for more info.\033[0m"

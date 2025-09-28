@@ -81,7 +81,13 @@ check_env(){
         return 1
     fi
 
-    TEST="$CONDA_PY_PATH -c 'import jax; print(jax.devices())'"
+    py_path=$CONDA_PY_PATH
+    # if VM_NAME contains v6, don't use conda
+    if [[ $VM_NAME =~ v6e ]]; then
+        py_path="python"
+    fi
+
+    TEST="$py_path -c 'import jax; print(jax.devices())'"
     # read both stdout and stderr
     result=$(gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
     --worker=all --command "$TEST" 2>&1 || true)
@@ -130,7 +136,12 @@ setup_env(){
         return 1
     fi
 
-    COMMAND=$(cat $ZHH_SCRIPT_ROOT/scripts/install.sh)
+    # if VM_NAME in *v6*
+    if [[ $VM_NAME =~ v6e ]]; then
+        COMMAND=$(cat $ZHH_SCRIPT_ROOT/scripts/install_v6e.sh)
+    else
+        COMMAND=$(cat $ZHH_SCRIPT_ROOT/scripts/install.sh)
+    fi
 
     # pip install step
     wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
@@ -149,6 +160,12 @@ wandb_login(){
         echo -e $VM_UNFOUND_ERROR
         return 1
     fi
+    
+    py_path=$CONDA_PY_PATH
+    # if VM_NAME contains v6, don't use conda
+    if [[ $VM_NAME =~ v6e ]]; then
+        py_path="python"
+    fi
 
     if [ -z "$WANDB_API_KEY" ]; then
         echo -e "\033[31m[Internal Error] WANDB_API_KEY is not set. Contact admin.\033[0m"
@@ -156,7 +173,7 @@ wandb_login(){
         return 1
     fi
 
-    COMMAND="$CONDA_PY_PATH -m wandb login $WANDB_API_KEY"
+    COMMAND="$py_path -m wandb login $WANDB_API_KEY"
 
     # pip install step
     wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \

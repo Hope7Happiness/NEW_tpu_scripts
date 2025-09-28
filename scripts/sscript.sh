@@ -91,6 +91,7 @@ register_tpu(){
 
     sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
     echo "$ZONE" | sudo tee $SSCRIPT_HOME/$VM_NAME/zone
+    echo "ready" | sudo tee $SSCRIPT_HOME/$VM_NAME/check_result
 }
 
 log_tpu_check_result(){

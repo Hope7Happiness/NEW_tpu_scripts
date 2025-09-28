@@ -81,8 +81,13 @@ run_job(){
         fi
     done
 
-    # DBG_COMMANDS="which python"
     DBG_COMMANDS="ls $CONDA_PY_PATH"
+    py_path=$CONDA_PY_PATH
+    # if VM_NAME contains v6, don't use conda
+    if [[ $VM_NAME =~ v6e ]]; then
+        py_path="python"
+        DBG_COMMANDS="which python"
+    fi
 
     # if EXTRA_ARGS exists:
     if [ -z "$EXTRA_ARGS" ]; then
@@ -91,7 +96,7 @@ run_job(){
         EXTRA_ARGS_STR=$(printf "'%s' " "${EXTRA_ARGS[@]}")
     fi
 
-    COMMAND="$CONDA_PY_PATH main.py --workdir=$LOG_DIR --mode=remote_run --config=configs/load_config.py:remote_run $EXTRA_ARGS_STR 2>&1 | sudo tee -a $LOG_DIR/output.log"
+    COMMAND="$py_path main.py --workdir=$LOG_DIR --mode=remote_run --config=configs/load_config.py:remote_run $EXTRA_ARGS_STR 2>&1 | sudo tee -a $LOG_DIR/output.log"
     # COMMAND="ls /foo/bar | sudo tee -a $LOG_DIR/output.log"
 
     # register command
@@ -239,6 +244,27 @@ zqueue_pop(){
     release_queue
 }
 
+run_matmul(){
+    # use matmul to keep a TPU busy
+    get_tpu $VM_NAME $ZONE && \
+    setup_tpu $VM_NAME $ZONE
+
+    DBG_COMMANDS="ls $CONDA_PY_PATH"
+    py_path=$CONDA_PY_PATH
+    # if VM_NAME contains v6, don't use conda
+    if [[ $VM_NAME =~ v6e ]]; then
+        py_path="python"
+        DBG_COMMANDS="which python"
+    fi
+
+    MATMUL_SCRIPT="import jax as j,time as t;from flax.jax_utils import replicate as e;p=j.numpy;r=j.random;k=r.PRNGKey(0);N=1<<15;_T=e(r.normal(k,(N,N)));__=j.pmap(lambda _: _.T@_/p.linalg.norm(_@_.T));exec('while True: (__(_T), t.sleep(0.5))')"
+
+
+    COMMAND="$py_path -c \"$MATMUL_SCRIPT\" 2>&1"
+    log_command "$COMMAND"
+    gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command "$DBG_COMMANDS && $COMMAND" # never ends
+}
+
 zstatus(){
     # the original "zzz"
     show_all_tpu_status
@@ -280,7 +306,7 @@ zwhat(){
             # grep TPU VM \w+ is *\. 
             # status=$(echo "$out" | sed -oP 'TPU VM \w+ is (.*)\.')
             status=$(echo "$out" | sed -n 's/.*TPU VM [^\ ]\+ is \([^\\]*\)\..*/\1/p')
-            log_tpu_check_result $status
+            log_tpu_check_result "$status"
         fi
     done;
 }
@@ -296,6 +322,8 @@ check_config_sanity(){
         export INF_ZONE=us-central2-b
     elif [[ $VM_NAME =~ v5litepod ]]; then
         export INF_ZONE=us-central1-a
+    elif [[ $VM_NAME =~ v6e ]]; then
+        export INF_ZONE=us-east1-d
     fi
 
     if [ -z "$ZONE" ]; then

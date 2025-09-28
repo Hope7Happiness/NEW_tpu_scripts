@@ -33,6 +33,8 @@ if $no_need_check || check_config_sanity; then
         zwhat all
     elif [ "$1" = "g" ]; then
         zget
+    elif [ "$1" = "mm" ]; then
+        run_matmul
     elif [[ "$1" =~ ^h ]]; then
         less $ZHH_SCRIPT_ROOT/README.md
     else
