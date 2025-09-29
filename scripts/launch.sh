@@ -47,7 +47,7 @@ run_job(){
     RND_STR=$(cat /dev/urandom | tr -cd 'a-f0-9' | head -c 8)
     exist_logs=$(ls $LOG_ROOT 2>/dev/null | wc -l)
     cur_log_id=$((exist_logs+1))
-    LOG_DIR=$LOG_ROOT/log${cur_log_id}_${NOW_STR}_${RND_STR}
+    LOG_DIR=$LOG_ROOT/log${cur_log_id}_${NOW_STR}_VM${VM_NAME}_${RND_STR}
 
     # EXTRA_ARGS should be a list
     EXTRA_ARGS=()
@@ -262,6 +262,7 @@ run_matmul(){
 
     COMMAND="$py_path -c \"$MATMUL_SCRIPT\" 2>&1"
     log_command "$COMMAND"
+    echo "This is going to stuck. Use this to kill: " "gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command=\"ps -ef | grep python | grep linalg | grep -v grep | awk '{print \\\"kill -9 \\\" \\\$2}' | sh\""
     gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command "$DBG_COMMANDS && $COMMAND" # never ends
 }
 

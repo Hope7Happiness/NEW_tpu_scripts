@@ -13,8 +13,8 @@ sender = secret['sender']
 password = secret['password']
 receiver = secret['receiver']
 
-process_time = partial(datetime.datetime.strptime, format="%a %b %d %H:%M:%S %Z %Y")
-process_card = lambda name: name.lstrip('kmh-tpuvm-')
+process_time = lambda t, f="%a %b %d %H:%M:%S %Z %Y": datetime.datetime.strptime(t, f)
+process_card = lambda name: name[len('kmh-tpuvm-'):]
 
 def apply_success(card_name, start_time, end_time, trials):
     start_time = process_time(start_time)

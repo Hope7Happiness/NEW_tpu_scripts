@@ -91,10 +91,6 @@ check_env(){
     # read both stdout and stderr
     result=$(gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
     --worker=all --command "$TEST" 2>&1 || true)
-    if [ ! -z "$SCRIPT_DEBUG" ]; then
-        echo "Debug info from environment check:"
-        echo "$result"
-    fi
 
     if [[ $result == *"TpuDevice"* ]]; then
         echo "Environment setup successful."
