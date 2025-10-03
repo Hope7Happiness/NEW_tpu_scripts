@@ -13,7 +13,7 @@ sender = secret['sender']
 password = secret['password']
 receiver = secret['receiver']
 
-process_time = lambda t, f="%a %b %d %H:%M:%S %Z %Y": datetime.datetime.strptime(t, f)
+process_time = lambda t, format="%a %b %d %H:%M:%S %Z %Y": datetime.datetime.strptime(t, format)
 process_card = lambda name: name[len('kmh-tpuvm-'):]
 
 def apply_success(card_name, start_time, end_time, trials):

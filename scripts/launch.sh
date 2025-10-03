@@ -142,8 +142,8 @@ while_run(){
             if grep -q "This TPU is going through a maintenance event, and might be unavailable" $LOG_DIR/output.log; then
                 echo -e "\033[33m[Info] Found maintenance event in logs, this TPU is no longer usable. Aborted.\033[0m"
                 return 1
-            elif grep -q "Failed to execute command on multiple workers. This may have happened if you have not added your SSH key to your ssh-agent" $LOG_DIR/output.log; then
-                echo -e "\033[33m[Info] Found GRPC error in logs, will re-setup env and re-run.\033[0m"
+            elif grep -q "Failed to execute command on multiple workers. This may have happened if you have not added your SSH key to your ssh-agent" $LOG_DIR/output.log || grep -q "Terminating process because the coordinator detected missing heartbeats." $LOG_DIR/output.log; then
+                echo -e "\033[33m[Info] Found GRPC/heartbeat error in logs, will re-setup env and re-run.\033[0m"
                 sleep 60
                 kill_tpu $VM_NAME $ZONE
                 sleep 60
