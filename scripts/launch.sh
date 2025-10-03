@@ -96,7 +96,7 @@ run_job(){
         EXTRA_ARGS_STR=$(printf "'%s' " "${EXTRA_ARGS[@]}")
     fi
 
-    COMMAND="$py_path main.py --workdir=$LOG_DIR --mode=remote_run --config=configs/load_config.py:remote_run $EXTRA_ARGS_STR 2>&1 | sudo tee -a $LOG_DIR/output.log"
+    COMMAND="$py_path main.py --workdir=$LOG_DIR --mode=remote_run --config=configs/load_config.py:remote_run $EXTRA_ARGS_STR 2>&1"
     # COMMAND="ls /foo/bar | sudo tee -a $LOG_DIR/output.log"
 
     # register command
@@ -104,10 +104,11 @@ run_job(){
     echo "[INFO] running command: $COMMAND"
     (echo "$COMMAND"; echo ========; echo; ) > $LOG_DIR/output.log
 
-    (
-        cd $STAGE_DIR && \
-        gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command "$DBG_COMMANDS && cd $STAGE_DIR && $COMMAND"
-    ) || (
+    cd $STAGE_DIR && \
+    gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command "$DBG_COMMANDS && cd $STAGE_DIR && $COMMAND" | sudo tee -a $LOG_DIR/output.log
+
+    status=${PIPESTATUS[0]}   # this get the return code of gcloud
+    [ $status -eq 0 ] || (
         echo -e "\033[31m[Error] Job failed. Check logs in $LOG_DIR/output.log\033[0m" >&2
         fail_command
         # NOTE: default, we don't release queue slot on failure
@@ -133,13 +134,25 @@ while_run(){
     # if ret==7 (job failed), auto-check card status, if bad, re-setup env and re-run
     while [ $ret -eq 7 ]; do
         echo -e "\033[31m[Error] Job failed, auto-checking card status...\033[0m"
-        sleep 60 # wait for a minute to let TPU recover
-        if has_tpu $VM_NAME $ZONE; then
+        if ! is_preempted $VM_NAME $ZONE; then
             # note: better make the code more likely to enter this branch
             # this will avoid infinite loop
 
-            echo -e "\033[32m[Info] Card status looks good, then it is probably a code bug. Please fix it and re-run.\033[0m"
-            return 1
+            # check if there is GRPC error
+            if grep -q "This TPU is going through a maintenance event, and might be unavailable" $LOG_DIR/output.log; then
+                echo -e "\033[33m[Info] Found maintenance event in logs, this TPU is no longer usable. Aborted.\033[0m"
+                return 1
+            elif grep -q "Failed to execute command on multiple workers. This may have happened if you have not added your SSH key to your ssh-agent" $LOG_DIR/output.log; then
+                echo -e "\033[33m[Info] Found GRPC error in logs, will re-setup env and re-run.\033[0m"
+                sleep 60
+                kill_tpu $VM_NAME $ZONE
+                sleep 60
+                setup_tpu $VM_NAME $ZONE && \
+                run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
+            else
+                echo -e "\033[32m[Info] Card status looks good, then it is probably a code bug. Please fix it and re-run.\033[0m"
+                return 1
+            fi
         else
             echo -e "\033[33m[Info] Card is PREEMPTED, will re-apply and re-run.\033[0m"
             get_tpu $VM_NAME $ZONE && \
@@ -254,7 +267,7 @@ run_matmul(){
     # if VM_NAME contains v6, don't use conda
     if [[ $VM_NAME =~ v6e ]]; then
         py_path="python"
-        DBG_COMMANDS="which python"
+    DBG_COMMANDS="which python"
     fi
 
     MATMUL_SCRIPT="import jax as j,time as t;from flax.jax_utils import replicate as e;p=j.numpy;r=j.random;k=r.PRNGKey(0);N=1<<15;_T=e(r.normal(k,(N,N)));__=j.pmap(lambda _: _.T@_/p.linalg.norm(_@_.T));exec('while True: (__(_T), t.sleep(0.5))')"
@@ -262,7 +275,7 @@ run_matmul(){
 
     COMMAND="$py_path -c \"$MATMUL_SCRIPT\" 2>&1"
     log_command "$COMMAND"
-    echo "This is going to stuck. Use this to kill: " "gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command=\"ps -ef | grep python | grep linalg | grep -v grep | awk '{print \\\"kill -9 \\\" \\\$2}' | sh\""
+    # echo "This is going to stuck. Use this to kill: " "gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command=\"ps -ef | grep python | grep linalg | grep -v grep | awk '{print \\\"kill -9 \\\" \\\$2}' | sh\""
     gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command "$DBG_COMMANDS && $COMMAND" # never ends
 }
 

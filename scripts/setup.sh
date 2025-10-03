@@ -49,7 +49,10 @@ mount_disk(){
 
             for i in {1..10}; do echo Mount Mount 妈妈; done
             sleep 7
-
+            if [ $level -gt 3 ]; then
+                echo -e "\033[31m[Error] Disk mount failed after multiple attempts. The card is likely PREEMPTED. Please try again.\033[0m"
+                return 1
+            fi
         fi
 
         # standard mount op
@@ -83,13 +86,33 @@ check_env(){
 
     py_path=$CONDA_PY_PATH
     # if VM_NAME contains v6, don't use conda
+    IS_V6=0
     if [[ $VM_NAME =~ v6e ]]; then
         py_path="python"
+        IS_V6=1
+    fi
+
+    ENV_CHECK="$py_path -c 'import jax, torch; print(jax.__file__)'"
+    # read both stdout and stderr
+    result=$(timeout 60s gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+    --worker=all --command "$ENV_CHECK" 2>&1 || true)
+    # first, eliminate module not found
+    if [[ $result == *"ModuleNotFoundError"* ]]; then
+        echo "Environment setup failed. Cannot find torch/jax. Use \`SCRIPT_DEBUG=1\` for more info."
+        return 4
+    fi
+    # if not IS_V6, assert miniforge3 is in result
+    if [ ! $IS_V6 -eq 1 ]; then
+        if [[ $result =~ *"local"* ]]; then
+            echo "Wrong python env, expected to in miniforge3. Gonna remove local..."
+            wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+            --worker=all --command "sudo rm -rf ~/.local"
+        fi
     fi
 
     TEST="$py_path -c 'import jax; print(jax.devices())'"
     # read both stdout and stderr
-    result=$(gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+    result=$(timeout 180s gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
     --worker=all --command "$TEST" 2>&1 || true)
 
     if [[ $result == *"TpuDevice"* ]]; then

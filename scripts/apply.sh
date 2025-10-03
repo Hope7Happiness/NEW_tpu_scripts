@@ -119,6 +119,26 @@ has_tpu(){
     fi
 }
 
+is_preempted(){
+    VM_NAME=$1
+    ZONE=$2
+
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    status=$(
+        gcloud compute tpus tpu-vm describe $VM_NAME --zone=$ZONE --format="value(state)" 2>/dev/null
+    )
+    # if in PREEMPTED or DELETED state, return true
+    if [ "$status" = "PREEMPTED" ] || [ "$status" = "DELETED" ] || [ -z "$status" ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 good_tpu(){
     VM_NAME=$1
     ZONE=$2
