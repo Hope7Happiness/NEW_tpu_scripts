@@ -8,71 +8,6 @@ wrap_gcloud(){
     fi
 }
 
-mount_disk(){
-    VM_NAME=$1
-    ZONE=$2
-
-    if [ -z "$VM_NAME" ]; then
-        echo -e $VM_UNFOUND_ERROR
-        return 1
-    fi
-
-    level=0 # if level >= 2, will do more advanced mount op
-    
-    while true; do
-        # test if the disk is already mounted
-        wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-            --worker=all --command "sudo umount -l /kmh-nfs-ssd-eu-mount || true; ls /kmh-nfs-ssd-us-mount/code/siri"
-        if [ $? -eq 0 ]; then
-            echo "Disk is already mounted."
-            break
-        fi
-
-        level=$((level+1))
-
-        if [ $level -gt 1 ]; then 
-
-            # more advanced mount op
-            wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-            --worker=all --command "
-            ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}'
-            ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}' | sh
-            ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}' | sh
-            sleep 5
-            sudo apt-get -y update
-            sudo apt-get -y install nfs-common
-            ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}'
-            ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}' | sh
-            ps -ef | grep -i unattended | grep -v 'grep' | awk '{print \"sudo kill -9 \" \$2}' | sh
-            sleep 6
-            "
-
-            for i in {1..10}; do echo Mount Mount 妈妈; done
-            sleep 7
-            if [ $level -gt 3 ]; then
-                echo -e "\033[31m[Error] Disk mount failed after multiple attempts. The card is likely PREEMPTED. Please try again.\033[0m"
-                return 1
-            fi
-        fi
-
-        # standard mount op
-        wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-        --worker=all --command "
-        sleep 8
-        sudo mkdir -p /kmh-nfs-ssd-us-mount
-        sudo mount -o vers=3 10.97.81.98:/kmh_nfs_ssd_us /kmh-nfs-ssd-us-mount
-        sudo chmod go+rw /kmh-nfs-ssd-us-mount
-        ls /kmh-nfs-ssd-us-mount
-	
-	sudo mkdir -p /kmh-nfs-us-mount
-	sudo mount -o vers=3 10.26.72.146:/kmh_nfs_us /kmh-nfs-us-mount
-	sudo chmod go+rw /kmh-nfs-us-mount
-	ls /kmh-nfs-us-mount
-	
-	"
-    done;
-}
-
 check_env(){
     # Check whether JAX can run
 
@@ -112,7 +47,7 @@ check_env(){
 
     TEST="$py_path -c 'import jax; print(jax.devices())'"
     # read both stdout and stderr
-    result=$(timeout 180s gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+    result=$(timeout 90s gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
     --worker=all --command "$TEST" 2>&1 || true)
 
     if [[ $result == *"TpuDevice"* ]]; then
@@ -121,8 +56,8 @@ check_env(){
         echo "TPU is already in use. If you want to persist, use \`zhh k\` and try again."
         return 3
     else
-        echo "Environment setup failed. Use \`SCRIPT_DEBUG=1\` for more info."
-        return 4
+        echo "TPU Unkwown Error, retrying..."
+        return 3
     fi
 }
 
@@ -137,72 +72,26 @@ while_check_env(){
     fi
 
     check_env $VM_NAME $ZONE && ret=0 || ret=$?
+    if [ $ret -eq 0 ]; then
+        echo "[INFO] Environment is ready."
+        return 0
+    fi
     if [ $ret -eq 3 ]; then
-        read -p "Kill the TPU process right now? (y/n) " yn
+        if [ "$ZAK" = "1" ]; then
+            echo "[INFO] Auto-kill is enabled. Attempting to kill the TPU process..."
+            yn="y"
+        else
+            read -p "Kill the TPU process right now? (y/n) " yn
+        fi
         if [ "$yn" = "y" ]; then
             kill_tpu $VM_NAME $ZONE && ret=0 || ret=$?
         fi
     fi
+    check_env $VM_NAME $ZONE && ret=0 || ret=$?
+    if [ $ret -ne 0 ]; then
+        echo -e "\033[31m[Error] Environment setup failed. Use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
+    fi
     return $ret
-}
-
-setup_env(){
-    VM_NAME=$1
-    ZONE=$2
-
-    if [ -z "$VM_NAME" ]; then
-        echo -e $VM_UNFOUND_ERROR
-        return 1
-    fi
-
-    # if VM_NAME in *v6*
-    if [[ $VM_NAME =~ v6e ]]; then
-        COMMAND=$(cat $ZHH_SCRIPT_ROOT/scripts/install_v6e.sh)
-    else
-        COMMAND=$(cat $ZHH_SCRIPT_ROOT/scripts/install.sh)
-    fi
-
-    # pip install step
-    wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-    --worker=all --command "$COMMAND"
-    if [ $? -ne 0 ]; then
-        echo -e "\033[31m[Error] Environment setup failed during pip install:\033[0m"
-        return 1
-    fi
-}
-
-wandb_login(){
-    VM_NAME=$1
-    ZONE=$2
-
-    if [ -z "$VM_NAME" ]; then
-        echo -e $VM_UNFOUND_ERROR
-        return 1
-    fi
-    
-    py_path=$CONDA_PY_PATH
-    # if VM_NAME contains v6, don't use conda
-    if [[ $VM_NAME =~ v6e ]]; then
-        py_path="python"
-    fi
-
-    if [ -z "$WANDB_API_KEY" ]; then
-        echo -e "\033[31m[Internal Error] WANDB_API_KEY is not set. Contact admin.\033[0m"
-        # echo -e "\033[31m[Error] WANDB_API_KEY is not set. Please set WANDB_API_KEY in ka.sh.\033[0m"
-        return 1
-    fi
-
-    COMMAND="$py_path -m wandb login $WANDB_API_KEY"
-
-    # pip install step
-    wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-    --worker=all --command "$COMMAND"
-    if [ $? -ne 0 ]; then
-        echo -e "\033[31m[Error] Wandb login failed.\033[0m"
-        return 1
-    fi
-
-    echo "Wandb login successful."
 }
 
 kill_tpu(){
@@ -216,12 +105,11 @@ kill_tpu(){
         return 1
     fi
 
+    KILLER=$(cat $ZHH_SCRIPT_ROOT/scripts/new_killer.sh)
+
     sleep 2
     gcloud compute tpus tpu-vm ssh $VM_NAME --zone=$ZONE --worker=all --command "
-    ps -ef | grep main.py | grep -v grep | awk '{print \"kill -9 \" \$2}' | sort | uniq
-    ps -ef | grep main.py | grep -v grep | awk '{print \"kill -9 \" \$2}' | sh
-    sudo lsof -w /dev/accel0 | grep 'python' | grep -v 'grep' | awk '{print \"kill -9 \" \$2}' | sort | uniq
-    sudo lsof -w /dev/accel0 | grep 'python' | grep -v 'grep' | awk '{print \"kill -9 \" \$2}' | sh
+    $KILLER
     echo job killed
     "
 }

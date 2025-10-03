@@ -18,6 +18,7 @@
 **ENV vars**:
 - `DO_TPU_SETUP`: if set to 1, do tpu setup (skipped by default)
 - `SCRIPT_DEBUG`: if set to 1, enable script debugging mode (skipped by default)
+- `ZAK` (ZHH auto-kill): if set to 1, auto-kill the TPU process when setup fails (unset by default)
 
 **Main Usages**:
 

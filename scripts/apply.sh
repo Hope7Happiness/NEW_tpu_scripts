@@ -187,15 +187,39 @@ setup_tpu(){
         return 1
     fi
 
+    py_path=$CONDA_PY_PATH
+    # if VM_NAME contains v6, don't use conda
+    if [[ $VM_NAME =~ v6e ]]; then
+        py_path="python"
+    fi
+    WANDB_LOGIN_STR="$py_path -m wandb login $WANDB_API_KEY"
+
     if [ "$DO_TPU_SETUP" = "1" ]; then
-        mount_disk $VM_NAME $ZONE && \
-        setup_env $VM_NAME $ZONE
+        MOUNT_DISK_STR=$(cat $ZHH_SCRIPT_ROOT/scripts/mount_disk.sh)
+
+        if [[ $VM_NAME =~ v6e ]]; then
+            PIP_INSTALL_STR=$(cat $ZHH_SCRIPT_ROOT/scripts/install_v6e.sh)
+        else
+            PIP_INSTALL_STR=$(cat $ZHH_SCRIPT_ROOT/scripts/install.sh)
+        fi
     else
         echo "[INFO] Skipping TPU environment setup as DO_TPU_SETUP is not set."
     fi
-    # check_env $VM_NAME $ZONE && \
-    while_check_env $VM_NAME $ZONE && \
-    wandb_login $VM_NAME $ZONE # enforce wandb login for each run
+
+    CMD="
+    $MOUNT_DISK_STR
+    $PIP_INSTALL_STR
+    $WANDB_LOGIN_STR
+    "
+
+    wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+    --worker=all --command "$CMD"
+    if [ $? -ne 0 ]; then
+        echo -e "\033[31m[Error] Environment setup failed. Use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
+        return 1
+    fi
+
+    while_check_env $VM_NAME $ZONE
 }
 
 # This haven't been used
