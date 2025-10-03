@@ -15,6 +15,12 @@
 
 **NOTE**: You should `source ka.sh` in every new terminal. **Each terminal should best be only for one TPU**.
 
+**ENV vars**:
+- `DO_TPU_SETUP`: if set to 1, do tpu setup (skipped by default)
+- `SCRIPT_DEBUG`: if set to 1, enable script debugging mode (skipped by default)
+
+**Main Usages**:
+
 1. kill 
 
     ```bash
@@ -27,25 +33,33 @@
     zhh YOUR_ARGS
     ```
 
-3. rerun (rerun requires **NO** arguments, but **REQUIRES** to tun at the **STAGING** directory)
+3. rerun (rerun requires **NO** arguments, but **REQUIRES** to be run at the **STAGING** directory)
 
     ```bash
     zhh rr
     ```
 
-4. show all status
+4. show all job status
 
     ```bash
-    zhh s
+    zzz
     ```
 
-5. queue a job (if runable, then directly run; otherwise stuck until runable)
+5. show TPU status: this shows the status of the current `VM_NAME`.
+
+    ```bash
+    zhh w
+    ```
+
+    To show all TPU status, use `zhh w all` or `zhh wall`.
+
+6. queue a job (if runable, then directly run; otherwise stuck until runable)
 
     ```bash
     zhh q YOUR_ARGS
     ```
 
-6. release a queue slot (submit the first element in queue to running)
+7. release a queue slot (submit the first element in queue to running)
 
     NOTE: usually you shouldn't manually run this
 
@@ -53,10 +67,8 @@
     zhh qq
    ```
 
-**ENV VARS**:
-- `DO_TPU_SETUP`: if set to 1, do tpu setup (skipped by default)
-- `SCRIPT_DEBUG`: if set to 1, enable script debugging mode (skipped by default)
+8. Run matmul to keep the TPU alive (only support V6 tpus)
 
-## TODO
-
-This script only support v4-32. Can simply fix it in `scripts/setup.sh`
+   ```bash
+   zhh mm
+   ```
