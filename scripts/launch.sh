@@ -105,7 +105,7 @@ run_job(){
     (echo "$COMMAND"; echo ========; echo; ) > $LOG_DIR/output.log
 
     cd $STAGE_DIR && \
-    gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command "$DBG_COMMANDS && cd $STAGE_DIR && $COMMAND" | sudo tee -a $LOG_DIR/output.log
+    gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command "$DBG_COMMANDS && cd $STAGE_DIR && $COMMAND" 2>&1 | stdbuf -oL -eL sudo tee -a $LOG_DIR/output.log
 
     status=${PIPESTATUS[0]}   # this get the return code of gcloud
     [ $status -eq 0 ] || (
@@ -352,7 +352,8 @@ check_config_sanity(){
         sleep 2
     else
         if [ "$ZONE" != "$INF_ZONE" ]; then
-            read -p "ZONE=$ZONE does not match the inferred zone $INF_ZONE from VM_NAME=$VM_NAME. Continue? (y/N) " yn
+            # use red
+            read -p $'\033[31m[Warning] ZONE='$ZONE' does not match the inferred zone '$INF_ZONE' from VM_NAME='$VM_NAME'. Continue? (y/N) \033[0m' yn
             if [ "$yn" != "y" ]; then
                 echo "[INFO] Aborted."
                 return 1
