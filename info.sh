@@ -62,4 +62,32 @@ get_tpu_users(){
     shopt -u nullglob
 }
 
-get_tpu_users
+# get_tpu_users
+
+in_use(){
+    # sudo lsof -w 
+    # if /dev/accel0 exist, check
+    if [[ -e /dev/accel0 ]]; then
+        ret=$(sudo lsof -w /dev/accel0 | wc -l)
+        if [[ "$ret" -ne 0 ]]; then
+            return 1
+        else
+            return 0
+        fi
+    fi
+
+    if [[ -e /dev/vfio/0 ]]; then
+        ret=$(sudo lsof -w /dev/vfio/0 | wc -l)
+        if [[ "$ret" -ne 0 ]]; then
+            return 1
+        else
+            return 0
+        fi
+    fi
+
+    echo "No TPU device found"
+    return 2
+}
+
+in_use
+echo "in_use: $?"

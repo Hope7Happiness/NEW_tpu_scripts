@@ -116,3 +116,33 @@ kill_tpu(){
     echo job killed
     "
 }
+
+
+tpu_in_use(){
+    # use the newest script
+    IN_USE_SCRIPT="
+    # if /dev/accel0 exist, check
+    if [[ -e /dev/accel0 ]]; then
+        ret=\$(sudo lsof -w /dev/accel0 | wc -l)
+        if [[ \"\$ret\" -ne 0 ]]; then
+            exit 1
+        else
+            exit 0
+        fi
+    fi
+
+    if [[ -e /dev/vfio/0 ]]; then
+        ret=\$(sudo lsof -w /dev/vfio/0 | wc -l)
+        if [[ \"\$ret\" -ne 0 ]]; then
+            exit 1
+        else
+            exit 0
+        fi
+    fi
+
+    echo \"No TPU device found\"
+    exit 2
+    "
+    wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone=$ZONE --worker=all --command "$IN_USE_SCRIPT" && ret=0 || ret=$?
+    return $ret
+}

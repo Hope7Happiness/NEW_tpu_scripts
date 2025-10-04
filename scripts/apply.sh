@@ -155,25 +155,29 @@ good_tpu(){
 }
 
 good_tpu_verbose(){
-    good_tpu $VM_NAME $ZONE && ret=0 || ret=$?
-    # match ret
-    case $ret in
-        0)
-            echo -e "\033[32m[Info] TPU VM $VM_NAME is ready.\033[0m"
-            ;;
-        1)
-            echo -e "\033[31m[Internal Error] $VM_NAME is unset.\033[0m"
-            ;;
-        2)
-            echo -e "\033[31m[Bad] TPU VM $VM_NAME is deleted.\033[0m"
-            ;;
-        3)
-            echo -e "\033[33m[Info] TPU VM $VM_NAME is in use.\033[0m"
-            ;;
-        *)
-            echo -e "\033[31m[Internal Error] Unknown error occurred when checking TPU VM $VM_NAME. Please use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
-            ;;
-    esac
+    VM_NAME=$1
+    ZONE=$2
+
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    if ! has_tpu $VM_NAME $ZONE; then
+        echo -e "\033[31m[Bad] TPU VM $VM_NAME is deleted.\033[0m"
+        return
+    fi
+
+    if ! tpu_in_use $VM_NAME $ZONE; then
+        echo -e "\033[33m[Info] TPU VM $VM_NAME is in use.\033[0m"
+        return
+    fi
+
+    if check_env $VM_NAME $ZONE; then
+        echo -e "\033[32m[Info] TPU VM $VM_NAME is ready.\033[0m"
+    else
+        echo -e "\033[31m[Internal Error] TPU VM $VM_NAME is not properly set up. Please use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
+    fi
 }
 
 setup_tpu(){
@@ -213,8 +217,8 @@ setup_tpu(){
     "
 
     wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-    --worker=all --command "$CMD"
-    if [ $? -ne 0 ]; then
+    --worker=all --command "$CMD" && ret=0 || ret=$?
+    if [ $ret -ne 0 ]; then
         echo -e "\033[31m[Error] Environment setup failed. Use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
         return 1
     fi
