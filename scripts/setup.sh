@@ -85,6 +85,9 @@ while_check_env(){
         fi
         if [ "$yn" = "y" ]; then
             kill_tpu $VM_NAME $ZONE && ret=0 || ret=$?
+        else
+            echo "[INFO] Not killing the TPU process. Exiting."
+            return 3
         fi
     fi
     check_env $VM_NAME $ZONE && ret=0 || ret=$?

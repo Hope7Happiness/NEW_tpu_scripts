@@ -1,7 +1,7 @@
 level=0
 while true; do 
     sudo umount -l /kmh-nfs-ssd-eu-mount || true
-    ls /kmh-nfs-ssd-eu-mount/code/siri
+    ls /kmh-nfs-ssd-us-mount/code/siri
     if [ $? -eq 0 ]; then
         echo "Disk is already mounted."
         break
