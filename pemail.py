@@ -11,7 +11,9 @@ with open(os.path.join(os.path.dirname(__file__), 'secret.json'), 'r') as f:
 
 sender = secret['sender']
 password = secret['password']
-receiver = secret['receiver']
+receivers = secret['receivers']
+
+receiver = receivers[0]
 
 process_time = lambda t, format="%a %b %d %H:%M:%S %Z %Y": datetime.datetime.strptime(t, format)
 process_card = lambda name: name[len('kmh-tpuvm-'):]
@@ -26,6 +28,7 @@ def apply_success(card_name, start_time, end_time, trials):
     msg["Subject"] = "Card {} created".format(card_name)
     msg["From"] = sender
     msg["To"] = receiver
+    msg["Cc"] = ', '.join(receivers[1:])
     return msg
 
 def apply_fail(card_name, start_time, end_time, trials):
@@ -38,6 +41,7 @@ def apply_fail(card_name, start_time, end_time, trials):
     msg["Subject"] = "Card {} creation FAILED".format(card_name)
     msg["From"] = sender
     msg["To"] = receiver
+    msg["Cc"] = ', '.join(receivers[1:])
     return msg
 
 def queue_start(stage_dir, start_time, end_time, vm_name):
@@ -50,13 +54,17 @@ def queue_start(stage_dir, start_time, end_time, vm_name):
     msg["Subject"] = "Job at {} starting on {}".format(stage_dir, card_name)
     msg["From"] = sender
     msg["To"] = receiver
+    msg["Cc"] = ', '.join(receivers[1:])
     return msg
 
 cmd = sys.argv[1].lstrip('--').replace('-', '_')
 msg = globals()[cmd](*sys.argv[2:])
+receiver = receivers[0]
 
-with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-    server.login(sender, password)
-    server.sendmail(sender, [receiver], msg.as_string())
+print(msg.as_string())
 
-print("Email sent successfully to {}".format(receiver))
+# with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+#     server.login(sender, password)
+#     server.sendmail(sender, receivers, msg.as_string())
+
+print("Email sent successfully to {}".format(receivers))
