@@ -61,10 +61,10 @@ cmd = sys.argv[1].lstrip('--').replace('-', '_')
 msg = globals()[cmd](*sys.argv[2:])
 receiver = receivers[0]
 
-print(msg.as_string())
+# print(msg.as_string())
 
-# with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-#     server.login(sender, password)
-#     server.sendmail(sender, receivers, msg.as_string())
+with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+    server.login(sender, password)
+    server.sendmail(sender, receivers, msg.as_string())
 
 print("Email sent successfully to {}".format(receivers))
