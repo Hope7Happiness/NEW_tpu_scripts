@@ -47,7 +47,7 @@ run_job(){
     RND_STR=$(cat /dev/urandom | tr -cd 'a-f0-9' | head -c 8)
     exist_logs=$(ls $LOG_ROOT 2>/dev/null | wc -l)
     cur_log_id=$((exist_logs+1))
-    LOG_DIR=$LOG_ROOT/log${cur_log_id}_${NOW_STR}_VM${VM_NAME}_${RND_STR}
+    LOG_DIR=$LOG_ROOT/log${cur_log_id}_${NOW_STR}_VM${VM_NAME}_Z${ZONE}_${RND_STR}
 
     # EXTRA_ARGS should be a list
     EXTRA_ARGS=()
@@ -84,7 +84,7 @@ run_job(){
     DBG_COMMANDS="ls $CONDA_PY_PATH"
     py_path=$CONDA_PY_PATH
     # if VM_NAME contains v6, don't use conda
-    if [[ $VM_NAME =~ v6e ]]; then
+    if use_v6_based $VM_NAME; then
         py_path="python"
         DBG_COMMANDS="which python"
     fi
@@ -265,9 +265,9 @@ run_matmul(){
     DBG_COMMANDS="ls $CONDA_PY_PATH"
     py_path=$CONDA_PY_PATH
     # if VM_NAME contains v6, don't use conda
-    if [[ $VM_NAME =~ v6e ]]; then
+    if use_v6_based $VM_NAME; then
         py_path="python"
-    DBG_COMMANDS="which python"
+        DBG_COMMANDS="which python"
     fi
 
     MATMUL_SCRIPT="import jax as j,time as t;from flax.jax_utils import replicate as e;p=j.numpy;r=j.random;k=r.PRNGKey(0);N=1<<15;_T=e(r.normal(k,(N,N)));__=j.pmap(lambda _: _.T@_/p.linalg.norm(_@_.T));exec('while True: (__(_T), t.sleep(0.5))')"
@@ -336,8 +336,11 @@ check_config_sanity(){
         export INF_ZONE=us-central2-b
     elif [[ $VM_NAME =~ v5litepod ]]; then
         export INF_ZONE=us-central1-a
+    elif [[ $VM_NAME =~ v5p ]]; then
+        export INF_ZONE=us-east5-a
     elif [[ $VM_NAME =~ v6e ]]; then
-        export INF_ZONE=us-east1-d
+        # export INF_ZONE=us-east1-d
+        echo "current will not infer v6e zone"
     fi
 
     if [ -z "$ZONE" ]; then
@@ -351,7 +354,7 @@ check_config_sanity(){
         echo -e "\033[32m[Info] Inferred ZONE=$ZONE from VM_NAME=$VM_NAME.\033[0m"
         sleep 2
     else
-        if [ "$ZONE" != "$INF_ZONE" ]; then
+        if [[ ! -z "$INF_ZONE" && "$ZONE" != "$INF_ZONE" ]]; then
             # use red
             read -p $'\033[31m[Warning] ZONE='$ZONE' does not match the inferred zone '$INF_ZONE' from VM_NAME='$VM_NAME'. Continue? (y/N) \033[0m' yn
             if [ "$yn" != "y" ]; then

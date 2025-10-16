@@ -8,6 +8,46 @@ wrap_gcloud(){
     fi
 }
 
+use_v6_based(){
+    VM_NAME=$1
+
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    if [[ $VM_NAME =~ v6e ]]; then
+        return 0
+    elif [[ $VM_NAME =~ v5p ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+zone_to_gs(){
+    ZONE=$1
+
+    if [ -z "$ZONE" ]; then
+        echo -e $ZONE_UNFOUND_ERROR
+        return 1
+    fi
+
+    if [[ $ZONE =~ us-central2.* ]]; then
+        echo "gs://kmh-gcp-us-central2"
+    elif [[ $ZONE =~ us-east1.* ]]; then
+        echo "gs://kmh-gcp-us-east1"
+    elif [[ $ZONE =~ us-east5.* ]]; then
+        # ZHH: a surrogate solution. DO NOT USE v5p for imgnet training
+        echo "gs://kmh-gcp-us-east1"
+    elif [[ $ZONE =~ us-central1.* ]]; then
+	echo "gs://kmh-gcp-us-central1"
+    else
+        echo -e $ZONE_UNFOUND_ERROR >&2
+        exit 1
+    fi
+}
+
 check_env(){
     # Check whether JAX can run
 
@@ -22,7 +62,7 @@ check_env(){
     py_path=$CONDA_PY_PATH
     # if VM_NAME contains v6, don't use conda
     IS_V6=0
-    if [[ $VM_NAME =~ v6e ]]; then
+    if use_v6_based $VM_NAME; then
         py_path="python"
         IS_V6=1
     fi
@@ -108,11 +148,11 @@ kill_tpu(){
         return 1
     fi
 
-    KILLER=$(cat $ZHH_SCRIPT_ROOT/scripts/new_killer.sh)
+    # KILLER=$(cat $ZHH_SCRIPT_ROOT/scripts/new_killer.sh)
 
     sleep 2
     gcloud compute tpus tpu-vm ssh $VM_NAME --zone=$ZONE --worker=all --command "
-    $KILLER
+    sudo bash $ZHH_SCRIPT_ROOT/scripts/new_killer.sh
     echo job killed
     "
 }

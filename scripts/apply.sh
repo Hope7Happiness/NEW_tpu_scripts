@@ -25,6 +25,10 @@ get_accelerator_version(){
     # if card is *v6*
     if [[ $VM_NAME =~ v6 ]]; then
         echo "v2-alpha-tpuv6e"
+    elif [[ $VM_NAME =~ v5e ]]; then
+        echo "v2-alpha-tpuv5-lite"
+    elif [[ $VM_NAME =~ v5p ]]; then
+        echo "v2-alpha-tpuv5"
     else
         echo "tpu-ubuntu2204-base"
     fi
@@ -193,7 +197,7 @@ setup_tpu(){
 
     py_path=$CONDA_PY_PATH
     # if VM_NAME contains v6, don't use conda
-    if [[ $VM_NAME =~ v6e ]]; then
+    if use_v6_based $VM_NAME; then
         py_path="python"
     fi
     WANDB_LOGIN_STR="$py_path -m wandb login $WANDB_API_KEY"
@@ -201,8 +205,18 @@ setup_tpu(){
     if [ "$DO_TPU_SETUP" = "1" ]; then
         MOUNT_DISK_STR=$(cat $ZHH_SCRIPT_ROOT/scripts/mount_disk.sh)
 
-        if [[ $VM_NAME =~ v6e ]]; then
-            PIP_INSTALL_STR=$(cat $ZHH_SCRIPT_ROOT/scripts/install_v6e.sh)
+        if use_v6_based $VM_NAME; then
+            gs_str=$(zone_to_gs $ZONE)
+            PIP_INSTALL_STR="
+            set -euo pipefail
+
+            cd
+            gsutil -m cp -r $gs_str/hanhong/v6_wheels.tar.gz ./wheels.tar.gz
+            tar -xvf wheels.tar.gz
+            rm -rf .local || true
+            pip install --no-index --find-links=wheels wheels/*.whl --no-deps --force-reinstall --no-warn-script-location
+            rm -rf wheels wheels.tar.gz
+            "
         else
             PIP_INSTALL_STR=$(cat $ZHH_SCRIPT_ROOT/scripts/install.sh)
         fi
