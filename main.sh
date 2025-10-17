@@ -12,7 +12,7 @@ source $ZHH_SCRIPT_ROOT/scripts/launch.sh
 # ka.sh has to be sourced in each TMUX window
 # source ka.sh
 no_need_check=$(
-    [[ "$1" == "s" || "$1" == "wall" || ("$1" == "w" && "$2" == "all") || ("$1" =~ ^h) ]] \
+    [[ "$1" == "s" || "$1" == "wall" || ("$1" == "w" && "$2" == "all") || "$1" == "dall" || ("$1" == "d" && "$2" == "all") || ("$1" =~ ^h) ]] \
     && echo true || echo false
 )
 
@@ -31,6 +31,10 @@ if $no_need_check || check_config_sanity; then
         zwhat $2
     elif [ "$1" = "wall" ]; then
         zwhat all
+    elif [ "$1" = "d" ]; then
+        zdelete
+    elif [ "$1" = "dall" ]; then
+        zdelete all
     elif [ "$1" = "g" ]; then
         zget
     elif [ "$1" = "mm" ]; then

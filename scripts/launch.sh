@@ -325,6 +325,41 @@ zwhat(){
     done;
 }
 
+
+zdelete(){
+    COMMON_ERR_MSG="\033[31m[Error] Please use '--all' to deregister all bad tpus, or use the \$VM_NAME env var to de-register current tpu\033[0m"
+
+    if [ ! -z "$1" ]; then
+        if [[ "$1" =~ .*all.* ]]; then
+            res=$(list_tpus)
+            VM_NAMES=($(echo "$res" | awk '{print $1}'))
+            ZONES=($(echo "$res" | awk '{print $2}'))
+        else
+            echo -e $COMMON_ERR_MSG
+            return 1
+        fi
+    else
+        if [ -z "$VM_NAME" ]; then
+            echo -e $COMMON_ERR_MSG
+            return 1
+        fi
+
+        VM_NAMES=($VM_NAME)
+        ZONES=($ZONE)
+    fi
+
+    for i in "${!VM_NAMES[@]}"; do
+        VM_NAME=${VM_NAMES[$i]}
+        ZONE=${ZONES[$i]}
+        if get_tpu_check_result $VM_NAME | grep -q "ready"; then
+            echo -e "\033[33m[Info] TPU $VM_NAME is ready, skip deregister.\033[0m"
+            continue
+        fi
+        deregister_tpu $VM_NAME
+        echo -e "\033[32m[Info] Deregistered TPU $VM_NAME\033[0m"
+    done;
+}
+
 check_config_sanity(){
     if [ -z "$VM_NAME" ]; then
         echo -e "\033[31m[Error] VM_NAME is not set. Please run \`source ka.sh\`.\033[0m" >&2

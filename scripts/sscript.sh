@@ -94,6 +94,15 @@ register_tpu(){
     echo "ready" | sudo tee $SSCRIPT_HOME/$VM_NAME/check_result
 }
 
+deregister_tpu(){
+    if [ -z "$1" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    sudo rm -rf $SSCRIPT_HOME/$1
+}
+
 log_tpu_check_result(){
     if [ -z "$VM_NAME" ]; then
         echo -e $VM_UNFOUND_ERROR
@@ -104,6 +113,15 @@ log_tpu_check_result(){
 
     sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
     echo "$RESULT" | sudo tee $SSCRIPT_HOME/$VM_NAME/check_result
+}
+
+get_tpu_check_result(){
+    if [ -z "$1" ]; then
+        echo -e "\033[31m[Internal Error] VM name arg is missing.\033[0m"
+        return 1
+    fi
+
+    cat $SSCRIPT_HOME/$1/check_result 2>/dev/null || echo "NO CHECK RESULT"
 }
 
 show_all_tpu_status(){
@@ -124,7 +142,7 @@ show_all_tpu_status(){
         raw_status=$(cat $SSCRIPT_HOME/$raw_vm_name/status 2>/dev/null || echo "UNKNOWN")
         status=$(echo $raw_status | sed -E 's/STARTED/\\033[34m&\\033[0m/g' | sed -E 's/FAILED/\\033[31m&\\033[0m/g' | sed -E 's/FINISHED/\\033[32m&\\033[0m/g')
 
-        raw_tpu_check_result=$(cat $SSCRIPT_HOME/$raw_vm_name/check_result 2>/dev/null || echo "NO CHECK RESULT")
+        raw_tpu_check_result=$(get_tpu_check_result $raw_vm_name)
         tpu_check_result=$(echo $raw_tpu_check_result | sed -E 's/ready/\\033[32m&\\033[0m/g' | sed -E 's/deleted/\\033[31m&\\033[0m/g' | sed -E 's/in\ use/\\033[33m&\\033[0m/g')
 
         # if no log for 30 min, switch "STARTED" to "STALED"
