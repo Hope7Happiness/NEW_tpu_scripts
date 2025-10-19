@@ -197,7 +197,7 @@ setup_tpu(){
 
     py_path=$CONDA_PY_PATH
     # if VM_NAME contains v6, don't use conda
-    if use_v6_based $VM_NAME; then
+    if use_v6_script $VM_NAME; then
         py_path="python"
     fi
     WANDB_LOGIN_STR="$py_path -m wandb login $WANDB_API_KEY"
@@ -205,18 +205,31 @@ setup_tpu(){
     if [ "$DO_TPU_SETUP" = "1" ]; then
         MOUNT_DISK_STR=$(cat $ZHH_SCRIPT_ROOT/scripts/mount_disk.sh)
 
-        if use_v6_based $VM_NAME; then
+        if use_v6_script $VM_NAME; then
             gs_str=$(zone_to_gs $ZONE)
-            PIP_INSTALL_STR="
-            set -euo pipefail
+            if use_v5_env $VM_NAME; then
+                PIP_INSTALL_STR="
+                set -euo pipefail
 
-            cd
-            gsutil -m cp -r $gs_str/hanhong/v6_wheels.tar.gz ./wheels.tar.gz
-            tar -xvf wheels.tar.gz
-            rm -rf .local || true
-            pip install --no-index --find-links=wheels wheels/*.whl --no-deps --force-reinstall --no-warn-script-location
-            rm -rf wheels wheels.tar.gz
-            "
+                cd
+                gsutil -m cp -r $gs_str/hanhong/v5_wheels.tar.gz ./wheels.tar.gz
+                tar -xvf wheels.tar.gz
+                rm -rf .local || true
+                pip install --no-index --find-links=wheels wheels/*.whl --no-deps --force-reinstall --no-warn-script-location
+                rm -rf wheels wheels.tar.gz
+                "
+            else
+                PIP_INSTALL_STR="
+                set -euo pipefail
+
+                cd
+                gsutil -m cp -r $gs_str/hanhong/v6_wheels.tar.gz ./wheels.tar.gz
+                tar -xvf wheels.tar.gz
+                rm -rf .local || true
+                pip install --no-index --find-links=wheels wheels/*.whl --no-deps --force-reinstall --no-warn-script-location
+                rm -rf wheels wheels.tar.gz
+                "
+            fi
         else
             PIP_INSTALL_STR=$(cat $ZHH_SCRIPT_ROOT/scripts/install.sh)
         fi
@@ -234,6 +247,10 @@ setup_tpu(){
     --worker=all --command "$CMD" && ret=0 || ret=$?
     if [ $ret -ne 0 ]; then
         echo -e "\033[31m[Error] Environment setup failed. Use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
+        # check if DO_TPU_SETUP is not set
+        if [ "$DO_TPU_SETUP" != "1" ]; then
+            echo -e "\033[33m[Hint] Is the TPU set up? Use \`DO_TPU_SETUP=1\` to force environment setup on TPU VM.\033[0m"
+        fi
         return 1
     fi
 

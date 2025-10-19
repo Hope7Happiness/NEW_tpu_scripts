@@ -27,7 +27,7 @@ stage(){
 
     sudo mkdir -p $STAGE_DIR
     sudo chmod 777 $STAGE_DIR
-    echo "[INFO] staging files"
+    echo "[INFO] staging files" >&2
     sudo rsync -a -O --exclude '.git' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' . $STAGE_DIR
 }
 
@@ -84,7 +84,7 @@ run_job(){
     DBG_COMMANDS="ls $CONDA_PY_PATH"
     py_path=$CONDA_PY_PATH
     # if VM_NAME contains v6, don't use conda
-    if use_v6_based $VM_NAME; then
+    if use_v6_script $VM_NAME; then
         py_path="python"
         DBG_COMMANDS="which python"
     fi
@@ -265,7 +265,7 @@ run_matmul(){
     DBG_COMMANDS="ls $CONDA_PY_PATH"
     py_path=$CONDA_PY_PATH
     # if VM_NAME contains v6, don't use conda
-    if use_v6_based $VM_NAME; then
+    if use_v6_script $VM_NAME; then
         py_path="python"
         DBG_COMMANDS="which python"
     fi

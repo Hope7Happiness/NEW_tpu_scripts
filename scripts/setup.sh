@@ -8,7 +8,9 @@ wrap_gcloud(){
     fi
 }
 
-use_v6_based(){
+use_v6_script(){
+    # use_v6_script means:
+    # 1. use gs bucket for python env
     VM_NAME=$1
 
     if [ -z "$VM_NAME" ]; then
@@ -19,6 +21,24 @@ use_v6_based(){
     if [[ $VM_NAME =~ v6e ]]; then
         return 0
     elif [[ $VM_NAME =~ v5p ]]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
+use_v5_env(){
+    # use v5 env instead of v6 during installation
+    VM_NAME=$1
+
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    # if [[ $VM_NAME =~ v6e ]]; then
+        # return 0
+    if [[ $VM_NAME =~ v5p ]]; then
         return 0
     else
         return 1
@@ -62,7 +82,7 @@ check_env(){
     py_path=$CONDA_PY_PATH
     # if VM_NAME contains v6, don't use conda
     IS_V6=0
-    if use_v6_based $VM_NAME; then
+    if use_v6_script $VM_NAME; then
         py_path="python"
         IS_V6=1
     fi
