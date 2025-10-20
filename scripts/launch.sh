@@ -200,10 +200,10 @@ zrerun(){
     fi
 
     # check if .extra_args exists
-    EXTRA_ARGS=""
+    # EXTRA_ARGS=""
     if [ -f .extra_args ]; then
-        EXTRA_ARGS=$(cat .extra_args)
-        echo "[INFO] Using extra args: $EXTRA_ARGS"
+        read -a EXTRA_ARGS < <(cat .extra_args) || true
+        echo "[INFO] Using extra args: ${EXTRA_ARGS[@]}"
     else
         echo "[INFO] No extra args found."
     fi
@@ -212,7 +212,7 @@ zrerun(){
     get_tpu $VM_NAME $ZONE && \
     setup_tpu $VM_NAME $ZONE && \
     register_tpu && \
-    while_run "$(pwd)" $EXTRA_ARGS
+    while_run "$(pwd)" "${EXTRA_ARGS[@]}"
 }
 
 zqueue(){
