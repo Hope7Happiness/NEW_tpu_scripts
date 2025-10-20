@@ -33,6 +33,7 @@ stage(){
 
 zkill(){
     kill_tpu $VM_NAME $ZONE
+    fail_command
 }
 
 
@@ -351,8 +352,8 @@ zdelete(){
     for i in "${!VM_NAMES[@]}"; do
         VM_NAME=${VM_NAMES[$i]}
         ZONE=${ZONES[$i]}
-        if get_tpu_check_result $VM_NAME | grep -q "ready"; then
-            echo -e "\033[33m[Info] TPU $VM_NAME is ready, skip deregister.\033[0m"
+        if ! get_tpu_check_result $VM_NAME | grep -q "deleted"; then
+            echo -e "\033[33m[Info] TPU $VM_NAME is not deleted, skip deregister.\033[0m"
             continue
         fi
         deregister_tpu $VM_NAME
