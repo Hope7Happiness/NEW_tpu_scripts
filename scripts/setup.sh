@@ -58,8 +58,8 @@ zone_to_gs(){
     elif [[ $ZONE =~ us-east1.* ]]; then
         echo "gs://kmh-gcp-us-east1"
     elif [[ $ZONE =~ us-east5.* ]]; then
-        # ZHH: a surrogate solution. DO NOT USE v5p for imgnet training
-        echo "gs://kmh-gcp-us-east1"
+        # ZHH: now we have bucket for east5!
+        echo "gs://kmh-gcp-us-east5"
     elif [[ $ZONE =~ us-central1.* ]]; then
 	echo "gs://kmh-gcp-us-central1"
     else
