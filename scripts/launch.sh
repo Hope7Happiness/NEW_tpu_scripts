@@ -51,7 +51,15 @@ run_job(){
     LOG_DIR=$LOG_ROOT/log${cur_log_id}_${NOW_STR}_VM${VM_NAME}_Z${ZONE}_${RND_STR}
 
     # EXTRA_ARGS should be a list
-    EXTRA_ARGS=()
+    local EXTRA_ARGS=()
+
+    # extra args is $@[2:]
+    # EXTRA_ARGS=("${EXTRA_ARGS[@]}" "${@:2}")
+    for arg in "${@:2}"; do
+        if [[ "$arg" =~ [[:alnum:]_] ]]; then # only add useful args
+            EXTRA_ARGS+=("$arg")
+        fi
+    done
 
     # check whether a checkpoint exists
     echo "[INFO] finding checkpoints..."
@@ -73,14 +81,6 @@ run_job(){
     sudo mkdir -p $LOG_DIR
     sudo chmod 777 $LOG_DIR
     echo "[INFO] logging to $LOG_DIR"
-
-    # extra args is $@[2:]
-    # EXTRA_ARGS=("${EXTRA_ARGS[@]}" "${@:2}")
-    for arg in "${@:2}"; do
-        if [[ "$arg" =~ [[:alnum:]_] ]]; then # only add useful args
-            EXTRA_ARGS+=("$arg")
-        fi
-    done
 
     DBG_COMMANDS="ls $CONDA_PY_PATH"
     py_path=$CONDA_PY_PATH
