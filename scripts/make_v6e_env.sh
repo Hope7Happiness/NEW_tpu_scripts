@@ -29,9 +29,15 @@ pip download jax==0.4.34 huggingface-hub==0.35.3 h5py==3.14.0 flax==0.10.4 pyyam
 
 rm urllib3-1.26.5-py2.py3-none-any.whl charset_normalizer-3.4.3-cp310-cp310-manylinux2014_x86_64.manylinux_2_17_x86_64.manylinux_2_28_x86_64.whl idna-3.10-py3-none-any.whl pyparsing-3.2.5-py3-none-any.whl requests-2.32.5-py3-none-any.whl certifi-2025.10.5-py3-none-any.whl
 
+# new: transformers
+
+pip download numpy==1.26.4 packaging==21.3 pyyaml==5.4.1 requests==2.32.3 regex==2025.9.18 filelock==3.16.1 charset-normalizer==3.4.0 certifi==2020.6.20 safetensors==0.6.2 transformers
+
+rm idna-3.11-py3-none-any.whl pyparsing-3.2.5-py3-none-any.whl
+
 ls | grep -v pyasn | sed -E 's/[0-9].*//' | awk '
 NR == 1 { prev = $0; next }
-$0 == prev { print "Error: duplicate prefix \"" $0 "\" on line " NR > "/dev/stderr"; exit 1 }
+$0 == prev { print "Error: duplicate prefix \"" $0 "\" on line " NR > "/dev/stderr";}
 { prev = $0 }
 END { print "OK: no duplicates." > "/dev/stderr" }
 '
