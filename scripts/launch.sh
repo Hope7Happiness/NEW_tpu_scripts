@@ -145,10 +145,11 @@ while_run(){
                 return 1
             elif grep -q "Failed to execute command on multiple workers. This may have happened if you have not added your SSH key to your ssh-agent" $LOG_DIR/output.log || grep -q "Terminating process because the coordinator detected missing heartbeats." $LOG_DIR/output.log; then
                 echo -e "\033[33m[Info] Found GRPC/heartbeat error in logs, will re-setup env and re-run.\033[0m"
-                sleep 60
-                kill_tpu $VM_NAME $ZONE
+                # sleep 60
+                # kill_tpu $VM_NAME $ZONE
                 sleep 60
                 setup_tpu $VM_NAME $ZONE && \
+                kill_tpu $VM_NAME $ZONE && \
                 run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
             else
                 echo -e "\033[32m[Info] Card status looks good, then it is probably a code bug. Please fix it and re-run.\033[0m"
