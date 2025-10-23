@@ -148,9 +148,14 @@ while_run(){
                 # sleep 60
                 # kill_tpu $VM_NAME $ZONE
                 sleep 60
-                setup_tpu $VM_NAME $ZONE && \
-                kill_tpu $VM_NAME $ZONE && \
-                run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
+                echo "[Debug] Re-running job..."
+                (
+                    get_tpu $VM_NAME $ZONE && \
+                    setup_tpu $VM_NAME $ZONE && \
+                    kill_tpu $VM_NAME $ZONE && \
+                    run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
+                ) && ret=0 || ret=$?
+                echo "[Debug] Re-run returned $ret"
             else
                 echo -e "\033[32m[Info] Card status looks good, then it is probably a code bug. Please fix it and re-run.\033[0m"
                 return 1
