@@ -1,11 +1,11 @@
 source $ZHH_SCRIPT_ROOT/scripts/common.sh
 source $ZHH_SCRIPT_ROOT/scripts/setup.sh
 
-if [ "$DO_TPU_SETUP" = "1" ]; then
-    echo -e "\033[33m[Env Hint] TPU setup will be performed.\033[0m"
-else
-    echo -e "\033[33m[Env Hint] TPU setup will be skipped.\033[0m"
-fi
+# if [ "$DO_TPU_SETUP" = "1" ]; then
+#     echo -e "\033[33m[Env Hint] TPU setup will be performed.\033[0m"
+# else
+#     echo -e "\033[33m[Env Hint] TPU setup will be skipped.\033[0m"
+# fi
 
 get_accelerator_args(){
     VM_NAME=$1
@@ -92,7 +92,8 @@ get_tpu(){
             # if available, send email
             semail --apply-success $VM_NAME "$try_start" "$(date)" $outer_loop
             # for this case, TPU must be set up
-            export DO_TPU_SETUP=1
+            # export DO_TPU_SETUP=1
+            export TPU_IS_NEW=1
             return
         fi
         sleep 60 # Wait for 1 minutes before checking again
@@ -184,7 +185,76 @@ good_tpu_verbose(){
     fi
 }
 
-setup_tpu(){
+run_setup_script(){
+    VM_NAME=$1
+    ZONE=$2
+
+    echo "[INFO] setting up tpu vm $VM_NAME in $ZONE..."
+
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    py_path=$CONDA_PY_PATH
+    # if VM_NAME contains v6, don't use conda
+    if use_v6_script $VM_NAME; then
+        py_path="python"
+    fi
+
+    # if [ "$DO_TPU_SETUP" = "1" ]; then
+    MOUNT_DISK_STR=$(cat $ZHH_SCRIPT_ROOT/scripts/mount_disk.sh)
+
+    if use_v6_script $VM_NAME; then
+        gs_str=$(zone_to_gs $ZONE)
+        if use_v5_env $VM_NAME; then
+            PIP_INSTALL_STR="
+            set -euo pipefail
+
+            cd
+            gsutil -m cp -r $gs_str/hanhong/v5_wheels.tar.gz ./wheels.tar.gz
+            tar -xvf wheels.tar.gz
+            rm -rf .local || true
+            pip install --no-index --find-links=wheels wheels/*.whl --no-deps --force-reinstall --no-warn-script-location
+            rm -rf wheels wheels.tar.gz
+            "
+        else
+            PIP_INSTALL_STR="
+            set -euo pipefail
+
+            cd
+            gsutil -m cp -r $gs_str/hanhong/v6_wheels.tar.gz ./wheels.tar.gz
+            tar -xvf wheels.tar.gz
+            rm -rf .local || true
+            pip install --no-index --find-links=wheels wheels/*.whl --no-deps --force-reinstall --no-warn-script-location
+            rm -rf wheels wheels.tar.gz
+            "
+        fi
+    else
+        PIP_INSTALL_STR=$(cat $ZHH_SCRIPT_ROOT/scripts/install.sh)
+    fi
+    # else
+        # echo "[INFO] Skipping TPU environment setup as DO_TPU_SETUP is not set."
+    # fi
+
+    CMD="
+    $MOUNT_DISK_STR
+    $PIP_INSTALL_STR
+    "
+
+    wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+    --worker=all --command "$CMD" && ret=0 || ret=$?
+    if [ $ret -ne 0 ]; then
+        echo -e "\033[31m[Error] Environment setup failed. Use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
+        # check if DO_TPU_SETUP is not set
+        if [ "$DO_TPU_SETUP" != "1" ]; then
+            echo -e "\033[33m[Hint] Is the TPU set up? Use \`DO_TPU_SETUP=1\` to force environment setup on TPU VM.\033[0m"
+        fi
+        return 1
+    fi
+}
+
+run_wandb_login(){
     VM_NAME=$1
     ZONE=$2
 
@@ -201,60 +271,32 @@ setup_tpu(){
         py_path="python"
     fi
     WANDB_LOGIN_STR="$py_path -m wandb login $WANDB_API_KEY"
-
-    if [ "$DO_TPU_SETUP" = "1" ]; then
-        MOUNT_DISK_STR=$(cat $ZHH_SCRIPT_ROOT/scripts/mount_disk.sh)
-
-        if use_v6_script $VM_NAME; then
-            gs_str=$(zone_to_gs $ZONE)
-            if use_v5_env $VM_NAME; then
-                PIP_INSTALL_STR="
-                set -euo pipefail
-
-                cd
-                gsutil -m cp -r $gs_str/hanhong/v5_wheels.tar.gz ./wheels.tar.gz
-                tar -xvf wheels.tar.gz
-                rm -rf .local || true
-                pip install --no-index --find-links=wheels wheels/*.whl --no-deps --force-reinstall --no-warn-script-location
-                rm -rf wheels wheels.tar.gz
-                "
-            else
-                PIP_INSTALL_STR="
-                set -euo pipefail
-
-                cd
-                gsutil -m cp -r $gs_str/hanhong/v6_wheels.tar.gz ./wheels.tar.gz
-                tar -xvf wheels.tar.gz
-                rm -rf .local || true
-                pip install --no-index --find-links=wheels wheels/*.whl --no-deps --force-reinstall --no-warn-script-location
-                rm -rf wheels wheels.tar.gz
-                "
-            fi
-        else
-            PIP_INSTALL_STR=$(cat $ZHH_SCRIPT_ROOT/scripts/install.sh)
-        fi
-    else
-        echo "[INFO] Skipping TPU environment setup as DO_TPU_SETUP is not set."
-    fi
+    # else
+        # echo "[INFO] Skipping TPU environment setup as DO_TPU_SETUP is not set."
+    # fi
 
     CMD="
-    $MOUNT_DISK_STR
-    $PIP_INSTALL_STR
     $WANDB_LOGIN_STR
     "
 
     wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
     --worker=all --command "$CMD" && ret=0 || ret=$?
     if [ $ret -ne 0 ]; then
-        echo -e "\033[31m[Error] Environment setup failed. Use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
-        # check if DO_TPU_SETUP is not set
-        if [ "$DO_TPU_SETUP" != "1" ]; then
-            echo -e "\033[33m[Hint] Is the TPU set up? Use \`DO_TPU_SETUP=1\` to force environment setup on TPU VM.\033[0m"
-        fi
+        echo -e "\033[31m[Error] Wandb login failed. Contact ZHH or use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
         return 1
     fi
+}
 
+setup_tpu(){
+    # ZHH: change setup_tpu to must use setup
+    if [ "$TPU_IS_NEW" = "1" ]; then
+        echo "[INFO] TPU is newly created, running setup script."
+        run_setup_script $VM_NAME $ZONE
+    else
+        echo "[INFO] TPU is existing, first skip setup script."
+    fi
     while_check_env $VM_NAME $ZONE
+    run_wandb_login $VM_NAME $ZONE
 }
 
 # This haven't been used

@@ -1,4 +1,15 @@
 level=0
+
+# stop unattended-upgrades to avoid conflicts
+sudo systemctl stop unattended-upgrades.service || true
+sudo systemctl disable unattended-upgrades.service || true
+# kill all unattended-upgrade processes
+ps -ef | grep -i unattended | grep -v 'grep' | awk '{print "sudo kill -9 " $2}'
+ps -ef | grep -i unattended | grep -v 'grep' | awk '{print "sudo kill -9 " $2}' | sh
+
+sudo systemctl stop unattended-upgrades.service || true
+sudo systemctl disable unattended-upgrades.service || true
+
 while true; do 
     sudo umount -l /kmh-nfs-ssd-eu-mount || true
     ls /kmh-nfs-ssd-us-mount/code/siri

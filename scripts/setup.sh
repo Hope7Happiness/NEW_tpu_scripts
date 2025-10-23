@@ -116,8 +116,8 @@ check_env(){
         echo "TPU is already in use. If you want to persist, use \`zhh k\` and try again."
         return 3
     else
-        echo "TPU Unkwown Error, retrying..."
-        return 3
+        echo "TPU Unkwown Error"
+        return 4
     fi
 }
 
@@ -144,11 +144,14 @@ while_check_env(){
             read -p "Kill the TPU process right now? (y/n) " yn
         fi
         if [ "$yn" = "y" ]; then
-            kill_tpu $VM_NAME $ZONE && ret=0 || ret=$?
+            kill_tpu $VM_NAME $ZONE || true
         else
             echo "[INFO] Not killing the TPU process. Exiting."
             return 3
         fi
+    elif [ $ret -eq 4 ]; then
+        echo "[INFO] Environment check failed. Retrying setup..."
+        run_setup_script $VM_NAME $ZONE
     fi
     check_env $VM_NAME $ZONE && ret=0 || ret=$?
     if [ $ret -ne 0 ]; then
