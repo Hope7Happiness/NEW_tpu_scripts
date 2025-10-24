@@ -147,7 +147,7 @@ while_run(){
                 echo -e "\033[33m[Info] Found GRPC/heartbeat error in logs, will re-setup env and re-run.\033[0m"
                 # sleep 60
                 # kill_tpu $VM_NAME $ZONE
-                sleep 60
+                sleep 600
                 echo "[Debug] Re-running job..."
                 (
                     get_tpu $VM_NAME $ZONE && \
