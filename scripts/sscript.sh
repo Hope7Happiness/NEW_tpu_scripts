@@ -128,6 +128,7 @@ show_all_tpu_status(){
     for folder in $SSCRIPT_HOME/*; do
         raw_vm_name=$(basename $folder)
         raw_command=$(cat $folder/command 2>/dev/null || echo "NO COMMAND FOUND")
+        vm_zone=$(cat $folder/zone 2>/dev/null || echo "NO ZONE FOUND")
 
         # highlight vm name
         vm_name=$(echo $raw_vm_name | sed -E 's/kmh-tpuvm-(v[^-]+-[0-9]+)-(.+)([0-9]+)/kmh-tpuvm-\\033[34m\1\\033[0m-\2\\033[32m\3\\033[0m/')
@@ -167,7 +168,7 @@ show_all_tpu_status(){
             fi
         fi
 
-        echo -e "\n[$status] (last log: $diff_msg ago) \033[1m$vm_name\033[0m ($tpu_check_result) -> $command\n"
+        echo -e "\n[$status] (last log: $diff_msg ago) \033[1m$vm_name @ $vm_zone\033[0m ($tpu_check_result) -> $command\n"
     done;
     echo -e "\033[1mHint\033[0m: The TPU status may not be new. Use \`zhh wall\` to refresh."
 }

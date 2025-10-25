@@ -6,7 +6,20 @@ ckpt_to_gs(){
     # path: /kmh-nfs-us-mount/staging/siri/PROJECT/other_parts
     # output: gs://kmh-gcp-us-central2/qiao_zhicheng_hanhong_files/PROJECT/other_parts
     subpath=$(echo $path | sed 's|/kmh-nfs-ssd-us-mount/staging/siri/||')
-    output=gs://kmh-gcp-us-central2/qiao_zhicheng_hanhong_files/$subpath
+
+    # upd: grep zone from subpath.
+    #     matched_zones = [z for z in ['us-central1', 'us-east1', 'us-east5', 'us-central2'] if z in path]
+    # return matched_zones[0]
+
+    zone="us-central2"
+    for zones in us-central1 us-east1 us-east5 us-central2; do
+        if [[ $subpath =~ $zones ]]; then
+            zone=$zones
+            break
+        fi
+    done
+
+    output=gs://kmh-gcp-$zone/qiao_zhicheng_hanhong_files/$subpath
     echo $output
 }
 
@@ -134,7 +147,9 @@ while_run(){
 
     # if ret==7 (job failed), auto-check card status, if bad, re-setup env and re-run
     while [ $ret -eq 7 ]; do
-        echo -e "\033[31m[Error] Job failed, auto-checking card status...\033[0m"
+        echo -e "\033[31m[Error] Job failed, first wait for a moment...\033[0m"
+        sleep 600
+        echo "[INFO] Checking TPU status..."
         if ! is_preempted $VM_NAME $ZONE; then
             # note: better make the code more likely to enter this branch
             # this will avoid infinite loop
@@ -143,11 +158,10 @@ while_run(){
             if grep -q "This TPU is going through a maintenance event, and might be unavailable" $LOG_DIR/output.log; then
                 echo -e "\033[33m[Info] Found maintenance event in logs, this TPU is no longer usable. Aborted.\033[0m"
                 return 1
-            elif grep -q "Failed to execute command on multiple workers. This may have happened if you have not added your SSH key to your ssh-agent" $LOG_DIR/output.log || grep -q "Terminating process because the coordinator detected missing heartbeats." $LOG_DIR/output.log; then
+            elif grep -q "[/usr/bin/ssh] exited with return code [255]" $LOG_DIR/output.log || grep -q "Terminating process because the coordinator detected missing heartbeats." $LOG_DIR/output.log; then
                 echo -e "\033[33m[Info] Found GRPC/heartbeat error in logs, will re-setup env and re-run.\033[0m"
                 # sleep 60
                 # kill_tpu $VM_NAME $ZONE
-                sleep 600
                 echo "[Debug] Re-running job..."
                 (
                     get_tpu $VM_NAME $ZONE && \
