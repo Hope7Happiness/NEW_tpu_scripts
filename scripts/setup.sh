@@ -61,7 +61,9 @@ zone_to_gs(){
         # ZHH: now we have bucket for east5!
         echo "gs://kmh-gcp-us-east5"
     elif [[ $ZONE =~ us-central1.* ]]; then
-	echo "gs://kmh-gcp-us-central1"
+	    echo "gs://kmh-gcp-us-central1"
+    elif [[ $ZONE =~ asia-northeast1.* ]]; then
+        echo "gs://kmh-gcp-asia-northeast1-b" # special case, by zy
     else
         echo -e $ZONE_UNFOUND_ERROR >&2
         exit 1

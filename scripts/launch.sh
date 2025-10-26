@@ -12,7 +12,7 @@ ckpt_to_gs(){
     # return matched_zones[0]
 
     zone="us-central2"
-    for zones in us-central1 us-east1 us-east5 us-central2; do
+    for zones in us-central1 us-east1 us-east5 us-central2 asia-northeast1-b; do
         if [[ $subpath =~ $zones ]]; then
             zone=$zones
             break
@@ -46,7 +46,7 @@ stage(){
 
 zkill(){
     kill_tpu $VM_NAME $ZONE
-    fail_command
+    killed_command
 }
 
 

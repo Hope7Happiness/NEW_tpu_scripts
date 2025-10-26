@@ -27,6 +27,16 @@ fail_command(){
     echo "FAILED" | sudo tee $SSCRIPT_HOME/$VM_NAME/status
 }
 
+killed_command(){
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
+    echo "KILLED" | sudo tee $SSCRIPT_HOME/$VM_NAME/status
+}
+
 success_command(){
     if [ -z "$VM_NAME" ]; then
         echo -e $VM_UNFOUND_ERROR
@@ -141,7 +151,7 @@ show_all_tpu_status(){
         log_file="$log_dir/output.log"
 
         raw_status=$(cat $SSCRIPT_HOME/$raw_vm_name/status 2>/dev/null || echo "UNKNOWN")
-        status=$(echo $raw_status | sed -E 's/STARTED/\\033[34m&\\033[0m/g' | sed -E 's/FAILED/\\033[31m&\\033[0m/g' | sed -E 's/FINISHED/\\033[32m&\\033[0m/g')
+        status=$(echo $raw_status | sed -E 's/STARTED/\\033[34m&\\033[0m/g' | sed -E 's/FAILED/\\033[31m&\\033[0m/g' | sed -E 's/FINISHED/\\033[32m&\\033[0m/g' | sed -E 's/KILLED/\\033[33m&\\033[0m/g')
 
         raw_tpu_check_result=$(get_tpu_check_result $raw_vm_name)
         tpu_check_result=$(echo $raw_tpu_check_result | sed -E 's/ready/\\033[32m&\\033[0m/g' | sed -E 's/deleted/\\033[31m&\\033[0m/g' | sed -E 's/in\ use/\\033[33m&\\033[0m/g')
