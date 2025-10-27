@@ -13,8 +13,20 @@ log_command(){
     COMMAND=$1
 
     sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
-    echo "$COMMAND" | sudo tee $SSCRIPT_HOME/$VM_NAME/command
-    echo "STARTED" | sudo tee $SSCRIPT_HOME/$VM_NAME/status
+    (echo "$COMMAND" | sudo tee $SSCRIPT_HOME/$VM_NAME/command) > /dev/null
+    (echo "STARTED" | sudo tee $SSCRIPT_HOME/$VM_NAME/status) > /dev/null
+}
+
+log_notes(){
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    NOTES=$1
+
+    sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
+    (echo "$NOTES" | sudo tee $SSCRIPT_HOME/$VM_NAME/notes) > /dev/null
 }
 
 fail_command(){
@@ -24,7 +36,7 @@ fail_command(){
     fi
 
     sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
-    echo "FAILED" | sudo tee $SSCRIPT_HOME/$VM_NAME/status
+    (echo "FAILED" | sudo tee $SSCRIPT_HOME/$VM_NAME/status) > /dev/null
 }
 
 killed_command(){
@@ -44,7 +56,7 @@ success_command(){
     fi
 
     sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
-    echo "FINISHED" | sudo tee $SSCRIPT_HOME/$VM_NAME/status
+    (echo "FINISHED" | sudo tee $SSCRIPT_HOME/$VM_NAME/status) > /dev/null
 }
 
 get_command(){
@@ -100,8 +112,8 @@ register_tpu(){
     fi
 
     sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
-    echo "$ZONE" | sudo tee $SSCRIPT_HOME/$VM_NAME/zone
-    echo "ready" | sudo tee $SSCRIPT_HOME/$VM_NAME/check_result
+    (echo "$ZONE" | sudo tee $SSCRIPT_HOME/$VM_NAME/zone) > /dev/null
+    (echo "ready" | sudo tee $SSCRIPT_HOME/$VM_NAME/check_result) > /dev/null
 }
 
 deregister_tpu(){
@@ -122,7 +134,7 @@ log_tpu_check_result(){
     RESULT=$1
 
     sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
-    echo "$RESULT" | sudo tee $SSCRIPT_HOME/$VM_NAME/check_result
+    (echo "$RESULT" | sudo tee $SSCRIPT_HOME/$VM_NAME/check_result) > /dev/null
 }
 
 get_tpu_check_result(){
@@ -135,6 +147,7 @@ get_tpu_check_result(){
 }
 
 show_all_tpu_status(){
+    MSGS=()
     for folder in $SSCRIPT_HOME/*; do
         raw_vm_name=$(basename $folder)
         raw_command=$(cat $folder/command 2>/dev/null || echo "NO COMMAND FOUND")
@@ -145,7 +158,14 @@ show_all_tpu_status(){
 
         # highlight command
         # for str like *staging/\w+/(\w+)/launch*, highlight the (\w+)
-        command=$(echo $raw_command | sed -E 's#(staging/\w+/)(\w+)(/launch)#\1\\033[33m\2\\033[0m\3#g')
+        # command=$(echo $raw_command | sed -E 's#(staging/\w+/)(\w+)(/launch)#\1\\033[33m\2\\033[0m\3#g')
+        workdir=$(echo $raw_command | grep -oE -- '--workdir=[^ ]+' | sed 's#--workdir=##g')
+        # highlight workdir part
+        workdir_hl=$(echo $workdir | sed -E 's#(staging/\w+/)(\w+)(/launch_.*)#\1\\033[33m\2\\033[0m\3#g')
+        # update: now use notes
+        notes=$(cat $folder/notes 2>/dev/null || echo "wandb notes not found")
+
+
         # grep log dir: --workdir=/kmh-nfs-us-mount/staging/siri/mf_rev/launch_20250917_203208_gitfd6ce86_f72f4085/logs/log1_20250917_203225_9912f3e1/output.log
         log_dir=$(echo $raw_command | grep -oE -- '--workdir=[^ ]+' | sed 's#--workdir=##g')
         log_file="$log_dir/output.log"
@@ -178,9 +198,14 @@ show_all_tpu_status(){
             fi
         fi
 
-        echo -e "\n[$status] (last log: $diff_msg ago) \033[1m$vm_name @ $vm_zone\033[0m ($tpu_check_result) -> $command\n"
+        # echo -e "\n[$status] (last log: $diff_msg ago) \033[1m$vm_name @ $vm_zone\033[0m ($tpu_check_result) -> $notes\n\t===> check at $workdir_hl/output.log"
+        MSGS+=("\n[$status] (last log: $diff_msg ago) \033[1m$vm_name @ $vm_zone\033[0m ($tpu_check_result) -> $notes\n\t===> check at $workdir_hl/output.log")
     done;
-    echo -e "\033[1mHint\033[0m: The TPU status may not be new. Use \`zhh wall\` to refresh."
+    # sort msgs (gpt)
+    mapfile -d '' -t sorted_msgs < <(printf '%s\0' "${MSGS[@]}" | sort -z)
+    printf '%b\n' "${sorted_msgs[@]}"
+
+    echo -e "\n\033[1mHint\033[0m: The TPU status may not be new. Use \`zhh wall\` to refresh."
 }
 
 # Queue Management
@@ -197,7 +222,7 @@ queue_job(){
 
     # write STAGE_DIR using date
     NOW=$(date +"%Y%m%d_%H%M%S")
-    echo $STAGE_DIR | sudo tee $SSCRIPT_HOME/$VM_NAME/queue/$NOW
+    (echo $STAGE_DIR | sudo tee $SSCRIPT_HOME/$VM_NAME/queue/$NOW) > /dev/null
 
     # make a FIFO
     FIFO=$SSCRIPT_HOME/$VM_NAME/queue.fifo/$NOW

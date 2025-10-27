@@ -23,6 +23,16 @@ ckpt_to_gs(){
     echo $output
 }
 
+wandb_note_from_stagedir(){
+    stage_dir=$1
+    cat $stage_dir/configs/remote_run_config.yml | grep -oP 'wandb_notes: \K.*' | head -n 1
+}
+
+wandb_id_from_logdir(){
+    log_dir=$1
+    cat $log_dir/output.log | grep -oP 'wandb: .*runs/\K[^\s]+' | head -n 1
+}
+
 stage(){
     # DO NOT modify the output format, it is parsed in zrun
     if [ -z "$PROJECT" ]; then
@@ -91,6 +101,19 @@ run_job(){
         echo "[INFO] no checkpoints found in $LOG_ROOT/$LAST_LOG_DIR"
     done;
 
+    echo "[INFO] finding past wandb runs..."
+    for check_id in $(seq $((cur_log_id-1)) -1 1); do
+        LAST_LOG_DIR=$(ls $LOG_ROOT | grep log${check_id}_ | tail -n 1)
+        
+        # convert to gs bucket
+        WANDB_ID=$(wandb_id_from_logdir $LOG_ROOT/$LAST_LOG_DIR)
+        if [ ! -z "$WANDB_ID" ]; then
+            echo "[INFO]   ===>found previous wandb run id $WANDB_ID from $LOG_ROOT/$LAST_LOG_DIR"
+            EXTRA_ARGS+=("--config.wandb_resume_id=$WANDB_ID")
+            break
+        fi
+    done;
+
     sudo mkdir -p $LOG_DIR
     sudo chmod 777 $LOG_DIR
     echo "[INFO] logging to $LOG_DIR"
@@ -104,9 +127,7 @@ run_job(){
     fi
 
     # if EXTRA_ARGS exists:
-    if [ -z "$EXTRA_ARGS" ]; then
-        echo "[INFO] No extra args provided."
-    else
+    if [ ! -z "$EXTRA_ARGS" ]; then
         EXTRA_ARGS_STR=$(printf "'%s' " "${EXTRA_ARGS[@]}")
     fi
 
@@ -115,6 +136,7 @@ run_job(){
 
     # register command
     log_command "$COMMAND"
+    log_notes "$(wandb_note_from_stagedir $STAGE_DIR)"
     echo "[INFO] running command: $COMMAND"
     (echo "$COMMAND"; echo ========; echo; ) > $LOG_DIR/output.log
 
@@ -200,10 +222,8 @@ zrun(){
     STAGE_DIR=$(echo $STAGE_DIR | head -n 1 | awk '{print $3}')
 
     # if EXTRA_ARGS exists, write to a file in STAGE_DIR
-    if [ -z "$EXTRA_ARGS" ]; then
-        echo "[INFO] No extra args provided."
-    else
-        printf "'%s' " "${EXTRA_ARGS[@]}" | sudo tee $STAGE_DIR/.extra_args
+    if [ ! -z "$EXTRA_ARGS" ]; then
+        (printf "'%s' " "${EXTRA_ARGS[@]}" | sudo tee $STAGE_DIR/.extra_args) > /dev/null
     fi
 
     # prepare TPU
@@ -251,10 +271,8 @@ zqueue(){
     STAGE_DIR=$(echo $STAGE_DIR | head -n 1 | awk '{print $3}')
 
     # if EXTRA_ARGS exists, write to a file in STAGE_DIR
-    if [ -z "$EXTRA_ARGS" ]; then
-        echo "[INFO] No extra args provided."
-    else
-        printf "'%s' " "${EXTRA_ARGS[@]}" | sudo tee $STAGE_DIR/.extra_args
+    if [ ! -z "$EXTRA_ARGS" ]; then
+        (printf "'%s' " "${EXTRA_ARGS[@]}" | sudo tee $STAGE_DIR/.extra_args) > /dev/null
     fi
 
     if good_tpu $VM_NAME $ZONE && queue_isempty $VM_NAME && ! has_failure $VM_NAME; then

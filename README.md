@@ -1,5 +1,10 @@
 # New TPU Scripts
 
+TODO list:
+
+- [x] resume wandb
+- [ ] auto card selection (job management)
+
 ## Usage
 
 0. setup `ka.sh`:

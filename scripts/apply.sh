@@ -258,7 +258,7 @@ run_wandb_login(){
     VM_NAME=$1
     ZONE=$2
 
-    echo "[INFO] setting up tpu vm $VM_NAME in $ZONE..."
+    echo "[INFO] wandb login into $VM_NAME in $ZONE..."
 
     if [ -z "$VM_NAME" ]; then
         echo -e $VM_UNFOUND_ERROR
