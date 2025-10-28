@@ -59,6 +59,16 @@ success_command(){
     (echo "FINISHED" | sudo tee $SSCRIPT_HOME/$VM_NAME/status) > /dev/null
 }
 
+starting_command(){
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
+    (echo "CREATING" | sudo tee $SSCRIPT_HOME/$VM_NAME/status) > /dev/null
+}
+
 get_command(){
     if [ -z "$VM_NAME" ]; then
         echo -e $VM_UNFOUND_ERROR
@@ -208,6 +218,17 @@ show_all_tpu_status(){
     echo -e "\n\033[1mHint\033[0m: The TPU status may not be new. Use \`zhh wall\` to refresh."
 }
 
+get_available_tpu_infos(){
+    for folder in $SSCRIPT_HOME/*; do
+        vm_name=$(basename $folder)
+        zone=$(cat $folder/zone 2>/dev/null || echo "INTERNAL_ERROR")
+        status=$(cat $folder/status 2>/dev/null || echo "UNKNOWN")
+        if [ "$status" = "KILLED" ] || [ "$status" = "FINISHED" ]; then
+            echo -e "$vm_name $zone"
+        fi
+    done;
+}
+
 # Queue Management
 
 queue_job(){
@@ -301,6 +322,12 @@ show_queue_status(){
     echo -e "\033[1mQueued jobs:\033[0m"
     for folder in $SSCRIPT_HOME/*; do
         vm_name=$(basename $folder)
+
+        # if exist any file in queue
+        if ! ls $SSCRIPT_HOME/$vm_name/queue/* 2>/dev/null | grep -q .; then
+            continue
+        fi
+
         echo -e "\t$vm_name:"
         for q in $(ls $SSCRIPT_HOME/$vm_name/queue/* 2>/dev/null); do
             job_id=$(basename $q)

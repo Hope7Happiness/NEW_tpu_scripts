@@ -1,5 +1,6 @@
 source $ZHH_SCRIPT_ROOT/scripts/apply.sh
 source $ZHH_SCRIPT_ROOT/scripts/sscript.sh
+source $ZHH_SCRIPT_ROOT/scripts/auto.sh
 
 ckpt_to_gs(){
     path=$1
@@ -320,6 +321,12 @@ run_matmul(){
 
 zstatus(){
     # the original "zzz"
+
+    # joke
+    python3 -c 'import pyjokes; print(pyjokes.get_joke())' || echo 'Install pyjokes for a joke!'
+
+    echo -e '\n🤓 ready to start your day?';
+
     show_all_tpu_status
     echo
     show_queue_status
@@ -406,6 +413,9 @@ check_config_sanity(){
         return 1
     fi
 
+    auto_select
+    starting_command
+
     if [[ $VM_NAME =~ v4 ]]; then
         export INF_ZONE=us-central2-b
     elif [[ $VM_NAME =~ v5litepod ]]; then
@@ -440,8 +450,10 @@ check_config_sanity(){
 
 
     if [ -z "$WANDB_API_KEY" ]; then
-        echo -e "\033[31m[Error] WANDB_API_KEY is not set. Please run \`source ka.sh\`.\033[0m" >&2
-        return 1
+        for _ in {1..10}; do 
+        echo -e "\033[31m[FATAL Warning] WANDB_API_KEY is not set. Please run \`source ka.sh\`.\033[0m" >&2
+        done
+        # return 1
     fi
 
     echo -e "\033[32m[INFO] You are using VM_NAME=$VM_NAME (ZONE=$ZONE)\033[0m"

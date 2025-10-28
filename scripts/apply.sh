@@ -265,6 +265,11 @@ run_wandb_login(){
         return 1
     fi
 
+    if [ -z "$WANDB_API_KEY" ]; then
+        echo -e "\033[31m[Error] WANDB_API_KEY is not set, so you cannot perform wandb login. Please run \`source ka.sh\`.\033[0m" >&2
+        return 1
+    fi
+
     py_path=$CONDA_PY_PATH
     # if VM_NAME contains v6, don't use conda
     if use_v6_script $VM_NAME; then
