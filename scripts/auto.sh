@@ -1,7 +1,7 @@
 # experimental: auto select tpu
 source $ZHH_SCRIPT_ROOT/scripts/sscript.sh
 
-POOL_V6=(us-east5-b us-central2-b asia-northeast1-b)
+POOL_V6=(us-east5-b us-central1-b asia-northeast1-b)
 
 auto_select(){
     # if 'auto' in VM_NAME
@@ -27,6 +27,7 @@ auto_select(){
     echo "Auto-selecting zone from pool: ${pool[@]}"
     found_tpu=false
     infos=$(get_available_tpu_infos)
+    # todo: low card first
     while read -r vm_name zone; do
         # echo "vm=$vm_name, zone=$zone"
         # kmh-tpuvm-v6e-32-kangyang-5 -> 32
@@ -61,6 +62,7 @@ auto_select(){
     done <<< "$infos"
 
     if $found_tpu; then
+        trap 'echo -e "\n[INFO] Exiting. run this line to set VM_NAME and ZONE: export VM_NAME=$VM_NAME; export ZONE=$ZONE;"' EXIT
         return 0
     fi
 
@@ -104,5 +106,11 @@ auto_select(){
 
     # generate a random 6 digit hex code
     rand_hex=$(openssl rand -hex 3)
-    export VM_NAME="kmh-tpuvm-$tpu_cls-v${smallest_type}-kangyang-$rand_hex"
+    export VM_NAME="kmh-tpuvm-$tpu_cls-${smallest_type}-kangyang-$rand_hex"
+    # tmux
+    if [ ! -z "$TMUX" ]; then
+        tmux rename-window $(echo $VM_NAME | sed -E 's/^kmh-tpuvm-v([0-9])[a-z]*-([0-9]+)[a-z-]*-([0-9]+)$/\1-\2-\3/')
+    fi
+    starting_command
+    trap 'echo -e "\n[INFO] Exiting. run this line to set VM_NAME and ZONE: export VM_NAME=$VM_NAME; export ZONE=$ZONE;"' EXIT
 }

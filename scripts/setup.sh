@@ -95,7 +95,7 @@ check_env(){
     --worker=all --command "$ENV_CHECK" 2>&1 || true)
     # first, eliminate module not found
     if [[ $result == *"ModuleNotFoundError"* ]]; then
-        echo "Environment setup failed. Cannot find torch/jax. Use \`SCRIPT_DEBUG=1\` for more info."
+        echo "Environment is not proper setup: Cannot find torch/jax. Use \`SCRIPT_DEBUG=1\` for more info."
         return 4
     fi
     # if not IS_V6, assert miniforge3 is in result
@@ -117,6 +117,9 @@ check_env(){
     elif [[ $result == *"jaxlib.xla_extension.XlaRuntimeError: ABORTED: The TPU is already in use by process with pid"* ]]; then
         echo "TPU is already in use. If you want to persist, use \`zhh k\` and try again."
         return 3
+    elif [[ $result == *"[/usr/bin/ssh] exited with return code [255]"* ]]; then
+        echo "TPU may be preempted. Gonna re-apply..."
+        return 9
     else
         echo "TPU Unkwown Error"
         return 4
@@ -154,10 +157,13 @@ while_check_env(){
     elif [ $ret -eq 4 ]; then
         echo "[INFO] Environment check failed. Retrying setup..."
         run_setup_script $VM_NAME $ZONE
+    elif [ $ret -eq 9 ]; then
+        echo "[INFO] TPU may be preempted. Exiting to re-apply..."
+        return 9
     fi
     check_env $VM_NAME $ZONE && ret=0 || ret=$?
     if [ $ret -ne 0 ]; then
-        echo -e "\033[31m[Error] Environment setup failed. Use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
+        echo -e "\033[31m[Error] Environment is not proper setup: failed to init TPU. Use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
     fi
     return $ret
 }

@@ -124,6 +124,7 @@ register_tpu(){
     sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
     (echo "$ZONE" | sudo tee $SSCRIPT_HOME/$VM_NAME/zone) > /dev/null
     (echo "ready" | sudo tee $SSCRIPT_HOME/$VM_NAME/check_result) > /dev/null
+    (echo "FINISHED" | sudo tee $SSCRIPT_HOME/$VM_NAME/status) > /dev/null
 }
 
 deregister_tpu(){
@@ -154,6 +155,15 @@ get_tpu_check_result(){
     fi
 
     cat $SSCRIPT_HOME/$1/check_result 2>/dev/null || echo "NO CHECK RESULT"
+}
+
+get_tpu_status(){
+    if [ -z "$1" ]; then
+        echo -e "\033[31m[Internal Error] VM name arg is missing.\033[0m"
+        return 1
+    fi
+
+    cat $SSCRIPT_HOME/$1/status 2>/dev/null || echo "NO STATUS"
 }
 
 show_all_tpu_status(){

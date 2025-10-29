@@ -138,6 +138,7 @@ is_preempted(){
     )
     # if in PREEMPTED or DELETED state, return true
     if [ "$status" = "PREEMPTED" ] || [ "$status" = "DELETED" ] || [ -z "$status" ]; then
+        deregister_tpu $VM_NAME
         return 0
     else
         return 1
@@ -223,7 +224,9 @@ run_setup_script(){
             set -euo pipefail
 
             cd
-            gsutil -m cp -r $gs_str/hanhong/v6_wheels.tar.gz ./wheels.tar.gz
+            # gsutil -m cp -r $gs_str/hanhong/v6_wheels.tar.gz ./wheels.tar.gz
+            # ### new update
+            gsutil -m cp -r gs://kmh-gcp-us-central1/hanhong/v6_wheels_jax437.tar.gz ./wheels.tar.gz
             tar -xvf wheels.tar.gz
             rm -rf .local || true
             pip install --no-index --find-links=wheels wheels/*.whl --no-deps --force-reinstall --no-warn-script-location
@@ -247,9 +250,9 @@ run_setup_script(){
     if [ $ret -ne 0 ]; then
         echo -e "\033[31m[Error] Environment setup failed. Use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
         # check if DO_TPU_SETUP is not set
-        if [ "$DO_TPU_SETUP" != "1" ]; then
-            echo -e "\033[33m[Hint] Is the TPU set up? Use \`DO_TPU_SETUP=1\` to force environment setup on TPU VM.\033[0m"
-        fi
+        # if [ "$DO_TPU_SETUP" != "1" ]; then
+        #     echo -e "\033[33m[Hint] Is the TPU set up? Use \`DO_TPU_SETUP=1\` to force environment setup on TPU VM.\033[0m"
+        # fi
         return 1
     fi
 }
@@ -300,8 +303,33 @@ setup_tpu(){
     else
         echo "[INFO] TPU is existing, first skip setup script."
     fi
-    while_check_env $VM_NAME $ZONE
+    while_check_env $VM_NAME $ZONE && ret=0 || ret=$?
+    if [ $ret -eq 9 ]; then
+        echo "[INFO] TPU may be preempted during environment check. Exiting to re-apply..."
+        return 9
+    fi
     run_wandb_login $VM_NAME $ZONE
+}
+
+get_and_setup_tpu(){
+    ret=9
+    trial=0
+    while [ $ret -eq 9 ]; do
+        echo "[INFO] Attempt number $((trial+1)) to get and setup TPU..."
+        get_tpu $VM_NAME $ZONE
+        setup_tpu $VM_NAME $ZONE && ret=0 || ret=$?
+        if [ $ret -eq 0 ]; then
+            echo -e "\033[32m[INFO] TPU $VM_NAME @ $ZONE is ready to use.\033[0m"
+            return 0
+        fi
+        trial=$((trial+1))
+        if [ $trial -ge 5 ]; then
+            echo -e "\033[31m[Error] TPU $VM_NAME @ $ZONE setup failed after 5 trials. Exiting.\033[0m"
+            return 1
+        fi
+        sleep 300
+    done
+    echo -e "\033[31m[ERROR] get_and_setup_tpu exited with ret=$ret\033[0m"
 }
 
 # This haven't been used

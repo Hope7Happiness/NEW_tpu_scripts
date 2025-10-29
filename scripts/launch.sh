@@ -187,8 +187,7 @@ while_run(){
                 # kill_tpu $VM_NAME $ZONE
                 echo "[Debug] Re-running job..."
                 (
-                    get_tpu $VM_NAME $ZONE && \
-                    setup_tpu $VM_NAME $ZONE && \
+                    get_and_setup_tpu $VM_NAME $ZONE && \
                     kill_tpu $VM_NAME $ZONE && \
                     run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
                 ) && ret=0 || ret=$?
@@ -199,8 +198,7 @@ while_run(){
             fi
         else
             echo -e "\033[33m[Info] Card is PREEMPTED, will re-apply and re-run.\033[0m"
-            get_tpu $VM_NAME $ZONE && \
-            setup_tpu $VM_NAME $ZONE && \
+            get_and_setup_tpu $VM_NAME $ZONE && \
             run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
         fi
     done
@@ -208,8 +206,7 @@ while_run(){
 
 zget(){
     # get tpu only
-    get_tpu $VM_NAME $ZONE && \
-    setup_tpu $VM_NAME $ZONE && \
+    get_and_setup_tpu $VM_NAME $ZONE && \
     register_tpu
 }
 
@@ -228,8 +225,7 @@ zrun(){
     fi
 
     # prepare TPU
-    get_tpu $VM_NAME $ZONE && \
-    setup_tpu $VM_NAME $ZONE && \
+    get_and_setup_tpu $VM_NAME $ZONE && \
     register_tpu && \
     while_run $STAGE_DIR "${EXTRA_ARGS[@]}"
 }
@@ -251,8 +247,7 @@ zrerun(){
     fi
     
     # prepare TPU
-    get_tpu $VM_NAME $ZONE && \
-    setup_tpu $VM_NAME $ZONE && \
+    get_and_setup_tpu $VM_NAME $ZONE && \
     register_tpu && \
     while_run "$(pwd)" "${EXTRA_ARGS[@]}"
 }
@@ -291,16 +286,14 @@ zqueue(){
 
 zqueue_pop(){
     # release a queue slot
-    get_tpu $VM_NAME $ZONE && \
-    setup_tpu $VM_NAME $ZONE && \
+    get_and_setup_tpu $VM_NAME $ZONE && \
     register_tpu && \
     release_queue
 }
 
 run_matmul(){
     # use matmul to keep a TPU busy
-    get_tpu $VM_NAME $ZONE && \
-    setup_tpu $VM_NAME $ZONE
+    get_and_setup_tpu $VM_NAME $ZONE
 
     DBG_COMMANDS="ls $CONDA_PY_PATH"
     py_path=$CONDA_PY_PATH
@@ -397,16 +390,24 @@ zdelete(){
     for i in "${!VM_NAMES[@]}"; do
         VM_NAME=${VM_NAMES[$i]}
         ZONE=${ZONES[$i]}
-        if ! get_tpu_check_result $VM_NAME | grep -q "deleted"; then
+        # if ! get_tpu_check_result $VM_NAME | grep -q "deleted" && ! get_tpu_status $VM_NAME | grep -q "CREATING"; then
+        if get_tpu_status $VM_NAME | grep -q "CREATING" && ! get_tpu_check_result $VM_NAME | grep -q "ready" || get_tpu_check_result $VM_NAME | grep -q "deleted"; then
+            deregister_tpu $VM_NAME
+            echo -e "\033[32m[Info] Deregistered TPU $VM_NAME\033[0m"
+        else
             echo -e "\033[33m[Info] TPU $VM_NAME is not deleted, skip deregister.\033[0m"
-            continue
         fi
-        deregister_tpu $VM_NAME
-        echo -e "\033[32m[Info] Deregistered TPU $VM_NAME\033[0m"
     done;
 }
 
 check_config_sanity(){
+    if [ -z "$WANDB_API_KEY" ]; then
+        for _ in {1..10}; do 
+        echo -e "\033[31m[FATAL Warning] WANDB_API_KEY is not set. Please run \`source ka.sh\`.\033[0m" >&2
+        done
+        # return 1
+    fi
+
     if [ -z "$VM_NAME" ]; then
         echo -e "\033[31m[Error] VM_NAME is not set. Please run \`source ka.sh\`.\033[0m" >&2
         echo -e "\033[33m[Hint] Use \`zhh help\` for more info.\033[0m" >&2
@@ -414,7 +415,6 @@ check_config_sanity(){
     fi
 
     auto_select
-    starting_command
 
     if [[ $VM_NAME =~ v4 ]]; then
         export INF_ZONE=us-central2-b
@@ -446,14 +446,6 @@ check_config_sanity(){
                 return 1
             fi
         fi
-    fi
-
-
-    if [ -z "$WANDB_API_KEY" ]; then
-        for _ in {1..10}; do 
-        echo -e "\033[31m[FATAL Warning] WANDB_API_KEY is not set. Please run \`source ka.sh\`.\033[0m" >&2
-        done
-        # return 1
     fi
 
     echo -e "\033[32m[INFO] You are using VM_NAME=$VM_NAME (ZONE=$ZONE)\033[0m"

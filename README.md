@@ -5,6 +5,10 @@ TODO list:
 - [x] resume wandb
 - [ ] auto card selection (job management)
 
+Notes:
+
+`TPU_IS_NEW` can force env re-setup
+
 ## Usage
 
 0. setup `ka.sh`:
