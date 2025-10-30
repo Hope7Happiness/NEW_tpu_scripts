@@ -59,7 +59,7 @@ auto_select(){
 
         # little help: rename tmux window
         if [ ! -z "$TMUX" ]; then
-            tmux rename-window $(echo $VM_NAME | sed -E 's/^kmh-tpuvm-v([0-9])[a-z]*-([0-9]+)[a-z-]*-([0-9a-z]+)$/\1-\2-\3/')
+            tmux rename-window -t "$TMUX_PANE" $(echo $VM_NAME | sed -E 's/^kmh-tpuvm-v([0-9])[a-z]*-([0-9]+)[a-z-]*-([0-9a-z]+)$/\1-\2-\3/')
         fi
 
         break
@@ -113,7 +113,7 @@ auto_select(){
     export VM_NAME="kmh-tpuvm-$tpu_cls-${smallest_type}-kangyang-$rand_hex"
     # tmux
     if [ ! -z "$TMUX" ]; then
-        tmux rename-window $(echo $VM_NAME | sed -E 's/^kmh-tpuvm-v([0-9])[a-z]*-([0-9]+)[a-z-]*-([0-9a-z]+)$/\1-\2-\3/')
+        tmux rename-window -t "$TMUX_PANE" $(echo $VM_NAME | sed -E 's/^kmh-tpuvm-v([0-9])[a-z]*-([0-9]+)[a-z-]*-([0-9a-z]+)$/\1-\2-\3/')
     fi
     starting_command
     trap 'echo -e "\n[INFO] Exiting. run this line to set VM_NAME and ZONE: ka $VM_NAME $ZONE;"' EXIT
