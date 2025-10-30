@@ -2,12 +2,16 @@
 source $ZHH_SCRIPT_ROOT/scripts/sscript.sh
 
 POOL_V6=(us-east5-b us-central1-b asia-northeast1-b)
+POOL_V4=(us-central2-b)
 
 auto_select(){
     # if 'auto' in VM_NAME
     if [[ $VM_NAME == "autov6" || $VM_NAME == "auto" ]]; then
         pool=("${POOL_V6[@]}")
         tpu_cls=v6e
+    elif [[ "$VM_NAME" =~ "autov4" ]]; then
+        pool=("${POOL_V4[@]}")
+        tpu_cls=v4
     elif [[ "$VM_NAME" =~ "auto" ]]; then
         echo -e "\033[31m[WARNING] Unsupported auto selection argument: $VM_NAME. Current support: autov6, auto\033[0m" >&2
         return 1
@@ -55,7 +59,7 @@ auto_select(){
 
         # little help: rename tmux window
         if [ ! -z "$TMUX" ]; then
-            tmux rename-window $(echo $VM_NAME | sed -E 's/^kmh-tpuvm-v([0-9])[a-z]*-([0-9]+)[a-z-]*-([0-9]+)$/\1-\2-\3/')
+            tmux rename-window $(echo $VM_NAME | sed -E 's/^kmh-tpuvm-v([0-9])[a-z]*-([0-9]+)[a-z-]*-([0-9a-z]+)$/\1-\2-\3/')
         fi
 
         break
@@ -109,8 +113,8 @@ auto_select(){
     export VM_NAME="kmh-tpuvm-$tpu_cls-${smallest_type}-kangyang-$rand_hex"
     # tmux
     if [ ! -z "$TMUX" ]; then
-        tmux rename-window $(echo $VM_NAME | sed -E 's/^kmh-tpuvm-v([0-9])[a-z]*-([0-9]+)[a-z-]*-([0-9]+)$/\1-\2-\3/')
+        tmux rename-window $(echo $VM_NAME | sed -E 's/^kmh-tpuvm-v([0-9])[a-z]*-([0-9]+)[a-z-]*-([0-9a-z]+)$/\1-\2-\3/')
     fi
     starting_command
-    trap 'echo -e "\n[INFO] Exiting. run this line to set VM_NAME and ZONE: export VM_NAME=$VM_NAME; export ZONE=$ZONE;"' EXIT
+    trap 'echo -e "\n[INFO] Exiting. run this line to set VM_NAME and ZONE: ka $VM_NAME $ZONE;"' EXIT
 }

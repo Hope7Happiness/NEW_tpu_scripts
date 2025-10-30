@@ -26,7 +26,13 @@ ckpt_to_gs(){
 
 wandb_note_from_stagedir(){
     stage_dir=$1
-    cat $stage_dir/configs/remote_run_config.yml | grep -oP 'wandb_notes: \K.*' | head -n 1
+    # else: read $stage_dir/.extra_args, grep notes=... until '
+    note_from_arg=$(cat $stage_dir/.extra_args 2>/dev/null | grep -oP -- "notes=\K[^'\"]+")
+    if [ ! -z "$note_from_arg" ]; then
+        echo "$note_from_arg"
+    else
+        cat $stage_dir/configs/remote_run_config.yml | grep -oP 'wandb_notes: \K.*' | head -n 1
+    fi
 }
 
 wandb_id_from_logdir(){
@@ -279,7 +285,7 @@ zqueue(){
     fi
 
     queue_job $STAGE_DIR && \
-    setup_tpu $VM_NAME $ZONE && \
+    get_and_setup_tpu $VM_NAME $ZONE && \
     register_tpu && \
     while_run $STAGE_DIR "${EXTRA_ARGS[@]}"
 }
