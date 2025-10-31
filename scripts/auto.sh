@@ -2,6 +2,7 @@
 source $ZHH_SCRIPT_ROOT/scripts/sscript.sh
 
 POOL_V6=(us-east5-b us-central1-b asia-northeast1-b)
+POOL_V5=(us-central1-a us-east5-a)
 POOL_V4=(us-central2-b)
 
 auto_select(){
@@ -9,6 +10,9 @@ auto_select(){
     if [[ $VM_NAME == "autov6" || $VM_NAME == "auto" ]]; then
         pool=("${POOL_V6[@]}")
         tpu_cls=v6e
+    elif [[ "$VM_NAME" =~ "autov5" ]]; then
+        pool=("${POOL_V5[@]}")
+        tpu_cls=v5p
     elif [[ "$VM_NAME" =~ "autov4" ]]; then
         pool=("${POOL_V4[@]}")
         tpu_cls=v4
@@ -66,7 +70,7 @@ auto_select(){
     done <<< "$infos"
 
     if $found_tpu; then
-        trap 'echo -e "\n[INFO] Exiting. run this line to set VM_NAME and ZONE: export VM_NAME=$VM_NAME; export ZONE=$ZONE;"' EXIT
+        trap 'echo -e "\n[INFO] Exiting. run this line to set VM_NAME and ZONE: ka $VM_NAME $ZONE;"' EXIT
         return 0
     fi
 

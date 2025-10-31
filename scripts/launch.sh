@@ -24,16 +24,16 @@ ckpt_to_gs(){
     echo $output
 }
 
-wandb_note_from_stagedir(){
-    stage_dir=$1
-    # else: read $stage_dir/.extra_args, grep notes=... until '
-    note_from_arg=$(cat $stage_dir/.extra_args 2>/dev/null | grep -oP -- "notes=\K[^'\"]+")
-    if [ ! -z "$note_from_arg" ]; then
-        echo "$note_from_arg"
-    else
-        cat $stage_dir/configs/remote_run_config.yml | grep -oP 'wandb_notes: \K.*' | head -n 1
-    fi
-}
+# wandb_note_from_stagedir(){
+#     stage_dir=$1
+#     # else: read $stage_dir/.extra_args, grep notes=... until '
+#     note_from_arg=$(cat $stage_dir/.extra_args 2>/dev/null | grep -oP -- "notes=\K[^'\"]+")
+#     if [ ! -z "$note_from_arg" ]; then
+#         echo "$note_from_arg"
+#     else
+#         cat $stage_dir/configs/remote_run_config.yml | grep -oP 'wandb_notes: \K.*' | head -n 1
+#     fi
+# }
 
 wandb_id_from_logdir(){
     log_dir=$1
@@ -176,7 +176,7 @@ while_run(){
 
     # if ret==7 (job failed), auto-check card status, if bad, re-setup env and re-run
     while [ $ret -eq 7 ]; do
-        echo -e "\033[31m[Error] Job failed, first wait for a moment...\033[0m"
+        echo -e "\033[31m[Error] Job failed, first wait for a moment (feel free to ^C if you are here)...\033[0m"
         sleep 600
         echo "[INFO] Checking TPU status..."
         if ! is_preempted $VM_NAME $ZONE; then
@@ -427,7 +427,8 @@ check_config_sanity(){
     elif [[ $VM_NAME =~ v5litepod ]]; then
         export INF_ZONE=us-central1-a
     elif [[ $VM_NAME =~ v5p ]]; then
-        export INF_ZONE=us-east5-a
+        # export INF_ZONE=us-east5-a
+        echo "current will not infer v5p zone"
     elif [[ $VM_NAME =~ v6e ]]; then
         # export INF_ZONE=us-east1-d
         echo "current will not infer v6e zone"

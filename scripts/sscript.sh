@@ -328,6 +328,18 @@ queue_isempty(){
     fi
 }
 
+# todo: this function should not be here, it is strange, but just for a short term solution
+wandb_note_from_stagedir(){
+    stage_dir=$1
+    # else: read $stage_dir/.extra_args, grep notes=... until '
+    note_from_arg=$(cat $stage_dir/.extra_args 2>/dev/null | grep -oP -- "notes=\K[^'\"]+")
+    if [ ! -z "$note_from_arg" ]; then
+        echo "$note_from_arg"
+    else
+        cat $stage_dir/configs/remote_run_config.yml | grep -oP 'wandb_notes: \K.*' | head -n 1
+    fi
+}
+
 show_queue_status(){
     echo -e "\033[1mQueued jobs:\033[0m"
     for folder in $SSCRIPT_HOME/*; do
@@ -342,7 +354,8 @@ show_queue_status(){
         for q in $(ls $SSCRIPT_HOME/$vm_name/queue/* 2>/dev/null); do
             job_id=$(basename $q)
             stage_dir=$(cat $q)
-            echo -e "\t\t$job_id --> $stage_dir"
+            wandb_notes=$(wandb_note_from_stagedir $stage_dir)
+            echo -e "\t\t$job_id --> ($wandb_notes) $stage_dir"
         done;
         echo;
     done;
