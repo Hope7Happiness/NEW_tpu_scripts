@@ -277,7 +277,15 @@ zqueue(){
         (printf "'%s' " "${EXTRA_ARGS[@]}" | sudo tee $STAGE_DIR/.extra_args) > /dev/null
     fi
 
-    if good_tpu $VM_NAME $ZONE && queue_isempty $VM_NAME && ! has_failure $VM_NAME; then
+    # if good_tpu $VM_NAME $ZONE && queue_isempty $VM_NAME && ! has_failure $VM_NAME; then
+    #     echo -e "\033[32m[INFO] TPU VM $VM_NAME is already free and no jobs in queue. Directly running...\033[0m"
+    #     setup_tpu $VM_NAME $ZONE && \
+    #     while_run $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
+    #     return $ret
+    # fi
+    if has_failure $VM_NAME; then
+        echo -e "\033[33m[Info] TPU VM $VM_NAME has failure. Will enter queue state...\033[0m"
+    elif good_tpu $VM_NAME $ZONE && queue_isempty $VM_NAME; then
         echo -e "\033[32m[INFO] TPU VM $VM_NAME is already free and no jobs in queue. Directly running...\033[0m"
         setup_tpu $VM_NAME $ZONE && \
         while_run $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
