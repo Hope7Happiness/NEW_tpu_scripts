@@ -290,6 +290,49 @@ zqueue(){
     while_run $STAGE_DIR "${EXTRA_ARGS[@]}"
 }
 
+zqueue_rerun(){
+    # check if in staging dir
+    if [[ ! $(pwd) =~ /kmh-nfs-ssd-us-mount/staging/ ]]; then
+        echo -e "\033[31m[Error] You are NOT in a staging directory. Aborted.\033[0m" >&2
+        return 1
+    fi
+
+    if [ -f .extra_args ]; then
+        read -a EXTRA_ARGS < <(cat .extra_args) || true
+        echo "[INFO] Using extra args: ${EXTRA_ARGS[@]}"
+    else
+        echo "[INFO] No extra args found."
+    fi
+
+    # confirm
+    read -p "Queue the job on $VM_NAME, with args $EXTRA_ARGS... ? (y/N) " yn
+    if [ "$yn" != "y" ]; then
+        echo "[INFO] Aborted."
+        return 1
+    fi
+
+    # staging to $STAGE_DIR
+    STAGE_DIR=$(stage)
+    STAGE_DIR=$(echo $STAGE_DIR | head -n 1 | awk '{print $3}')
+
+    # if EXTRA_ARGS exists, write to a file in STAGE_DIR
+    if [ ! -z "$EXTRA_ARGS" ]; then
+        (printf "'%s' " "${EXTRA_ARGS[@]}" | sudo tee $STAGE_DIR/.extra_args) > /dev/null
+    fi
+
+    if good_tpu $VM_NAME $ZONE && queue_isempty $VM_NAME && ! has_failure $VM_NAME; then
+        echo -e "\033[32m[INFO] TPU VM $VM_NAME is already free and no jobs in queue. Directly running...\033[0m"
+        setup_tpu $VM_NAME $ZONE && \
+        while_run $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
+        return $ret
+    fi
+
+    queue_job $STAGE_DIR && \
+    get_and_setup_tpu $VM_NAME $ZONE && \
+    register_tpu && \
+    while_run $STAGE_DIR "${EXTRA_ARGS[@]}"
+}
+
 zqueue_pop(){
     # release a queue slot
     get_and_setup_tpu $VM_NAME $ZONE && \

@@ -25,6 +25,8 @@ if $no_need_check || check_config_sanity; then
         zqueue "${@:2}"
     elif [ "$1" = "qq" ]; then
         zqueue_pop
+    elif [ "$1" = "qrr" ]; then
+        zqueue_rerun
     elif [ "$1" = "s" ]; then
         zstatus
     elif [ "$1" = "w" ]; then
