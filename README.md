@@ -27,14 +27,14 @@ TODO List:
     File "/kmh-nfs-ssd-us-mount/code/siri/google-cloud-sdk/lib/googlecloudsdk/
     command_lib/util/ssh/ssh.py", line 1986, in Run
         raise CommandError(args[0], return_code=status)
-    googlecloudsdk.command_lib.util.ssh.ssh.CommandError: [/usr/bin/ssh] exited 
+    googlecloudsdk.command_lib.util.ssh.ssh.CommandError: [/usr/bin/ssh] exited
     with return code [255].
-    [Error] Job failed. Check logs in /kmh-nfs-ssd-us-mount/staging/siri/.../output.log                                                                                                                                                    
-    [Error] Job failed, first wait for a moment (feel free to ^C if you are here)...                                                                                                   
-    [INFO] Checking TPU status...                                                                                                                                                      
-    [Info] Card is PREEMPTED, will re-apply and re-run.                                                                                                                                
-    [INFO] Attempt number 1 to get and setup TPU...                                                                                                                                    
-    [INFO] requesting tpu vm kmh-tpuvm-v4-64-kangyang-30d6fb in us-central2-b... 
+    [Error] Job failed. Check logs in /kmh-nfs-ssd-us-mount/staging/siri/.../output.log
+    [Error] Job failed, first wait for a moment (feel free to ^C if you are here)...
+    [INFO] Checking TPU status...
+    [Info] Card is PREEMPTED, will re-apply and re-run.
+    [INFO] Attempt number 1 to get and setup TPU...
+    [INFO] requesting tpu vm kmh-tpuvm-v4-64-kangyang-30d6fb in us-central2-b...
     ```
 
 - [X] Job queue support
@@ -42,13 +42,14 @@ TODO List:
     ```shell
     $ zhh q --config.logging.wandb_notes='sanity check'
     [INFO] You are using VM_NAME=kmh-tpuvm-v4-64-kangyang-f2dc9b (ZONE=us-central2-b)
-    Queue the job on kmh-tpuvm-v4-64-kangyang-f2dc9b, with args 
+    Queue the job on kmh-tpuvm-v4-64-kangyang-f2dc9b, with args
     --config.logging.wandb_notes=sanity check... ? (y/N) y
     [INFO] staging files
     TPU is already in use. If you want to persist, use `zhh k` and try again.
-    [Info] Queued job /kmh-nfs-ssd-us-mount/staging/siri/.../launch_20251102_183108_gitd0c7f12_0df5780d 
-    at 20251102_183118. Now, the program will stuck, which is EXPECTED. If you want to dequeue, just press 
-    Ctrl+C.
+    [Info] Queued job /kmh-nfs-ssd-us-mount/staging/siri/...
+    /launch_20251102_183108_gitd0c7f12_0df5780d
+    at 20251102_183118. Now, the program will stuck, which is EXPECTED. If you want to 
+    dequeue, just press Ctrl+C.
     ```
 
 ## 🔨 Setting Up
