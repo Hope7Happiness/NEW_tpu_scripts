@@ -63,6 +63,13 @@ stage(){
 zkill(){
     kill_tpu $VM_NAME $ZONE
     killed_command
+    # ask the user if want to dequeue
+    if ! queue_isempty; then
+        read -p "Do you want to release a queue slot for $VM_NAME? (y/N) " yn
+        if [[ "$yn" == "y" ]]; then
+            release_queue
+        fi
+    fi
 }
 
 
