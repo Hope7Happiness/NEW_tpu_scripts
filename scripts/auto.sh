@@ -114,7 +114,7 @@ auto_select(){
 
     # generate a random 6 digit hex code
     rand_hex=$(openssl rand -hex 3)
-    export VM_NAME="kmh-tpuvm-$tpu_cls-${smallest_type}-kangyang-$rand_hex"
+    export VM_NAME="kmh-tpuvm-$tpu_cls-${smallest_type}-$TPU_DEFAULT_NAME-$rand_hex"
     # tmux
     if [ ! -z "$TMUX" ]; then
         tmux rename-window -t "$TMUX_PANE" $(echo $VM_NAME | sed -E 's/^kmh-tpuvm-v([0-9])[a-z]*-([0-9]+)[a-z-]*-([0-9a-z]+)$/\1-\2-\3/')
