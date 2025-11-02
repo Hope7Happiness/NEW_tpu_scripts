@@ -6,8 +6,7 @@ ckpt_to_gs(){
     path=$1
     # path: /kmh-nfs-us-mount/staging/siri/PROJECT/other_parts
     # output: gs://kmh-gcp-us-central2/qiao_zhicheng_hanhong_files/PROJECT/other_parts
-    subpath=$(echo $path | sed 's|/kmh-nfs-ssd-us-mount/staging/siri/||')
-
+    subpath=$(echo "$path" | sed "s|/kmh-nfs-ssd-us-mount/staging/${STAGING_NAME}/||")
     # upd: grep zone from subpath.
     #     matched_zones = [z for z in ['us-central1', 'us-east1', 'us-east5', 'us-central2'] if z in path]
     # return matched_zones[0]
@@ -20,7 +19,7 @@ ckpt_to_gs(){
         fi
     done
 
-    output=gs://kmh-gcp-$zone/qiao_zhicheng_hanhong_files/$subpath
+    output=gs://kmh-gcp-$zone/$GS_STAGING_NAME/$subpath
     echo $output
 }
 
@@ -47,7 +46,7 @@ stage(){
         PROJECT=unknown
     fi
 
-    STAGE_ROOT=/kmh-nfs-ssd-us-mount/staging/siri/$PROJECT
+    STAGE_ROOT=/kmh-nfs-ssd-us-mount/staging/$STAGING_NAME/$PROJECT
     NOW_STR=$(date +'%Y%m%d_%H%M%S')
     RND_STR=$(cat /dev/urandom | tr -cd 'a-f0-9' | head -c 8)
     GIT_STR=$(git rev-parse --short HEAD)

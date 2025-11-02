@@ -15,6 +15,17 @@ no_need_check=$(
     [[ "$1" == "s" || "$1" == "wall" || ("$1" == "w" && "$2" == "all") || "$1" == "dall" || ("$1" == "d" && "$2" == "all") || ("$1" =~ ^h) ]] \
     && echo true || echo false
 )
+need_concrete_card=$(
+    [[ "$1" == "q" || "$1" == "qq" || "$1" == "qrr" ]] \
+    && echo true || echo false
+)
+
+if $need_concrete_card; then
+    if [[ "$VM_NAME" == "*auto*" ]]; then
+        echo "Error: queuing requires a concrete VM_NAME (not 'auto'). Please set VM_NAME to a specific TPU name." >&2
+        exit 1
+    fi
+fi
 
 if $no_need_check || check_config_sanity; then
     if [ "$1" = "rr" ]; then
@@ -41,8 +52,12 @@ if $no_need_check || check_config_sanity; then
         zget
     elif [ "$1" = "mm" ]; then
         run_matmul
-    elif [[ "$1" =~ ^-*h ]]; then
-        less $ZHH_SCRIPT_ROOT/README.md
+    elif [[ "$1" =~ ^h ]]; then
+        if command -v pygmentize &> /dev/null; then
+            LESSOPEN="| pygmentize -l markdown -O style=vim %s" less -R +/Usage $ZHH_SCRIPT_ROOT/README.md
+        else
+            less +/Usage $ZHH_SCRIPT_ROOT/README.md
+        fi
     else
         zrun "$@"
     fi
