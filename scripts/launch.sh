@@ -200,6 +200,7 @@ while_run(){
                 echo "[Debug] Re-running job..."
                 (
                     get_and_setup_tpu $VM_NAME $ZONE && \
+                    register_tpu && \
                     kill_tpu $VM_NAME $ZONE && \
                     run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
                 ) && ret=0 || ret=$?
@@ -211,6 +212,7 @@ while_run(){
         else
             echo -e "\033[33m[Info] Card is PREEMPTED, will re-apply and re-run.\033[0m"
             get_and_setup_tpu $VM_NAME $ZONE && \
+            register_tpu && \
             run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
         fi
     done

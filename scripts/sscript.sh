@@ -2,7 +2,6 @@
 
 source $ZHH_SCRIPT_ROOT/scripts/common.sh
 
-SSCRIPT_HOME=/kmh-nfs-ssd-us-mount/staging/.sscript
 
 log_command(){
     if [ -z "$VM_NAME" ]; then
