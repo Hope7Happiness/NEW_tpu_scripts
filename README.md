@@ -65,7 +65,7 @@ TODO List:
     ```
 - Setup your `.bashrc`:
     ```bash
-    alias zhh="/kmh-nfs-ssd-us-mount/code/siri/scripts/main.sh"
+    alias zhh="/path/to/this/repo/main.sh"
     alias zzz="zhh s"
     ```
 

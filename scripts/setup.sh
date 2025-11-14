@@ -109,7 +109,7 @@ check_env(){
 
     TEST="$py_path -c 'import jax; print(jax.devices())'"
     # read both stdout and stderr
-    result=$(timeout 90s gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+    result=$(timeout 120s gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
     --worker=all --command "$TEST" 2>&1 || true)
 
     if [[ $result == *"TpuDevice"* ]]; then
@@ -136,6 +136,7 @@ while_check_env(){
         return 1
     fi
 
+    echo "[INFO] Checking environment setup..."
     check_env $VM_NAME $ZONE && ret=0 || ret=$?
     if [ $ret -eq 0 ]; then
         echo "[INFO] Environment is ready."

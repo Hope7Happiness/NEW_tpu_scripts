@@ -307,6 +307,9 @@ setup_tpu(){
     if [ $ret -eq 9 ]; then
         echo "[INFO] TPU may be preempted during environment check. Exiting to re-apply..."
         return 9
+    elif [ $ret -ne 0 ]; then
+        echo "[INFO] Environment check failed."
+        return $ret
     fi
     run_wandb_login $VM_NAME $ZONE
 }
@@ -330,6 +333,7 @@ get_and_setup_tpu(){
         sleep 300
     done
     echo -e "\033[31m[ERROR] get_and_setup_tpu exited with ret=$ret\033[0m"
+    return $ret
 }
 
 # This haven't been used
