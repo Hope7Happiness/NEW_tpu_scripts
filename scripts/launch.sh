@@ -178,6 +178,9 @@ while_run(){
     # extra args are $2...
     EXTRA_ARGS=("${@:2}")
 
+    # trap a ^C signal
+    trap 'echo -e "\n\033[33m[Info] Caught interrupt signal. Running kill...\033[0m"; zkill; exit 0' INT
+
     run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
 
     # if ret==7 (job failed), auto-check card status, if bad, re-setup env and re-run
@@ -216,6 +219,9 @@ while_run(){
             run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
         fi
     done
+
+    trap - INT # reset trap
+    return $ret
 }
 
 zget(){

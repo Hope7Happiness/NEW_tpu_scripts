@@ -193,7 +193,7 @@ show_all_tpu_status(){
         status=$(echo $raw_status | sed -E 's/STARTED/\\033[34m&\\033[0m/g' | sed -E 's/FAILED/\\033[31m&\\033[0m/g' | sed -E 's/FINISHED/\\033[32m&\\033[0m/g' | sed -E 's/KILLED/\\033[33m&\\033[0m/g')
 
         raw_tpu_check_result=$(get_tpu_check_result $raw_vm_name)
-        tpu_check_result=$(echo $raw_tpu_check_result | sed -E 's/ready/\\033[32m&\\033[0m/g' | sed -E 's/deleted/\\033[31m&\\033[0m/g' | sed -E 's/in\ use/\\033[33m&\\033[0m/g')
+        tpu_check_result=$(echo $raw_tpu_check_result | sed -E 's/ready/\\033[32mgood\\033[0m/g' | sed -E 's/deleted/\\033[31m&\\033[0m/g' | sed -E 's/in\ use/\\033[33mgood\\033[0m/g') # we use good for both ready and in use
 
         # if no log for 30 min, switch "STARTED" to "STALED"
         # grep last log time from logdir

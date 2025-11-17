@@ -1,9 +1,15 @@
 # experimental: auto select tpu
 source $ZHH_SCRIPT_ROOT/scripts/sscript.sh
+source $ZHH_SCRIPT_ROOT/scripts/apply.sh
 
 POOL_V6=(us-east5-b us-central1-b asia-northeast1-b)
 POOL_V5=(us-central1-a us-east5-a)
 POOL_V4=(us-central2-b)
+
+trap_send_key(){
+    CMD="echo -e \"\n\033[32m[INFO] Exiting. Remember to run this line: $1 \033[0m\" && tmux send-keys -t \"$TMUX_PANE\" \"$1\" "
+    trap "$CMD" EXIT
+}
 
 auto_select(){
     # if 'auto' in VM_NAME
@@ -56,6 +62,13 @@ auto_select(){
         if ! $good_use; then
             continue
         fi
+
+        # test if tpu is actually ready
+        if ! has_tpu $vm_name $zone; then
+            echo -e "[INFO] Found not ready TPU VM $vm_name in zone $zone..."
+            continue
+        fi
+
         echo -e "Found TPU VM: \033[32m$vm_name @ $zone\033[0m (type $tpu_cls-$tpu_type)"
         export VM_NAME=$vm_name
         export ZONE=$zone
@@ -70,7 +83,8 @@ auto_select(){
     done <<< "$infos"
 
     if $found_tpu; then
-        trap 'echo -e "\n[INFO] Exiting. run this line to set VM_NAME and ZONE: ka $VM_NAME $ZONE;"' EXIT
+        # trap 'echo -e "\n\033[32m[INFO] Exiting. run this line to set VM_NAME and ZONE: ka $VM_NAME $ZONE;"\033[0m' EXIT
+        trap_send_key "ka $VM_NAME $ZONE"
         return 0
     fi
 
@@ -120,5 +134,6 @@ auto_select(){
         tmux rename-window -t "$TMUX_PANE" $(echo $VM_NAME | sed -E 's/^kmh-tpuvm-v([0-9])[a-z]*-([0-9]+)[a-z-]*-([0-9a-z]+)$/\1-\2-\3/')
     fi
     starting_command
-    trap 'echo -e "\n[INFO] Exiting. run this line to set VM_NAME and ZONE: ka $VM_NAME $ZONE;"' EXIT
+    # trap 'echo -e "\n\033[32m[INFO] Exiting. run this line to set VM_NAME and ZONE: ka $VM_NAME $ZONE;"\033[0m' EXIT
+    trap_send_key "ka $VM_NAME $ZONE"
 }

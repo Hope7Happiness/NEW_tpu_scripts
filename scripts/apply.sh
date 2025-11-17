@@ -119,6 +119,9 @@ has_tpu(){
     )
     if [ "$status" = "READY" ]; then
         return 0
+    elif [ -z "$status" ]; then
+        log_tpu_check_result deleted
+        return 1
     else
         return 1
     fi

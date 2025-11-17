@@ -16,13 +16,13 @@ no_need_check=$(
     && echo true || echo false
 )
 need_concrete_card=$(
-    [[ "$1" == "q" || "$1" == "qq" || "$1" == "qrr" ]] \
+    [[ "$1" == "k" || "$1" == "q" || "$1" == "qq" || "$1" == "qrr" ]] \
     && echo true || echo false
 )
 
 if $need_concrete_card; then
     if [[ "$VM_NAME" == "*auto*" ]]; then
-        echo "Error: queuing requires a concrete VM_NAME (not 'auto'). Please set VM_NAME to a specific TPU name." >&2
+        echo "Error: command \`zhh $1\` requires a concrete VM_NAME (not 'auto'). Please set VM_NAME to a specific TPU name." >&2
         exit 1
     fi
 fi
