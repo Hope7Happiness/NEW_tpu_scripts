@@ -230,6 +230,10 @@ show_all_tpu_status(){
 get_available_tpu_infos(){
     for folder in $SSCRIPT_HOME/*; do
         vm_name=$(basename $folder)
+        tpu_check=$(cat $folder/check_result 2>/dev/null || echo "NO CHECK RESULT")
+        if [ "$tpu_check" == "deleted" ]; then
+            continue
+        fi
         zone=$(cat $folder/zone 2>/dev/null || echo "INTERNAL_ERROR")
         status=$(cat $folder/status 2>/dev/null || echo "UNKNOWN")
         if [ "$status" = "KILLED" ] || [ "$status" = "FINISHED" ]; then

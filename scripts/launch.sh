@@ -153,10 +153,17 @@ run_job(){
     echo "[INFO] running command: $COMMAND"
     (echo "$COMMAND"; echo ========; echo; ) > $LOG_DIR/output.log
 
+
+    # trap a ^C signal
+    trap 'echo -e "\n\033[33m[Info] Caught interrupt signal. Running kill...\033[0m"; zkill; exit 0' INT
+
     cd $STAGE_DIR && \
     gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command "$DBG_COMMANDS && cd $STAGE_DIR && $COMMAND" 2>&1 | stdbuf -oL -eL sudo tee -a $LOG_DIR/output.log
 
     status=${PIPESTATUS[0]}   # this get the return code of gcloud
+
+    trap - INT # reset trap
+
     [ $status -eq 0 ] || (
         echo -e "\033[31m[Error] Job failed. Check logs in $LOG_DIR/output.log\033[0m" >&2
         fail_command
@@ -177,9 +184,6 @@ while_run(){
     STAGE_DIR=$1
     # extra args are $2...
     EXTRA_ARGS=("${@:2}")
-
-    # trap a ^C signal
-    trap 'echo -e "\n\033[33m[Info] Caught interrupt signal. Running kill...\033[0m"; zkill; exit 0' INT
 
     run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
 
@@ -220,7 +224,6 @@ while_run(){
         fi
     done
 
-    trap - INT # reset trap
     return $ret
 }
 
