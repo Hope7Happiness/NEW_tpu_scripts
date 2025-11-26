@@ -158,7 +158,8 @@ while_check_env(){
     elif [ $ret -eq 4 ]; then
         echo "[INFO] Environment check failed. Retrying verbose setup..."
         export SCRIPT_DEBUG=1
-        run_setup_script $VM_NAME $ZONE
+        export ZAK=1 # sometimes need to autokill even in the setup phase
+        run_setup_script $VM_NAME $ZONE || true
     elif [ $ret -eq 9 ]; then
         echo "[INFO] TPU may be preempted. Exiting to re-apply..."
         return 9

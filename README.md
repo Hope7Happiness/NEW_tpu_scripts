@@ -104,6 +104,7 @@ Optional env vars:
 - `TPU_TYPES`: a comma-separated (but unordered) list of TPU types to select from when using `auto` mode (default to `32,64`).
 - `SCRIPT_DEBUG`: if set to 1, enable script debugging mode (unset by default)
 - `TPU_IS_NEW`: this is a trick to fool the script to force re-setup the TPU environment, if set to 1 (unset by default)
+- `FAST_DEBUG`: if set to 1, skip the TPU get and setup process (unset by default). Useful for debugging code with fast iterations.
 
 ### 🪄 Commands
 

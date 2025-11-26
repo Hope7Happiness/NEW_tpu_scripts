@@ -119,7 +119,7 @@ has_tpu(){
     )
     if [ "$status" = "READY" ]; then
         return 0
-    elif [ -z "$status" ]; then
+    elif [[ -z "$status" || "$status" = "DELETED" || "$status" = "PREEMPTED" ]]; then
         log_tpu_check_result deleted
         return 1
     else
@@ -209,6 +209,12 @@ setup_tpu(){
 }
 
 get_and_setup_tpu(){
+
+    if [ ! -z "$FAST_DEBUG" ]; then
+        echo -e "\033[33m[INFO] FAST_DEBUG is set, skipping TPU get and setup.\033[0m"
+        return 0
+    fi
+
     ret=9
     trial=0
     while [ $ret -eq 9 ]; do
@@ -220,6 +226,7 @@ get_and_setup_tpu(){
             return 0
         fi
         trial=$((trial+1))
+        export SCRIPT_DEBUG=1 # for the subsequent runs, always use verbose mode
         if [ $trial -ge 5 ]; then
             echo -e "\033[31m[Error] TPU $VM_NAME @ $ZONE setup failed after 5 trials. Exiting.\033[0m"
             return 1

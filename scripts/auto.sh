@@ -7,7 +7,7 @@ POOL_V5=(us-central1-a us-east5-a)
 POOL_V4=(us-central2-b)
 
 trap_send_key(){
-    CMD="echo -e \"\n\033[32m[INFO] Exiting. Remember to run this line: $1 \033[0m\" && tmux send-keys -t \"$TMUX_PANE\" \"$1\" "
+    CMD="echo -e \"\n\033[32m[INFO] Exiting. Remember to run this line: $1 \033[0m\" && [ -z \"$TMUX\" ] || tmux send-keys -t \"$TMUX_PANE\" \"$1\" "
     trap "$CMD" EXIT
 }
 
@@ -124,7 +124,7 @@ auto_select(){
     fi
     # gonna apply for the smallest type in TPU_TYPES
     smallest_type=$(echo $TPU_TYPES | tr ',' '\n' | sort -n | head -n1)
-    echo "Applying for TPU VM of type v$tpu_cls-$smallest_type in zone $ZONE"
+    echo "Applying for TPU VM of type $tpu_cls-$smallest_type in zone $ZONE"
 
     # generate a random 6 digit hex code
     rand_hex=$(openssl rand -hex 3)
