@@ -248,6 +248,7 @@ run_setup_script(){
             set -euo pipefail
 
             cd
+            gcloud auth activate-service-account --key-file=/kmh-nfs-ssd-us-mount/code/qiao/sqa-sa_do_not_deleet.json
             gsutil -m cp -r $gs_str/hanhong/v5_wheels.tar.gz ./wheels.tar.gz
             tar -xvf wheels.tar.gz
             rm -rf .local || true
@@ -261,6 +262,7 @@ run_setup_script(){
             cd
             # gsutil -m cp -r $gs_str/hanhong/v6_wheels.tar.gz ./wheels.tar.gz
             # ### new update
+            gcloud auth activate-service-account --key-file=/kmh-nfs-ssd-us-mount/code/qiao/sqa-sa_do_not_deleet.json
             gsutil -m cp -r $gs_str/hanhong/v6_wheels_jax437.tar.gz ./wheels.tar.gz
             tar -xvf wheels.tar.gz
             rm -rf .local || true

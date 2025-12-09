@@ -138,6 +138,7 @@ run_job(){
         py_path="python"
         DBG_COMMANDS="which python"
     fi
+    py_path="GOOGLE_APPLICATION_CREDENTIALS=/kmh-nfs-ssd-us-mount/code/qiao/sqa-sa_do_not_deleet.json $py_path"
 
     # if EXTRA_ARGS exists:
     if [ ! -z "$EXTRA_ARGS" ]; then
@@ -208,6 +209,15 @@ while_run(){
                 (
                     get_and_setup_tpu $VM_NAME $ZONE && \
                     register_tpu && \
+                    kill_tpu $VM_NAME $ZONE && \
+                    run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
+                ) && ret=0 || ret=$?
+                echo "[Debug] Re-run returned $ret"
+            elif grep -q "Fatal Python error: Aborted" $LOG_DIR/output.log; then
+                echo -e "\033[33m[Info] Found Segfault in logs, will wait and re-run...\033[0m"
+                sleep 300
+                echo "[Debug] Re-running job..."
+                (
                     kill_tpu $VM_NAME $ZONE && \
                     run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
                 ) && ret=0 || ret=$?
