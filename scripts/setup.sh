@@ -122,6 +122,7 @@ check_env(){
         return 9
     else
         echo "TPU Unkwown Error"
+        echo "$result"
         return 4
     fi
 }

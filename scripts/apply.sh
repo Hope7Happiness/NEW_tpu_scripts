@@ -141,7 +141,7 @@ is_preempted(){
     )
     # if in PREEMPTED or DELETED state, return true
     if [ "$status" = "PREEMPTED" ] || [ "$status" = "DELETED" ] || [ -z "$status" ]; then
-        deregister_tpu $VM_NAME
+        # deregister_tpu $VM_NAME
         return 0
     else
         return 1
@@ -212,6 +212,7 @@ get_and_setup_tpu(){
 
     if [ ! -z "$FAST_DEBUG" ]; then
         echo -e "\033[33m[INFO] FAST_DEBUG is set, skipping TPU get and setup.\033[0m"
+        unset FAST_DEBUG # if for second time (i.e. card preempted), then do normal
         return 0
     fi
 

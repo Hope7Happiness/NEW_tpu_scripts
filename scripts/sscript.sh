@@ -339,7 +339,7 @@ wandb_note_from_stagedir(){
     if [ ! -z "$note_from_arg" ]; then
         echo "$note_from_arg"
     else
-        cat $stage_dir/configs/remote_run_config.yml | grep -oP 'wandb_notes: \K.*' | head -n 1
+        cat $stage_dir/configs/remote_run_config.yml | grep -v '^\s*#' | grep -oP 'wandb_notes: \K.*' | head -n 1
     fi
 }
 

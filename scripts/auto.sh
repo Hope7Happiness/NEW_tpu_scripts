@@ -84,6 +84,7 @@ auto_select(){
 
     if $found_tpu; then
         # trap 'echo -e "\n\033[32m[INFO] Exiting. run this line to set VM_NAME and ZONE: ka $VM_NAME $ZONE;"\033[0m' EXIT
+        starting_command
         trap_send_key "ka $VM_NAME $ZONE"
         return 0
     fi
