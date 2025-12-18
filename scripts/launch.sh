@@ -294,6 +294,9 @@ zrerun(){
         return 1
     fi
 
+    # parse "WHO" from pwd
+    export WHO=$(echo $(pwd) | cut -d'/' -f4)
+
     # check if .extra_args exists
     # EXTRA_ARGS=""
     if [ -f .extra_args ]; then
