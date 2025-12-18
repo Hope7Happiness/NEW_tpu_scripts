@@ -6,7 +6,13 @@ ckpt_to_gs(){
     path=$1
     # path: /kmh-nfs-us-mount/staging/siri/PROJECT/other_parts
     # output: gs://kmh-gcp-us-central2/qiao_zhicheng_hanhong_files/PROJECT/other_parts
-    subpath=$(echo "$path" | sed "s|/kmh-nfs-ssd-us-mount/staging/${STAGING_NAME}/||")
+
+    if [ -z "$WHO" ]; then
+        echo -e "\033[31m[Internal Error] WHO is not set.\033[0m" >&2
+        return 1
+    fi
+
+    subpath=$(echo "$path" | sed "s|/kmh-nfs-ssd-us-mount/staging/${WHO}/||")
     # upd: grep zone from subpath.
     #     matched_zones = [z for z in ['us-central1', 'us-east1', 'us-east5', 'us-central2'] if z in path]
     # return matched_zones[0]
@@ -46,7 +52,13 @@ stage(){
         PROJECT=unknown
     fi
 
-    STAGE_ROOT=/kmh-nfs-ssd-us-mount/staging/$STAGING_NAME/$PROJECT
+    if [ -z "$WHO" ]; then
+        echo -e "\033[31m[Error] WHO is not set. Please set it to your username.\033[0m" >&2
+        echo -e "\033[33m[Hint] Use \`zhh help\` for more info.\033[0m" >&2
+        return 1
+    fi
+
+    STAGE_ROOT=/kmh-nfs-ssd-us-mount/staging/$WHO/$PROJECT
     NOW_STR=$(date +'%Y%m%d_%H%M%S')
     RND_STR=$(cat /dev/urandom | tr -cd 'a-f0-9' | head -c 8)
     GIT_STR=$(git rev-parse --short HEAD)
@@ -186,6 +198,7 @@ while_run(){
     # extra args are $2...
     EXTRA_ARGS=("${@:2}")
 
+    log_stage_dir "$STAGE_DIR"
     run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
 
     # if ret==7 (job failed), auto-check card status, if bad, re-setup env and re-run
@@ -227,7 +240,18 @@ while_run(){
                 return 1
             fi
         else
-            echo -e "\033[33m[Info] Card is PREEMPTED, will re-apply and re-run.\033[0m"
+            echo -e "\033[33m[Info] Card $VM_NAME in $ZONE is PREEMPTED, will re-apply and re-run.\033[0m"
+            # zhh: resumes with an auto card
+            # reset EXIT trap
+            trap - EXIT
+            accel_arg=$(get_accelerator_args $VM_NAME)
+            # split by '-'
+            type_part=$(echo $accel_arg | cut -d'-' -f1)
+            size_part=$(echo $accel_arg | cut -d'-' -f2)
+            export VM_NAME="auto${type_part}"
+            export TPU_TYPES="$size_part"
+            auto_select && \
+            log_stage_dir "$STAGE_DIR" && \
             get_and_setup_tpu $VM_NAME $ZONE && \
             register_tpu && \
             run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?

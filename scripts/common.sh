@@ -1,7 +1,7 @@
 ##### YOUR SETTINGS #####
 
 CONDA_PY_PATH="/kmh-nfs-ssd-us-mount/code/eva/miniforge3/bin/python3" # your conda python path
-STAGING_NAME=siri # your stage dir is at /kmh-nfs-ssd-us-mount/staging/<STAGING_NAME>
+# STAGING_NAME=siri # your stage dir is at /kmh-nfs-ssd-us-mount/staging/<STAGING_NAME> # CURRENT DISABLED
 GS_STAGING_NAME=qiao_zhicheng_hanhong_files # your gs staging dir is at gs://kmh-gcp-us-central2/<GS_STAGING_NAME>
 TPU_DEFAULT_NAME=kangyang
 SSCRIPT_HOME=/kmh-nfs-ssd-us-mount/staging/.sscript # the place that stores your tpu infos

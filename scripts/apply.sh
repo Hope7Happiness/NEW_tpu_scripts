@@ -141,7 +141,7 @@ is_preempted(){
     )
     # if in PREEMPTED or DELETED state, return true
     if [ "$status" = "PREEMPTED" ] || [ "$status" = "DELETED" ] || [ -z "$status" ]; then
-        # deregister_tpu $VM_NAME
+        deregister_tpu $VM_NAME
         return 0
     else
         return 1
@@ -202,10 +202,17 @@ setup_tpu(){
         echo "[INFO] TPU may be preempted during environment check. Exiting to re-apply..."
         return 9
     elif [ $ret -ne 0 ]; then
-        echo "[INFO] Environment check failed."
+        echo "[INFO] Environment check failed with ret=$ret"
         return $ret
     fi
-    run_wandb_login $VM_NAME $ZONE
+    run_wandb_login $VM_NAME $ZONE && ret=0 || ret=$?
+    if [ $ret -eq 9 ]; then
+        echo "[INFO] TPU may be preempted during environment check. Exiting to re-apply..."
+        return 9
+    elif [ $ret -ne 0 ]; then
+        echo "[INFO] Wandb login failed with ret=$ret"
+        return $ret
+    fi
 }
 
 get_and_setup_tpu(){
@@ -232,6 +239,7 @@ get_and_setup_tpu(){
             echo -e "\033[31m[Error] TPU $VM_NAME @ $ZONE setup failed after 5 trials. Exiting.\033[0m"
             return 1
         fi
+        echo -e "\033[33m[INFO] Retrying to get and setup TPU after 5 minutes...\033[0m"
         sleep 300
     done
     echo -e "\033[31m[ERROR] get_and_setup_tpu exited with ret=$ret\033[0m"

@@ -13,10 +13,10 @@ trap_send_key(){
 
 auto_select(){
     # if 'auto' in VM_NAME
-    if [[ $VM_NAME == "autov6" || $VM_NAME == "auto" ]]; then
+    if [[ $VM_NAME == "autov6" || $VM_NAME == "autov6e" || $VM_NAME == "auto" ]]; then
         pool=("${POOL_V6[@]}")
         tpu_cls=v6e
-    elif [[ "$VM_NAME" =~ "autov5" ]]; then
+    elif [[ "$VM_NAME" =~ "autov5" || "$VM_NAME" =~ "autov5p" ]]; then
         pool=("${POOL_V5[@]}")
         tpu_cls=v5p
     elif [[ "$VM_NAME" =~ "autov4" ]]; then

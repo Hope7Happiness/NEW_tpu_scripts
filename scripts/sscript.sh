@@ -16,6 +16,18 @@ log_command(){
     (echo "STARTED" | sudo tee $SSCRIPT_HOME/$VM_NAME/status) > /dev/null
 }
 
+log_stage_dir(){
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    STAGE_DIR=$1
+
+    sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
+    (echo "$STAGE_DIR" | sudo tee $SSCRIPT_HOME/$VM_NAME/stage_dir) > /dev/null
+}
+
 log_notes(){
     if [ -z "$VM_NAME" ]; then
         echo -e $VM_UNFOUND_ERROR
@@ -65,7 +77,11 @@ starting_command(){
     fi
 
     sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
-    (echo "CREATING" | sudo tee $SSCRIPT_HOME/$VM_NAME/status) > /dev/null
+    (
+        echo "CREATING" | sudo tee $SSCRIPT_HOME/$VM_NAME/status && \
+        echo $ZONE | sudo tee $SSCRIPT_HOME/$VM_NAME/zone && \
+        echo "creating" | sudo tee $SSCRIPT_HOME/$VM_NAME/check_result
+    ) > /dev/null
 }
 
 get_command(){
@@ -166,6 +182,10 @@ get_tpu_status(){
 }
 
 show_all_tpu_status(){
+    if [ -z "$WHO" ]; then
+        echo -e "\033[33m[Warning] WHO is not set. Showing all statuses\033[0m" >&2
+    fi
+
     MSGS=()
     for folder in $SSCRIPT_HOME/*; do
         raw_vm_name=$(basename $folder)
@@ -179,6 +199,11 @@ show_all_tpu_status(){
         # for str like *staging/\w+/(\w+)/launch*, highlight the (\w+)
         # command=$(echo $raw_command | sed -E 's#(staging/\w+/)(\w+)(/launch)#\1\\033[33m\2\\033[0m\3#g')
         workdir=$(echo $raw_command | grep -oE -- '--workdir=[^ ]+' | sed 's#--workdir=##g')
+
+        if [ ! -z "$WHO" ] && [[ "$workdir" != *"/staging/$WHO/"* ]]; then
+            continue
+        fi
+
         # highlight workdir part
         workdir_hl=$(echo $workdir | sed -E 's#(staging/\w+/)(\w+)(/launch_.*)#\1\\033[33m\2\\033[0m\3#g')
         # update: now use notes
@@ -193,7 +218,7 @@ show_all_tpu_status(){
         status=$(echo $raw_status | sed -E 's/STARTED/\\033[34m&\\033[0m/g' | sed -E 's/FAILED/\\033[31m&\\033[0m/g' | sed -E 's/FINISHED/\\033[32m&\\033[0m/g' | sed -E 's/KILLED/\\033[33m&\\033[0m/g')
 
         raw_tpu_check_result=$(get_tpu_check_result $raw_vm_name)
-        tpu_check_result=$(echo $raw_tpu_check_result | sed -E 's/ready/\\033[32mgood\\033[0m/g' | sed -E 's/deleted/\\033[31m&\\033[0m/g' | sed -E 's/in\ use/\\033[33mgood\\033[0m/g') # we use good for both ready and in use
+        tpu_check_result=$(echo $raw_tpu_check_result | sed -E 's/ready/\\033[32mgood\\033[0m/g' | sed -E 's/good/\\033[32mgood\\033[0m/g' | sed -E 's/deleted/\\033[31m&\\033[0m/g' | sed -E 's/in\ use/\\033[33mgood\\033[0m/g') # we use good for both ready and in use
 
         # if no log for 30 min, switch "STARTED" to "STALED"
         # grep last log time from logdir

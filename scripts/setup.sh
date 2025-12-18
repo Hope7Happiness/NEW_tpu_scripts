@@ -117,8 +117,8 @@ check_env(){
     elif [[ $result == *"jaxlib.xla_extension.XlaRuntimeError: ABORTED: The TPU is already in use by process with pid"* ]]; then
         echo "TPU is already in use. If you want to persist, use \`zhh k\` and try again."
         return 3
-    elif [[ $result == *"[/usr/bin/ssh] exited with return code [255]"* ]]; then
-        echo "TPU may be preempted. Gonna re-apply..."
+    elif [[ $result == *"googlecloudsdk.command_lib.util.ssh.ssh.CommandError"* || $result == *"ERROR: (gcloud.compute.tpus.tpu-vm.ssh)"* ]]; then
+        echo "TPU may be preempted (during environment check!). Gonna re-apply..."
         return 9
     else
         echo "TPU Unkwown Error"
@@ -328,7 +328,15 @@ run_wandb_login(){
     wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
     --worker=all --command "$CMD" && ret=0 || ret=$?
     if [ $ret -ne 0 ]; then
-        echo -e "\033[31m[Error] Wandb login failed. Contact ZHH or use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
-        return 1
+        echo -e "\033[31m[Error] Wandb login failed. Retrying...\033[0m"
+        output=$(wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+        --worker=all --command "$CMD" 2>&1 || true)
+        echo "[DEBUG] wandb login result: $output"
+        if [[ $output == *"[/usr/bin/ssh] exited with return code [255]"* || $output == *"ERROR: (gcloud.compute.tpus.tpu-vm.ssh)"* ]]; then
+            echo "TPU may be preempted (during environment check!). Gonna re-apply..."
+            return 9
+        else
+            return 1
+        fi
     fi
 }
