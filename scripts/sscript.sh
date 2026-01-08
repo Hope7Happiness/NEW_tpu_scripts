@@ -181,6 +181,19 @@ get_tpu_status(){
     cat $SSCRIPT_HOME/$1/status 2>/dev/null || echo "NO STATUS"
 }
 
+tpu_has_command(){
+    if [ -z "$1" ]; then
+        echo -e "\033[31m[Internal Error] VM name arg is missing.\033[0m"
+        return 1
+    fi
+
+    if [ -f $SSCRIPT_HOME/$1/command ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 show_all_tpu_status(){
     if [ -z "$WHO" ]; then
         echo -e "\033[33m[Warning] WHO is not set. Showing all statuses\033[0m" >&2
@@ -206,13 +219,19 @@ show_all_tpu_status(){
 
         # highlight workdir part
         workdir_hl=$(echo $workdir | sed -E 's#(staging/\w+/)(\w+)(/launch_.*)#\1\\033[33m\2\\033[0m\3#g')
+        
+        # if workdir does not exist, try stage dir
+        if [ ! -d "$workdir" ]; then
+            stage_dir=$(cat $folder/stage_dir 2>/dev/null || echo "")
+            workdir_hl=$stage_dir
+        fi
+        
         # update: now use notes
         notes=$(cat $folder/notes 2>/dev/null || echo "wandb notes not found")
 
 
         # grep log dir: --workdir=/kmh-nfs-us-mount/staging/siri/mf_rev/launch_20250917_203208_gitfd6ce86_f72f4085/logs/log1_20250917_203225_9912f3e1/output.log
-        log_dir=$(echo $raw_command | grep -oE -- '--workdir=[^ ]+' | sed 's#--workdir=##g')
-        log_file="$log_dir/output.log"
+        log_file="$workdir/output.log"
 
         raw_status=$(cat $SSCRIPT_HOME/$raw_vm_name/status 2>/dev/null || echo "UNKNOWN")
         status=$(echo $raw_status | sed -E 's/STARTED/\\033[34m&\\033[0m/g' | sed -E 's/FAILED/\\033[31m&\\033[0m/g' | sed -E 's/FINISHED/\\033[32m&\\033[0m/g' | sed -E 's/KILLED/\\033[33m&\\033[0m/g')
@@ -243,7 +262,7 @@ show_all_tpu_status(){
         fi
 
         # echo -e "\n[$status] (last log: $diff_msg ago) \033[1m$vm_name @ $vm_zone\033[0m ($tpu_check_result) -> $notes\n\t===> check at $workdir_hl/output.log"
-        MSGS+=("\n[$status] (last log: $diff_msg ago) \033[1m$vm_name @ $vm_zone\033[0m ($tpu_check_result) -> $notes\n\t===> check at $workdir_hl/output.log")
+        MSGS+=("\n[$status] (last log: $diff_msg ago) \033[1m$vm_name @ $vm_zone\033[0m ($tpu_check_result) -> $notes\n\t===> check at $workdir_hl")
     done;
     # sort msgs (gpt)
     mapfile -d '' -t sorted_msgs < <(printf '%s\0' "${MSGS[@]}" | sort -z)

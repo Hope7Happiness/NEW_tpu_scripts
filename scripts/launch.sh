@@ -2,6 +2,26 @@ source $ZHH_SCRIPT_ROOT/scripts/apply.sh
 source $ZHH_SCRIPT_ROOT/scripts/sscript.sh
 source $ZHH_SCRIPT_ROOT/scripts/auto.sh
 
+zone_to_gs_name(){
+    if [ -z "$1" ]; then
+        echo -e "\033[31m[Internal Error] zone_to_gs_name requires a zone argument. Contact admin.\033[0m" >&2
+        return 1
+    fi
+
+    for zones in us-central1 us-east1 us-east5 us-central2 asia-northeast1-b europe-west4; do
+        if [[ $1 =~ $zones ]]; then
+            # if zone is europe-west4, then directly return empty
+            if [[ $zones == "europe-west4" ]]; then
+                echo ""
+                return 0
+            fi
+            echo $zones
+            return 0
+        fi
+    done
+    return 1
+}
+
 ckpt_to_gs(){
     path=$1
     # path: /kmh-nfs-us-mount/staging/siri/PROJECT/other_parts
@@ -17,13 +37,13 @@ ckpt_to_gs(){
     #     matched_zones = [z for z in ['us-central1', 'us-east1', 'us-east5', 'us-central2'] if z in path]
     # return matched_zones[0]
 
-    zone="us-central2"
-    for zones in us-central1 us-east1 us-east5 us-central2 asia-northeast1-b; do
-        if [[ $subpath =~ $zones ]]; then
-            zone=$zones
-            break
-        fi
-    done
+    # for zones in us-central1 us-east1 us-east5 us-central2 asia-northeast1-b; do
+    #     if [[ $subpath =~ $zones ]]; then
+    #         zone=$zones
+    #         break
+    #     fi
+    # done
+    zone=$(zone_to_gs_name $subpath)
 
     output=gs://kmh-gcp-$zone/$GS_STAGING_NAME/$subpath
     echo $output
@@ -69,11 +89,17 @@ stage(){
     sudo mkdir -p $STAGE_DIR
     sudo chmod 777 $STAGE_DIR
     echo "[INFO] staging files" >&2
-    sudo rsync -a -O --exclude '.git' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' . $STAGE_DIR
+    sudo rsync -a -O --exclude '.git' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' --exclude 'wandb' . $STAGE_DIR
 }
 
 zkill(){
-    kill_tpu $VM_NAME $ZONE
+    kill_tpu $VM_NAME $ZONE && ret=0 || ret=$?
+    # if ret is 9, then the tpu is preempted, deregister it
+    if [ $ret -eq 9 ]; then
+        echo -e "\033[33m[Info] TPU $VM_NAME in $ZONE is preempted. Deregistering...\033[0m"
+        deregister_tpu $VM_NAME
+        return 0
+    fi
     killed_command
     # ask the user if want to dequeue
     if ! queue_isempty; then
@@ -117,10 +143,26 @@ run_job(){
         # convert to gs bucket
         GS_DIR=$(ckpt_to_gs $LOG_ROOT/$LAST_LOG_DIR)
         echo "[INFO] |___checking previous log dir $LOG_ROOT/$LAST_LOG_DIR -> $GS_DIR"
+
+        # parse GS_DIR as gs://kmh-gcp-$zone/$GS_STAGING_NAME/$subpath
+        # subpath = '/'.join(GS_DIR.split('/')[4:])
+        # zone = GS_DIR.split('/')[2].split('-')[-1]
+        subpath=$(echo "$GS_DIR" | sed 's|gs://kmh-gcp-[^/]\+/\([^/]\+\)/\(.*\)|\2|')
+        zone=$(echo "$GS_DIR" | sed 's|gs://kmh-gcp-\([^/]\+\)/.*|\1|')
+
+        correct_gs_zone=$(zone_to_gs_name $ZONE)
+        
         # check if checkpoints exist in the gs bucket
         if gsutil ls $GS_DIR/checkpoint_* > /dev/null; then
             echo "[INFO]   ===>found previous checkpoint dir $LOG_ROOT/$LAST_LOG_DIR in gs $GS_DIR"
-            EXTRA_ARGS+=("--config.load_from=$LOG_ROOT/$LAST_LOG_DIR")
+
+            if [ "$zone" != "$correct_gs_zone" ]; then
+
+                gsutil -m cp -r gs://kmh-gcp-$zone/$GS_STAGING_NAME/$subpath gs://kmh-gcp-$correct_gs_zone/$GS_STAGING_NAME/$subpath
+            fi
+
+            EXTRA_ARGS+=("--config.load_from=gs://kmh-gcp-$correct_gs_zone/$GS_STAGING_NAME/$subpath")
+            # EXTRA_ARGS+=("--config.load_from=$LOG_ROOT/$LAST_LOG_DIR")
             break
         fi
         echo "[INFO] no checkpoints found in $LOG_ROOT/$LAST_LOG_DIR"
@@ -150,7 +192,12 @@ run_job(){
         py_path="python"
         DBG_COMMANDS="which python"
     fi
-    py_path="GOOGLE_APPLICATION_CREDENTIALS=/kmh-nfs-ssd-us-mount/code/qiao/sqa-sa_do_not_deleet.json $py_path"
+
+    json_file=$(get_service_json)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+    py_path="GOOGLE_APPLICATION_CREDENTIALS=$json_file $py_path"
 
     # if EXTRA_ARGS exists:
     if [ ! -z "$EXTRA_ARGS" ]; then
@@ -271,10 +318,13 @@ zrun(){
     # extra args are $@
     EXTRA_ARGS=("$@")
 
+    starting_command # avoid multiple jobs starting together
+
     # staging to $STAGE_DIR
 
     STAGE_DIR=$(stage)
     STAGE_DIR=$(echo $STAGE_DIR | head -n 1 | awk '{print $3}')
+    log_stage_dir "$STAGE_DIR"
 
     # if EXTRA_ARGS exists, write to a file in STAGE_DIR
     if [ ! -z "$EXTRA_ARGS" ]; then
@@ -296,6 +346,8 @@ zrerun(){
 
     # parse "WHO" from pwd
     export WHO=$(echo $(pwd) | cut -d'/' -f4)
+
+    starting_command # avoid multiple jobs starting together
 
     # check if .extra_args exists
     # EXTRA_ARGS=""
@@ -414,7 +466,7 @@ run_matmul(){
         DBG_COMMANDS="which python"
     fi
 
-    MATMUL_SCRIPT="import jax as j,time as t;from flax.jax_utils import replicate as e;p=j.numpy;r=j.random;k=r.PRNGKey(0);N=1<<15;_T=e(r.normal(k,(N,N)));__=j.pmap(lambda _: _.T@_/p.linalg.norm(_@_.T));exec('while True: (__(_T), t.sleep(0.5))')"
+    MATMUL_SCRIPT="import jax as j,time as t;from flax.jax_utils import replicate as e;p=j.numpy;r=j.random;k=r.PRNGKey(0);N=3<<14;_T=e(r.normal(k,(N,N)));__=j.pmap(lambda _: _.T@_/p.linalg.norm(_@_.T));exec('while True: (__(_T), t.sleep(0.5))')"
 
 
     COMMAND="$py_path -c \"$MATMUL_SCRIPT\" 2>&1"
@@ -502,13 +554,21 @@ zdelete(){
         VM_NAME=${VM_NAMES[$i]}
         ZONE=${ZONES[$i]}
         # if ! get_tpu_check_result $VM_NAME | grep -q "deleted" && ! get_tpu_status $VM_NAME | grep -q "CREATING"; then
-        if get_tpu_status $VM_NAME | grep -q "CREATING" && ! get_tpu_check_result $VM_NAME | grep -q "ready" || get_tpu_check_result $VM_NAME | grep -q "deleted"; then
+        if (
+            get_tpu_status $VM_NAME | grep -q "CREATING" && ! get_tpu_check_result $VM_NAME | grep -q "ready" && ! tpu_has_command $VM_NAME \
+            || get_tpu_check_result $VM_NAME | grep -q "deleted"
+        ); then
             deregister_tpu $VM_NAME
             echo -e "\033[32m[Info] Deregistered TPU $VM_NAME\033[0m"
         else
             echo -e "\033[33m[Info] TPU $VM_NAME is not deleted, skip deregister.\033[0m"
         fi
     done;
+}
+
+zlogin(){
+    json_file=$(get_service_json)
+    gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command="gcloud auth activate-service-account --key-file=$json_file"
 }
 
 check_config_sanity(){

@@ -2,7 +2,7 @@
 source $ZHH_SCRIPT_ROOT/scripts/sscript.sh
 source $ZHH_SCRIPT_ROOT/scripts/apply.sh
 
-POOL_V6=(us-east5-b us-central1-b asia-northeast1-b)
+POOL_V6=(us-east5-b us-central1-b asia-northeast1-b europe-west4-a)
 POOL_V5=(us-central1-a us-east5-a)
 POOL_V4=(us-central2-b)
 

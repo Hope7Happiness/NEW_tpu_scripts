@@ -45,6 +45,18 @@ use_v5_env(){
     fi
 }
 
+get_service_json(){
+    zone_wo_region=${ZONE%-*}
+    f=/kmh-nfs-ssd-us-mount/code/siri/bu/bucket-$zone_wo_region.json
+    
+    # if file doesn't exist
+    if [ ! -f "$f" ]; then
+        echo -e "\033[31m[Internal Error] Service account json file $f not found. Contact admin.\033[0m" >&2
+        return 1
+    fi
+    echo "$f"
+}
+
 zone_to_gs(){
     ZONE=$1
 
@@ -64,6 +76,8 @@ zone_to_gs(){
 	    echo "gs://kmh-gcp-us-central1"
     elif [[ $ZONE =~ asia-northeast1.* ]]; then
         echo "gs://kmh-gcp-asia-northeast1-b" # special case, by zy
+    elif [[ $ZONE =~ europe-west4.* ]]; then
+        echo "gs://kmh-gcp"
     else
         echo -e $ZONE_UNFOUND_ERROR >&2
         exit 1
@@ -186,10 +200,23 @@ kill_tpu(){
     # KILLER=$(cat $ZHH_SCRIPT_ROOT/scripts/new_killer.sh)
 
     sleep 2
-    gcloud compute tpus tpu-vm ssh $VM_NAME --zone=$ZONE --worker=all --command "
+    CMD="
     sudo bash $ZHH_SCRIPT_ROOT/scripts/new_killer.sh
     echo job killed
     "
+    gcloud compute tpus tpu-vm ssh $VM_NAME --zone=$ZONE --worker=all --command "$CMD" && ret=0 || ret=$?
+    if [ $ret -ne 0 ]; then
+        echo -e "\033[31m[Error] Failed to kill TPU process. Retrying...\033[0m"
+        output=$(gcloud compute tpus tpu-vm ssh $VM_NAME --zone=$ZONE --worker=all --command "$CMD" 2>&1 || true)
+        echo "[DEBUG] kill tpu result: $output"
+        if [[ $output == *"[/usr/bin/ssh] exited with return code [255]"* || $output == *"ERROR: (gcloud.compute.tpus.tpu-vm.ssh)"* ]]; then
+            echo "TPU may be preempted (during killing!). Gonna re-apply..."
+            return 9
+        else
+            return 1
+        fi
+    fi
+    return $ret
 }
 
 
@@ -244,17 +271,20 @@ run_setup_script(){
 
     if use_v6_script $VM_NAME; then
         gs_str=$(zone_to_gs $ZONE)
+        json_file=$(get_service_json)
         if use_v5_env $VM_NAME; then
             PIP_INSTALL_STR="
             set -euo pipefail
 
             cd
-            gcloud auth activate-service-account --key-file=/kmh-nfs-ssd-us-mount/code/qiao/sqa-sa_do_not_deleet.json
+            gcloud auth activate-service-account --key-file=$json_file
             gsutil -m cp -r $gs_str/hanhong/v5_wheels.tar.gz ./wheels.tar.gz
             tar -xvf wheels.tar.gz
             rm -rf .local || true
             pip install --no-index --find-links=wheels wheels/*.whl --no-deps --force-reinstall --no-warn-script-location
             rm -rf wheels wheels.tar.gz
+
+            bash /kmh-nfs-ssd-us-mount/code/zak/text-jit/补.sh
             "
         else
             PIP_INSTALL_STR="
@@ -263,12 +293,14 @@ run_setup_script(){
             cd
             # gsutil -m cp -r $gs_str/hanhong/v6_wheels.tar.gz ./wheels.tar.gz
             # ### new update
-            gcloud auth activate-service-account --key-file=/kmh-nfs-ssd-us-mount/code/qiao/sqa-sa_do_not_deleet.json
+            gcloud auth activate-service-account --key-file=$json_file
             gsutil -m cp -r $gs_str/hanhong/v6_wheels_jax437.tar.gz ./wheels.tar.gz
             tar -xvf wheels.tar.gz
             rm -rf .local || true
             pip install --no-index --find-links=wheels wheels/*.whl --no-deps --force-reinstall --no-warn-script-location
             rm -rf wheels wheels.tar.gz
+
+            bash /kmh-nfs-ssd-us-mount/code/zak/text-jit/补.sh
             "
         fi
     else

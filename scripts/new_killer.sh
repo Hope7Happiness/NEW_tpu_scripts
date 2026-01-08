@@ -23,3 +23,4 @@ done
 shopt -u nullglob
 
 rm -rf /tmp/*tpu*
+rm -rf /tmp/wandb

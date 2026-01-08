@@ -50,6 +50,8 @@ if $no_need_check || check_config_sanity; then
         zdelete all
     elif [ "$1" = "g" ]; then
         zget
+    elif [ "$1" = "l" ]; then
+        zlogin
     elif [ "$1" = "mm" ]; then
         run_matmul
     elif [[ "$1" =~ ^h ]]; then

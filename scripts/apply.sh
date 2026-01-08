@@ -34,6 +34,46 @@ get_accelerator_version(){
     fi
 }
 
+get_service_account(){
+#     REGION_SA_MAP = {
+#     "us-central1": "bucket-us-central1@he-vision-group.iam.gserviceaccount.com",
+#     "us-central2": "bucket-us-central2@he-vision-group.iam.gserviceaccount.com",
+#     "us-east1": "373438850578-compute@developer.gserviceaccount.com",
+#     "us-east5": "bucket-us-east5@he-vision-group.iam.gserviceaccount.com",
+#     "asia-northeast1": "bucket-asia@he-vision-group.iam.gserviceaccount.com",
+#     "europe-west4": "373438850578-compute@developer.gserviceaccount.com"
+# }
+    case $ZONE in
+        *us-central1*)
+            echo "bucket-us-central1@he-vision-group.iam.gserviceaccount.com"
+            ;;
+        *us-central2*)
+            echo "bucket-us-central2@he-vision-group.iam.gserviceaccount.com"
+            ;;
+        *us-east1*)
+            # echo "373438850578-compute@developer.gserviceaccount.com"
+            echo -e "\033[31m[Internal Error] zone $ZONE not supported. Contact admin.\033[0m"
+            return 1
+            ;;
+        *us-east5*)
+            echo "bucket-us-east5@he-vision-group.iam.gserviceaccount.com"
+            ;;
+        *asia-northeast1*)
+            echo "bucket-asia@he-vision-group.iam.gserviceaccount.com"
+            ;;
+        *europe-west4*)
+            echo "bucket-europe@he-vision-group.iam.gserviceaccount.com"
+            # echo "373438850578-compute@developer.gserviceaccount.com"
+            # echo -e "\033[31m[Internal Error] zone $ZONE not supported. Contact admin.\033[0m"
+            # return 1
+            ;;
+        *)
+            echo -e "\033[31m[Internal Error] Cannot parse service account from zone $ZONE. Contact admin.\033[0m"
+            return 1
+            ;;
+    esac
+}
+
 get_tpu(){
     VM_NAME=$1
     ZONE=$2
@@ -48,10 +88,11 @@ get_tpu(){
     # get accelerator args
     accelerator_type=$(get_accelerator_args $VM_NAME)
     accelerator_version=$(get_accelerator_version $VM_NAME)
+    service_account=$(get_service_account $ZONE)
     if [ $? -ne 0 ]; then
         return 1
     fi
-    create_cmd="gcloud compute tpus tpu-vm create $VM_NAME --zone=$ZONE --accelerator-type=$accelerator_type --version=$accelerator_version --spot"
+    create_cmd="gcloud compute tpus tpu-vm create $VM_NAME --zone=$ZONE --accelerator-type=$accelerator_type --version=$accelerator_version --spot --service-account=$service_account"
 
     outer_loop=0
     try_start=$(date)
