@@ -89,7 +89,7 @@ stage(){
     sudo mkdir -p $STAGE_DIR
     sudo chmod 777 $STAGE_DIR
     echo "[INFO] staging files" >&2
-    sudo rsync -a -O --exclude '.git' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' --exclude 'wandb' . $STAGE_DIR
+    sudo rsync -a -O --exclude '.git' --exclude '.opencode' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' --exclude 'wandb' . $STAGE_DIR
 }
 
 zkill(){
@@ -157,8 +157,14 @@ run_job(){
             echo "[INFO]   ===>found previous checkpoint dir $LOG_ROOT/$LAST_LOG_DIR in gs $GS_DIR"
 
             if [ "$zone" != "$correct_gs_zone" ]; then
+                # if dest already exists, skip copy
+                if gsutil ls gs://kmh-gcp-$correct_gs_zone/$GS_STAGING_NAME/$subpath > /dev/null; then
+                    echo "[INFO]   ===>checkpoint already copied to correct gs zone gs://kmh-gcp-$correct_gs_zone/$GS_STAGING_NAME/$subpath, skip copy"
+                else
+                    echo "[INFO]   ===>copying checkpoint from gs://kmh-gcp-$zone/$GS_STAGING_NAME/$subpath to gs://kmh-gcp-$correct_gs_zone/$GS_STAGING_NAME/$subpath"
 
-                gsutil -m cp -r gs://kmh-gcp-$zone/$GS_STAGING_NAME/$subpath gs://kmh-gcp-$correct_gs_zone/$GS_STAGING_NAME/$subpath
+                    gcloud storage cp -r gs://kmh-gcp-$zone/$GS_STAGING_NAME/$subpath gs://kmh-gcp-$correct_gs_zone/$GS_STAGING_NAME/$subpath
+                fi
             fi
 
             EXTRA_ARGS+=("--config.load_from=gs://kmh-gcp-$correct_gs_zone/$GS_STAGING_NAME/$subpath")
@@ -204,12 +210,16 @@ run_job(){
         EXTRA_ARGS_STR=$(printf "'%s' " "${EXTRA_ARGS[@]}")
     fi
 
+    if [ -f "$STAGE_DIR/补.sh" ]; then
+        echo "[INFO] executing 补.sh"
+        source $STAGE_DIR/补.sh > /dev/null 2>&1
+    fi
+
     COMMAND="$py_path main.py --workdir=$LOG_DIR --mode=remote_run --config=configs/load_config.py:remote_run $EXTRA_ARGS_STR 2>&1"
     # COMMAND="ls /foo/bar | sudo tee -a $LOG_DIR/output.log"
 
     # register command
     log_command "$COMMAND"
-    log_notes "$(wandb_note_from_stagedir $STAGE_DIR)"
     echo "[INFO] running command: $COMMAND"
     (echo "$COMMAND"; echo ========; echo; ) > $LOG_DIR/output.log
 
@@ -343,6 +353,8 @@ zrerun(){
         echo -e "\033[31m[Error] You are NOT in a staging directory. Aborted.\033[0m" >&2
         return 1
     fi
+
+    log_stage_dir "$(pwd)"
 
     # parse "WHO" from pwd
     export WHO=$(echo $(pwd) | cut -d'/' -f4)

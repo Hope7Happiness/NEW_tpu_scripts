@@ -24,3 +24,4 @@ shopt -u nullglob
 
 rm -rf /tmp/*tpu*
 rm -rf /tmp/wandb
+sudo chmod a+rw /tmp

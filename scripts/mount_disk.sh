@@ -10,6 +10,9 @@ ps -ef | grep -i unattended | grep -v 'grep' | awk '{print "sudo kill -9 " $2}' 
 sudo systemctl stop unattended-upgrades.service || true
 sudo systemctl disable unattended-upgrades.service || true
 
+sudo rm -rf /tmp/*tpu* || true
+sudo rm -rf /tmp/wandb || true
+
 while true; do 
     sudo umount -l /kmh-nfs-ssd-eu-mount || true
     ls /kmh-nfs-ssd-us-mount/code/siri

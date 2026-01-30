@@ -128,7 +128,7 @@ check_env(){
 
     if [[ $result == *"TpuDevice"* ]]; then
         echo "Environment setup successful."
-    elif [[ $result == *"jaxlib.xla_extension.XlaRuntimeError: ABORTED: The TPU is already in use by process with pid"* ]]; then
+    elif [[ $result == *"jaxlib.xla_extension.XlaRuntimeError: ABORTED: The TPU is already in use by process with pid"* || $result == *"Unable to initialize backend"* ]]; then
         echo "TPU is already in use. If you want to persist, use \`zhh k\` and try again."
         return 3
     elif [[ $result == *"googlecloudsdk.command_lib.util.ssh.ssh.CommandError"* || $result == *"ERROR: (gcloud.compute.tpus.tpu-vm.ssh)"* ]]; then
@@ -284,7 +284,15 @@ run_setup_script(){
             pip install --no-index --find-links=wheels wheels/*.whl --no-deps --force-reinstall --no-warn-script-location
             rm -rf wheels wheels.tar.gz
 
-            bash /kmh-nfs-ssd-us-mount/code/zak/text-jit/补.sh
+            rm -rf ~/.local && \
+            export PIP_DEFAULT_TIMEOUT=120 && \
+            pip install setuptools==65.5.1 && \
+            pip install jax[tpu]==0.4.37 jaxlib -f https://storage.googleapis.com/jax-releases/libtpu_releases.html && \
+            pip install flax>=0.8 && \
+            pip install pillow clu tensorflow==2.15.0 \"keras<3\" \"torch<=2.4\" torchvision tensorflow_datasets matplotlib==3.9.2 && \
+            pip install diffusers dm-tree cached_property ml-collections transformers==4.38.2 lpips_j && \
+            pip install wandb gcsfs
+            pip install orbax-checkpoint==0.6.4
             "
         else
             PIP_INSTALL_STR="
@@ -300,7 +308,6 @@ run_setup_script(){
             pip install --no-index --find-links=wheels wheels/*.whl --no-deps --force-reinstall --no-warn-script-location
             rm -rf wheels wheels.tar.gz
 
-            bash /kmh-nfs-ssd-us-mount/code/zak/text-jit/补.sh
             "
         fi
     else
@@ -361,6 +368,7 @@ run_wandb_login(){
     --worker=all --command "$CMD" && ret=0 || ret=$?
     if [ $ret -ne 0 ]; then
         echo -e "\033[31m[Error] Wandb login failed. Retrying...\033[0m"
+        export SCRIPT_DEBUG=1
         output=$(wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
         --worker=all --command "$CMD" 2>&1 || true)
         echo "[DEBUG] wandb login result: $output"

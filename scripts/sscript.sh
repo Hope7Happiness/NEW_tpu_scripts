@@ -26,19 +26,13 @@ log_stage_dir(){
 
     sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
     (echo "$STAGE_DIR" | sudo tee $SSCRIPT_HOME/$VM_NAME/stage_dir) > /dev/null
-}
 
-log_notes(){
-    if [ -z "$VM_NAME" ]; then
-        echo -e $VM_UNFOUND_ERROR
-        return 1
+    # if status file does not exist, create it as CREATING
+    if [ ! -f $SSCRIPT_HOME/$VM_NAME/status ]; then
+        (echo "CREATING" | sudo tee $SSCRIPT_HOME/$VM_NAME/status) > /dev/null
     fi
-
-    NOTES=$1
-
-    sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
-    (echo "$NOTES" | sudo tee $SSCRIPT_HOME/$VM_NAME/notes) > /dev/null
 }
+
 
 fail_command(){
     if [ -z "$VM_NAME" ]; then
@@ -76,12 +70,33 @@ starting_command(){
         return 1
     fi
 
-    sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
-    (
-        echo "CREATING" | sudo tee $SSCRIPT_HOME/$VM_NAME/status && \
-        echo $ZONE | sudo tee $SSCRIPT_HOME/$VM_NAME/zone && \
+    # sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
+    # (
+    #     echo "CREATING" | sudo tee $SSCRIPT_HOME/$VM_NAME/status && \
+    #     echo $ZONE | sudo tee $SSCRIPT_HOME/$VM_NAME/zone && \
+    #     echo "creating" | sudo tee $SSCRIPT_HOME/$VM_NAME/check_result
+    # ) > /dev/null
+    sudo mkdir -p $SSCRIPT_HOME/$VM_NAME
+
+    old_status=$(cat $SSCRIPT_HOME/$VM_NAME/status 2>/dev/null || echo "")
+    if [ "$old_status" = "FINISHED" ] || [ "$old_status" = "KILLED" ] || [ -z "$old_status" ]; then
+        echo "CREATING" | sudo tee $SSCRIPT_HOME/$VM_NAME/status
+    else
+        echo -e "\033[33m[Warning] Status file already exists: $old_status. Not overwriting.\033[0m"
+    fi
+    # if [ ! -f $SSCRIPT_HOME/$VM_NAME/status ]; then
+    #     echo "CREATING" | sudo tee $SSCRIPT_HOME/$VM_NAME/status
+    # else
+    #     echo -e "\033[33m[Warning] Status file already exists: $(cat $SSCRIPT_HOME/$VM_NAME/status). Not overwriting.\033[0m"
+    # fi
+    if [ ! -f $SSCRIPT_HOME/$VM_NAME/zone ]; then
+        echo $ZONE | sudo tee $SSCRIPT_HOME/$VM_NAME/zone
+    fi
+    if [ ! -f $SSCRIPT_HOME/$VM_NAME/check_result ]; then
         echo "creating" | sudo tee $SSCRIPT_HOME/$VM_NAME/check_result
-    ) > /dev/null
+    else
+        echo -e "\033[33m[Warning] Check result file already exists: $(cat $SSCRIPT_HOME/$VM_NAME/check_result). Not overwriting.\033[0m"
+    fi
 }
 
 get_command(){
@@ -206,7 +221,7 @@ show_all_tpu_status(){
         vm_zone=$(cat $folder/zone 2>/dev/null || echo "NO ZONE FOUND")
 
         # highlight vm name
-        vm_name=$(echo $raw_vm_name | sed -E 's/kmh-tpuvm-(v[^-]+-[0-9]+)-(.+)([0-9]+)/kmh-tpuvm-\\033[34m\1\\033[0m-\2\\033[32m\3\\033[0m/')
+        vm_name=$(echo $raw_vm_name | sed -E 's/kmh-tpuvm-(v[^-]+-[0-9]+)(.+)-([a-z0-9]+)/kmh-tpuvm-\\033[34m\1\\033[0m\2-\\033[32m\3\\033[0m/')
 
         # highlight command
         # for str like *staging/\w+/(\w+)/launch*, highlight the (\w+)
@@ -218,16 +233,29 @@ show_all_tpu_status(){
         fi
 
         # highlight workdir part
-        workdir_hl=$(echo $workdir | sed -E 's#(staging/\w+/)(\w+)(/launch_.*)#\1\\033[33m\2\\033[0m\3#g')
-        
+        workdir_hl=$(echo $workdir | sed -E 's#staging/([a-zA-Z0-9_-]+)/([a-zA-Z0-9_-]+)(/launch_.*)#staging/\\033[36m\1\\033[0m/\\033[33m\2\\033[0m\3#g')
+
+                
         # if workdir does not exist, try stage dir
+        stage_dir=
         if [ ! -d "$workdir" ]; then
-            stage_dir=$(cat $folder/stage_dir 2>/dev/null || echo "")
+            if [ -f "$folder/stage_dir" ]; then
+                stage_dir=$(cat $folder/stage_dir)
+            # else
+                # echo -e "\033[33m[Warning] stage dir not found for $raw_vm_name\033[0m"
+                # continue
+            fi
             workdir_hl=$stage_dir
+        else
+            # stagedir is workdir/../..
+            stage_dir=$(dirname $(dirname $workdir))
         fi
-        
-        # update: now use notes
-        notes=$(cat $folder/notes 2>/dev/null || echo "wandb notes not found")
+
+        if [ -d "$stage_dir" ]; then
+            notes=$(wandb_note_from_stagedir $stage_dir)
+        else
+            notes="wandb notes not found"
+        fi
 
 
         # grep log dir: --workdir=/kmh-nfs-us-mount/staging/siri/mf_rev/launch_20250917_203208_gitfd6ce86_f72f4085/logs/log1_20250917_203225_9912f3e1/output.log
@@ -262,7 +290,7 @@ show_all_tpu_status(){
         fi
 
         # echo -e "\n[$status] (last log: $diff_msg ago) \033[1m$vm_name @ $vm_zone\033[0m ($tpu_check_result) -> $notes\n\t===> check at $workdir_hl/output.log"
-        MSGS+=("\n[$status] (last log: $diff_msg ago) \033[1m$vm_name @ $vm_zone\033[0m ($tpu_check_result) -> $notes\n\t===> check at $workdir_hl")
+        MSGS+=("\n[$status] (last log: $diff_msg ago) \033[1m$vm_name $vm_zone\033[0m ($tpu_check_result) -> $notes\n\t===> check at $workdir_hl")
     done;
     # sort msgs (gpt)
     mapfile -d '' -t sorted_msgs < <(printf '%s\0' "${MSGS[@]}" | sort -z)
@@ -383,7 +411,7 @@ wandb_note_from_stagedir(){
     if [ ! -z "$note_from_arg" ]; then
         echo "$note_from_arg"
     else
-        cat $stage_dir/configs/remote_run_config.yml | grep -v '^\s*#' | grep -oP 'wandb_notes: \K.*' | head -n 1
+        cat $stage_dir/configs/remote_run_config.yml 2>/dev/null | grep -v '^\s*#' | grep -oP 'wandb_notes: \K.*' | head -n 1
     fi
 }
 

@@ -2,7 +2,8 @@
 source $ZHH_SCRIPT_ROOT/scripts/sscript.sh
 source $ZHH_SCRIPT_ROOT/scripts/apply.sh
 
-POOL_V6=(us-east5-b us-central1-b asia-northeast1-b europe-west4-a)
+POOL_V6=(us-east5-b us-central1-b asia-northeast1-b)
+# POOL_V6=(us-east5-b us-central1-b asia-northeast1-b europe-west4-a)
 POOL_V5=(us-central1-a us-east5-a)
 POOL_V4=(us-central2-b)
 
@@ -43,6 +44,12 @@ auto_select(){
     infos=$(get_available_tpu_infos)
     # todo: low card first
     while read -r vm_name zone; do
+
+        # ensure $tpu_cls in $vm_name
+        if [[ "$vm_name" != *"$tpu_cls"* ]]; then
+            continue
+        fi
+
         # echo "vm=$vm_name, zone=$zone"
         # kmh-tpuvm-v6e-32-kangyang-5 -> 32
         # kmh-tpuvm-[a-z0-9]+-([0-9]+)-...
@@ -120,8 +127,10 @@ auto_select(){
         echo "Auto-selected zone: $best_zone with $best_available available TPUs"
         export ZONE=$best_zone
     else
-        echo "No suitable zone found"
-        return 1
+        echo "No suitable zone found, using default zone."
+        # use the first item in pool
+        export ZONE=${pool[0]}
+        echo "Using zone: $ZONE"
     fi
     # gonna apply for the smallest type in TPU_TYPES
     smallest_type=$(echo $TPU_TYPES | tr ',' '\n' | sort -n | head -n1)

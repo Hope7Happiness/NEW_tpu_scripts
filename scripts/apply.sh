@@ -74,7 +74,10 @@ get_service_account(){
     esac
 }
 
-get_tpu(){
+
+# the legacy way of using "create"
+# get_tpu(){
+get_tpu_legacy(){
     VM_NAME=$1
     ZONE=$2
     
@@ -144,6 +147,159 @@ get_tpu(){
             semail --apply-fail $VM_NAME "$try_start" "$(date)" $outer_loop
         fi
     done;
+}
+
+
+# # now we use queued resources
+get_tpu_queue(){
+    VM_NAME=$1
+    ZONE=$2
+    
+    echo "[INFO] requesting tpu vm $VM_NAME in $ZONE..."
+
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    # get accelerator args
+    accelerator_type=$(get_accelerator_args $VM_NAME)
+    accelerator_version=$(get_accelerator_version $VM_NAME)
+    service_account=$(get_service_account $ZONE)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+    rnd_name=$(head /dev/urandom | tr -dc a-z0-9 | head -c4)
+    queue_name=${VM_NAME}_q${rnd_name}
+
+    create_cmd="gcloud compute tpus queued-resources create $queue_name --node-id $VM_NAME --zone $ZONE --accelerator-type=$accelerator_type --runtime-version=$accelerator_version --service-account=$service_account --spot"
+
+    outer_loop=0
+    try_start=$(date)
+    while true; do
+        echo "[INFO] Checking TPU queue for $queue_name (round $outer_loop)..."
+        status=$(gcloud compute tpus queued-resources describe $queue_name --zone $ZONE --format="value(state)" 2>&1 )
+        # if NOT_FOUND in status
+        # status is: state=xxx
+        # status=$(echo $status | awk -F'= ' '{print $2}')
+        if [[ $status == *"NOT_FOUND"* ]]; then
+            echo "[INFO] TPU queue $queue_name does not exist. Creating..."
+            for i in {1..100}; do
+                echo "[INFO] Creating TPU queue... Attempt $i (time: " $(date) ")"
+                if eval $create_cmd ; then
+                    echo -e "\033[32m[INFO] TPU queue created successfully.\033[0m"
+                    break
+                fi
+
+                if [ $i -eq 1 ]; then create_cmd="$create_cmd --quiet 2>/dev/null"; fi
+
+                echo "[INFO] Likely quota exceeded. Failed to create TPU queue. Retrying in 30 seconds..."
+                sleep 300 # Wait for 5 min before retrying
+            done;
+        elif [[ "$status" == *"ACTIVE"* ]]; then
+            echo -e "\033[32m[INFO] TPU $VM_NAME @ $ZONE is created.\033[0m"
+            semail --apply-success $VM_NAME "$try_start" "$(date)" $outer_loop
+            break
+        elif [[ "$status" == *"FAILED"* ]] || [[ "$status" == *"SUSPENDING"* ]] || [[ "$status" == *"SUSPENDED"* ]]; then
+            echo "[INFO] TPU queue creation failed. Deleting and retrying..."
+            gcloud compute tpus queued-resources delete $queue_name --zone=$ZONE --quiet
+            if [[ $? -ne 0 ]]; then
+                echo "[WARNING] Failed to delete TPU queue $queue_name. Continuing..."
+            fi
+        else
+            echo "[INFO] TPU queue status: $status. Waiting..."
+        fi
+
+        sleep 60 # Wait for 1 minutes before checking again
+        outer_loop=$((outer_loop+1))
+        if [ $((outer_loop % 100)) -eq 0 ]; then
+            semail --apply-fail $VM_NAME "$try_start" "$(date)" $outer_loop
+        fi
+    done;
+}
+
+get_tpu_parallel(){
+    VM_NAME=$1
+    ZONE=$2
+    
+    echo "[INFO] requesting tpu vm $VM_NAME in $ZONE..."
+
+    if [ -z "$VM_NAME" ]; then
+        echo -e $VM_UNFOUND_ERROR
+        return 1
+    fi
+
+    # get accelerator args
+    accelerator_type=$(get_accelerator_args $VM_NAME)
+    accelerator_version=$(get_accelerator_version $VM_NAME)
+    service_account=$(get_service_account $ZONE)
+    if [ $? -ne 0 ]; then
+        return 1
+    fi
+    create_cmd="gcloud compute tpus tpu-vm create $VM_NAME --zone=$ZONE --accelerator-type=$accelerator_type --version=$accelerator_version --spot --service-account=$service_account"
+
+    while_create_cmd="while true; do $create_cmd; sleep 30; done"
+
+    # open 8 parallel process to run the same command, log to /tmp/apply_$VM_NAME_pid.log
+    echo "[INFO] Starting 8 parallel processes to create TPU VM..."
+    for i in {1..8}; do
+        # sleep a random time between 0 and 30 seconds to avoid all processes start at the same time
+        sleep $((RANDOM % 30))
+        (
+            eval $while_create_cmd > /tmp/apply_${VM_NAME}_$i.log 2>&1
+        ) &
+    done
+
+    outer_loop=0
+    try_start=$(date)
+    while true; do
+        status=$(
+            gcloud compute tpus tpu-vm describe $VM_NAME --zone=$ZONE --format="value(state)"
+        )
+        if [ "$status" = "READY" ]; then
+            echo -e "\033[32m[INFO] TPU VM is ready.\033[0m"
+            break
+        elif [ -z "$status" ]; then
+            echo "[INFO] TPU VM does not exist."
+        elif [ "$status" = "PREEMPTED" ]; then
+            echo "[INFO] TPU VM is preempted. Deleting..."
+            gcloud compute tpus tpu-vm delete $VM_NAME --zone=$ZONE --quiet
+        else
+            echo "[INFO] TPU VM status: $status. Waiting..."
+            sleep 60 # Wait for 1 minutes before checking again
+            continue
+        fi
+
+        # if outer loop is 0, display all logs
+        if [ $outer_loop -eq 0 ]; then
+            echo "[INFO] Displaying logs from parallel processes:"
+            for i in {1..8}; do
+                echo "----- Log from process $i -----"
+                cat /tmp/apply_${VM_NAME}_$i.log
+                echo "-------------------------------"
+            done
+        fi
+
+        sleep 60 # Wait for 1 minutes before checking again
+        outer_loop=$((outer_loop+1))
+        # if outer_loop % 100 == 0, send email
+    done;
+
+    # kill all parallel processes
+    echo "[INFO] Killing all parallel processes..."
+    pkill -f "apply_${VM_NAME}_"
+}
+
+get_tpu(){
+    trap 'echo -e "\n\033[33m[Info] Caught interrupt signal. Deregistering...\033[0m"; deregister_tpu $1; exit 0' INT
+    if [ "$USE_QUEUE" = "1" ]; then
+        get_tpu_queue $1 $2
+    elif [ "$USE_PARALLEL" = "1" ]; then
+        get_tpu_parallel $1 $2
+    else
+        get_tpu_legacy $1 $2
+    fi
+    trap - INT
 }
 
 has_tpu(){
