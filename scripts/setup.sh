@@ -274,29 +274,23 @@ run_setup_script(){
         json_file=$(get_service_json)
         if use_v5_env $VM_NAME; then
             PIP_INSTALL_STR="
-            set -euo pipefail
+            # set -euo pipefail
+
+            sudo snap refresh google-cloud-cli || true
+            pip uninstall pyOpenSSL cryptography -y || true
+            pip install pyOpenSSL cryptography || true
 
             cd
             gcloud auth activate-service-account --key-file=$json_file
-            gsutil -m cp -r $gs_str/hanhong/v5_wheels.tar.gz ./wheels.tar.gz
+            gsutil -m cp -r $gs_str/hanhong/v5_wheels_new.tar.gz ./wheels.tar.gz
             tar -xvf wheels.tar.gz
             rm -rf .local || true
             pip install --no-index --find-links=wheels wheels/*.whl --no-deps --force-reinstall --no-warn-script-location
             rm -rf wheels wheels.tar.gz
-
-            rm -rf ~/.local && \
-            export PIP_DEFAULT_TIMEOUT=120 && \
-            pip install setuptools==65.5.1 && \
-            pip install jax[tpu]==0.4.37 jaxlib -f https://storage.googleapis.com/jax-releases/libtpu_releases.html && \
-            pip install flax>=0.8 && \
-            pip install pillow clu tensorflow==2.15.0 \"keras<3\" \"torch<=2.4\" torchvision tensorflow_datasets matplotlib==3.9.2 && \
-            pip install diffusers dm-tree cached_property ml-collections transformers==4.38.2 lpips_j && \
-            pip install wandb gcsfs
-            pip install orbax-checkpoint==0.6.4
             "
         else
             PIP_INSTALL_STR="
-            set -euo pipefail
+            # set -euo pipefail
 
             cd
             # gsutil -m cp -r $gs_str/hanhong/v6_wheels.tar.gz ./wheels.tar.gz
@@ -317,10 +311,13 @@ run_setup_script(){
         # echo "[INFO] Skipping TPU environment setup as DO_TPU_SETUP is not set."
     # fi
 
-    CMD="
-    $MOUNT_DISK_STR
-    $PIP_INSTALL_STR
-    "
+    # CMD="
+    # $MOUNT_DISK_STR
+    # $PIP_INSTALL_STR
+    # "
+    
+    # CMD is sequential print of quoted MOUNT_DISK_STR and PIP_INSTALL_STR
+    CMD=$(printf "%s\n%s" "$MOUNT_DISK_STR" "$PIP_INSTALL_STR")
 
     wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
     --worker=all --command "$CMD" && ret=0 || ret=$?

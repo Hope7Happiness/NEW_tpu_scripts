@@ -228,6 +228,16 @@ show_all_tpu_status(){
         # command=$(echo $raw_command | sed -E 's#(staging/\w+/)(\w+)(/launch)#\1\\033[33m\2\\033[0m\3#g')
         workdir=$(echo $raw_command | grep -oE -- '--workdir=[^ ]+' | sed 's#--workdir=##g')
 
+        # a temporal fix
+        if [ -z "$workdir" ]; then
+            # workdir is the first argument before bash main.sh
+            workdir=$(echo $raw_command | grep -oE -- 'bash main\.sh [^ ]+' | sed 's#bash main\.sh ##g')
+            # workdir must contain /kmh-nfs-ssd-us-mount
+            if [[ "$workdir" != *"/kmh-nfs-ssd-us-mount/"* ]]; then
+                workdir=""
+            fi
+        fi
+
         if [ ! -z "$WHO" ] && [[ "$workdir" != *"/staging/$WHO/"* ]]; then
             continue
         fi

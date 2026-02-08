@@ -89,7 +89,9 @@ stage(){
     sudo mkdir -p $STAGE_DIR
     sudo chmod 777 $STAGE_DIR
     echo "[INFO] staging files" >&2
-    sudo rsync -a -O --exclude '.git' --exclude '.opencode' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' --exclude 'wandb' . $STAGE_DIR
+    # temporally patch
+    sudo rsync -a -O --exclude '.git' --exclude '.opencode' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' --exclude 'wandb' --exclude='*.npz' . $STAGE_DIR
+    # sudo rsync -a -O --exclude '.git' --exclude '.opencode' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' --exclude 'wandb' . $STAGE_DIR
 }
 
 zkill(){
@@ -215,8 +217,15 @@ run_job(){
         source $STAGE_DIR/补.sh > /dev/null 2>&1
     fi
 
-    COMMAND="$py_path main.py --workdir=$LOG_DIR --mode=remote_run --config=configs/load_config.py:remote_run $EXTRA_ARGS_STR 2>&1"
     # COMMAND="ls /foo/bar | sudo tee -a $LOG_DIR/output.log"
+    COMMAND="$py_path main.py --workdir=$LOG_DIR --mode=remote_run --config=configs/load_config.py:remote_run $EXTRA_ARGS_STR 2>&1"
+
+    # if main.py doesn't exist, check if main.sh exists
+    if [ ! -f "$STAGE_DIR/main.py" ] && [ -f "$STAGE_DIR/main.sh" ]; then
+        echo "[INFO] main.py not found, using main.sh instead."
+        COMMAND="bash main.sh $LOG_DIR $EXTRA_ARGS_STR 2>&1"
+    fi
+
 
     # register command
     log_command "$COMMAND"
