@@ -146,6 +146,15 @@ get_tpu_legacy(){
         if [ $((outer_loop % 100)) -eq 0 ]; then
             semail --apply-fail $VM_NAME "$try_start" "$(date)" $outer_loop
         fi
+
+        # if achieve 100 loops, abort
+        # if [ $outer_loop -ge 0 ]; then # debug
+        if [ $outer_loop -ge 3 ]; then
+            echo -e "\033[31m[ERROR] Failed to create TPU VM after 3 attempts. Exiting.\033[0m"
+            deregister_tpu $VM_NAME
+            return 1
+        fi
+
     done;
 }
 
@@ -291,15 +300,27 @@ get_tpu_parallel(){
 }
 
 get_tpu(){
-    trap 'echo -e "\n\033[33m[Info] Caught interrupt signal. Deregistering...\033[0m"; deregister_tpu $1; exit 0' INT
+
+    # if $2 is empty or "INTERNAL ERROR", then the system is bugged, directly exit
+    if [ -z "$2" ] || [[ "$2" == *"INTERNAL"* ]]; then
+        echo -e "\033[31m[Internal Error] Previous TPU VM $1 is in bad state. Please check the logs and contact admin.\033[0m"
+        return 1
+    fi
+
+    trap 'echo -e "\n\033[33m[Info] Caught interrupt signal. Deregistering...\033[0m"; deregister_tpu $1; exit $ret' INT
     if [ "$USE_QUEUE" = "1" ]; then
-        get_tpu_queue $1 $2
+        # get_tpu_queue $1 $2
+        echo -e 'NO LONGER USE QUEUE. Please set USE_QUEUE=0 and use legacy get_tpu.\n'
+        return 1
     elif [ "$USE_PARALLEL" = "1" ]; then
-        get_tpu_parallel $1 $2
+        # get_tpu_parallel $1 $2
+        echo -e 'NO LONGER USE PARALLEL. Please set USE_QUEUE=0 and use legacy get_tpu.\n'
+        return 1
     else
-        get_tpu_legacy $1 $2
+        get_tpu_legacy $1 $2 && ret=0 || ret=$?
     fi
     trap - INT
+    return $ret
 }
 
 has_tpu(){
@@ -317,7 +338,8 @@ has_tpu(){
     if [ "$status" = "READY" ]; then
         return 0
     elif [[ -z "$status" || "$status" = "DELETED" || "$status" = "PREEMPTED" ]]; then
-        log_tpu_check_result deleted
+        # log_tpu_check_result deleted
+        deregister_tpu $VM_NAME
         return 1
     else
         return 1
@@ -386,8 +408,14 @@ good_tpu_verbose(){
     fi
 }
 
+run_helpzak(){
+    gcloud compute tpus tpu-vm ssh kmh-tpuvm-v4-8-3 --zone=us-central2-b --command="sudo -iu sqa sudo -iu sqa bash /home/sqa/.helpzak $VM_NAME $ZONE"
+}
+
 setup_tpu(){
     # ZHH: change setup_tpu to must use setup
+    log_tpu_check_result "testing"
+
     if [ "$TPU_IS_NEW" = "1" ]; then
         echo "[INFO] TPU is newly created, running setup script."
         run_setup_script $VM_NAME $ZONE
@@ -396,20 +424,30 @@ setup_tpu(){
     fi
     while_check_env $VM_NAME $ZONE && ret=0 || ret=$?
     if [ $ret -eq 9 ]; then
-        echo "[INFO] TPU may be preempted during environment check. Exiting to re-apply..."
-        return 9
+        echo "[INFO] TPU may be preempted during environment check. First trying to use helpzak..."
+        run_helpzak
+        while_check_env $VM_NAME $ZONE && ret=0 || ret=$?
+        if [ $ret -eq 9 ]; then
+            echo "[INFO] TPU is really preempted"
+            return 9
+        fi
+        # return 9
     elif [ $ret -ne 0 ]; then
         echo "[INFO] Environment check failed with ret=$ret"
         return $ret
     fi
     run_wandb_login $VM_NAME $ZONE && ret=0 || ret=$?
     if [ $ret -eq 9 ]; then
-        echo "[INFO] TPU may be preempted during environment check. Exiting to re-apply..."
+        echo "[INFO] TPU may be preempted during wandb login. Exiting to re-apply..."
         return 9
     elif [ $ret -ne 0 ]; then
         echo "[INFO] Wandb login failed with ret=$ret"
         return $ret
     fi
+
+    # success
+    log_tpu_check_result "good"
+    return 0
 }
 
 get_and_setup_tpu(){
@@ -424,7 +462,11 @@ get_and_setup_tpu(){
     trial=0
     while [ $ret -eq 9 ]; do
         echo "[INFO] Attempt number $((trial+1)) to get and setup TPU..."
-        get_tpu $VM_NAME $ZONE
+        get_tpu $VM_NAME $ZONE && ret=0 || ret=$?
+        if [ $ret -ne 0 ]; then
+            echo -e "\033[31m[ERROR] Failed to apply TPU $VM_NAME @ $ZONE with ret=$ret. Exiting.\033[0m"
+            return 42
+        fi
         setup_tpu $VM_NAME $ZONE && ret=0 || ret=$?
         if [ $ret -eq 0 ]; then
             echo -e "\033[32m[INFO] TPU $VM_NAME @ $ZONE is ready to use.\033[0m"

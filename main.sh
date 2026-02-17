@@ -12,7 +12,7 @@ source $ZHH_SCRIPT_ROOT/scripts/launch.sh
 # ka.sh has to be sourced in each TMUX window
 # source ka.sh
 no_need_check=$(
-    [[ "$1" == "s" || "$1" == "wall" || ("$1" == "w" && "$2" == "all") || "$1" == "dall" || ("$1" == "d" && "$2" == "all") || ("$1" =~ ^h) ]] \
+    [[ "$1" == "s" || "$1" == "wall" || ("$1" == "w" && "$2" == "all") || "$1" == "dall" || ("$1" == "d" && "$2" == "all") || ("$1" == "c") || ("$1" =~ ^h) ]] \
     && echo true || echo false
 )
 need_concrete_card=$(
@@ -48,6 +48,8 @@ if $no_need_check || check_config_sanity; then
         zdelete
     elif [ "$1" = "dall" ]; then
         zdelete all
+    elif [ "$1" = "c" ]; then
+        zclean
     elif [ "$1" = "g" ]; then
         zget
     elif [ "$1" = "l" ]; then

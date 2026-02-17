@@ -25,3 +25,7 @@ shopt -u nullglob
 rm -rf /tmp/*tpu*
 rm -rf /tmp/wandb
 sudo chmod a+rw /tmp
+
+# also kill all python jobs
+ps -ef | grep python | grep -v grep | awk '{print "sudo kill -9 " $2}'
+ps -ef | grep python | grep -v grep | awk '{print "sudo kill -9 " $2}' | sh

@@ -30,18 +30,34 @@ auto_select(){
         return 0
     fi
 
+    ZONE_INITIAL=""
     if [ ! -z "$ZONE" ]; then
         # split $ZONE by comma
         IFS=',' read -r -a pool <<< "$ZONE"
+        ZONE_INITIAL=$ZONE
     fi
 
     if [ -z "$TPU_TYPES" ]; then
         TPU_TYPES="32,64"
     fi
 
+    # this may lead to concurrency bug, so add a lock here
+    exec 200>/tmp/ka_auto_lock
+
+    echo "[DEBUG] Waiting for auto lock..."
+    flock 200
+    echo "[DEBUG] Lock acquired"
+
     echo "Auto-selecting zone from pool: ${pool[@]}"
     found_tpu=false
     infos=$(get_available_tpu_infos)
+    # concat infos with /kmh-nfs-ssd-us-mount/code/siri/tou_result.txt
+
+    # if NO_TOU=1, skip
+    if [ "$NO_TOU" != "1" ]; then
+        infos="$infos"$'\n'"$(cat /kmh-nfs-ssd-us-mount/code/siri/tou_result.txt 2>/dev/null || true)"
+    fi
+
     # todo: low card first
     while read -r vm_name zone; do
 
@@ -76,6 +92,12 @@ auto_select(){
             continue
         fi
 
+        # or, if tpu is registered and in use, skip
+        if ! tpu_info_available "$SSCRIPT_HOME/$vm_name"; then
+            echo -e "[INFO] Found in-use TPU VM $vm_name in zone $zone..."
+            continue
+        fi
+
         echo -e "Found TPU VM: \033[32m$vm_name @ $zone\033[0m (type $tpu_cls-$tpu_type)"
         export VM_NAME=$vm_name
         export ZONE=$zone
@@ -88,6 +110,9 @@ auto_select(){
 
         break
     done <<< "$infos"
+
+    # release lock
+    flock -u 200
 
     if $found_tpu; then
         # trap 'echo -e "\n\033[32m[INFO] Exiting. run this line to set VM_NAME and ZONE: ka $VM_NAME $ZONE;"\033[0m' EXIT

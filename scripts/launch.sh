@@ -201,6 +201,9 @@ run_job(){
         DBG_COMMANDS="which python"
     fi
 
+    # kill anyway
+    DBG_COMMANDS="$DBG_COMMANDS && sudo rm -rf /tmp/*tpu*"
+
     json_file=$(get_service_json)
     if [ $? -ne 0 ]; then
         return 1
@@ -208,6 +211,7 @@ run_job(){
     py_path="GOOGLE_APPLICATION_CREDENTIALS=$json_file $py_path"
 
     # if EXTRA_ARGS exists:
+    EXTRA_ARGS_STR=""
     if [ ! -z "$EXTRA_ARGS" ]; then
         EXTRA_ARGS_STR=$(printf "'%s' " "${EXTRA_ARGS[@]}")
     fi
@@ -246,6 +250,13 @@ run_job(){
     [ $status -eq 0 ] || (
         echo -e "\033[31m[Error] Job failed. Check logs in $LOG_DIR/output.log\033[0m" >&2
         fail_command
+
+        # this is a temporal fix, eventually we figure it out
+        if [[ ! "$VM_NAME" =~ kangyang ]]; then
+            echo "[INFO] Releasing TPU $VM_NAME in $ZONE..."
+            deregister_tpu $VM_NAME
+        fi
+
         # NOTE: default, we don't release queue slot on failure
         return 7
     ) && (
@@ -256,6 +267,12 @@ run_job(){
         # release a queue slot
         echo "[INFO] Releasing a queue slot..."
         release_queue
+
+        # if the card is not *kangyang*, release it
+        if [[ ! "$VM_NAME" =~ kangyang ]]; then
+            echo "[INFO] Releasing TPU $VM_NAME in $ZONE..."
+            deregister_tpu $VM_NAME
+        fi
     )
 }
 
@@ -265,14 +282,32 @@ while_run(){
     EXTRA_ARGS=("${@:2}")
 
     log_stage_dir "$STAGE_DIR"
-    run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
+    # run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
 
     # if ret==7 (job failed), auto-check card status, if bad, re-setup env and re-run
+
+    ret=7
+
+    # the logic here is quite complicated, I am not sure whether it can be cleaned
     while [ $ret -eq 7 ]; do
+
+        get_and_setup_tpu $VM_NAME $ZONE && \
+        register_tpu && \
+        run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
+
+        if [ $ret -eq 0 ]; then
+            echo -e "\033[32m[Info] Job finished successfully (in one trial! lucky you!).\033[0m"
+            return 0
+        fi
+
+    
         echo -e "\033[31m[Error] Job failed, first wait for a moment (feel free to ^C if you are here)...\033[0m"
-        sleep 600
+        # sleep 600
+        sleep 100
+
         echo "[INFO] Checking TPU status..."
-        if ! is_preempted $VM_NAME $ZONE; then
+        if has_tpu $VM_NAME $ZONE; then
+        # if ! is_preempted $VM_NAME $ZONE; then
             # note: better make the code more likely to enter this branch
             # this will avoid infinite loop
 
@@ -280,7 +315,7 @@ while_run(){
             if grep -q "This TPU is going through a maintenance event, and might be unavailable" $LOG_DIR/output.log; then
                 echo -e "\033[33m[Info] Found maintenance event in logs, this TPU is no longer usable. Aborted.\033[0m"
                 return 1
-            elif grep -q "[/usr/bin/ssh] exited with return code [255]" $LOG_DIR/output.log || grep -q "Terminating process because the coordinator detected missing heartbeats." $LOG_DIR/output.log; then
+            elif grep -q '\[/usr/bin/ssh\] exited with return code \[255\]' $LOG_DIR/output.log || grep -q "Terminating process because the coordinator detected missing heartbeats." $LOG_DIR/output.log; then
                 echo -e "\033[33m[Info] Found GRPC/heartbeat error in logs, will re-setup env and re-run.\033[0m"
                 # sleep 60
                 # kill_tpu $VM_NAME $ZONE
@@ -294,13 +329,18 @@ while_run(){
                 echo "[Debug] Re-run returned $ret"
             elif grep -q "Fatal Python error: Aborted" $LOG_DIR/output.log; then
                 echo -e "\033[33m[Info] Found Segfault in logs, will wait and re-run...\033[0m"
-                sleep 300
                 echo "[Debug] Re-running job..."
                 (
                     kill_tpu $VM_NAME $ZONE && \
+                    echo "[Debug] Sleep for a while before re-running..." && \
+                    sleep 300 && \
                     run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
                 ) && ret=0 || ret=$?
                 echo "[Debug] Re-run returned $ret"
+            elif grep -q "(core dumped)" $LOG_DIR/output.log || grep -q "Command execution on worker 0 failed with exit status 134" $LOG_DIR/output.log; then
+                echo -e "\033[33m[Info] Our job is killed by others. Will change card and re-run...\033[0m"
+                deregister_tpu $VM_NAME $ZONE
+                ret=42
             else
                 echo -e "\033[32m[Info] Card status looks good, then it is probably a code bug. Please fix it and re-run.\033[0m"
                 return 1
@@ -316,12 +356,30 @@ while_run(){
             size_part=$(echo $accel_arg | cut -d'-' -f2)
             export VM_NAME="auto${type_part}"
             export TPU_TYPES="$size_part"
+            export ZONE=$ZONE_INITIAL
             auto_select && \
             log_stage_dir "$STAGE_DIR" && \
             get_and_setup_tpu $VM_NAME $ZONE && \
             register_tpu && \
             run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
         fi
+
+        while [ $ret -eq 42 ]; do
+            echo -e "\033[31m[INFO] Re-doing auto-select... \033[0m" >&2
+
+            accel_arg=$(get_accelerator_args $VM_NAME)
+            # split by '-'
+            type_part=$(echo $accel_arg | cut -d'-' -f1)
+            size_part=$(echo $accel_arg | cut -d'-' -f2)
+            export VM_NAME="auto${type_part}"
+            export TPU_TYPES="$size_part"
+            export ZONE=$ZONE_INITIAL
+            auto_select && \
+            log_stage_dir "$STAGE_DIR" && \
+            get_and_setup_tpu $VM_NAME $ZONE && \
+            register_tpu && \
+            run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
+        done
     done
 
     return $ret
@@ -351,8 +409,8 @@ zrun(){
     fi
 
     # prepare TPU
-    get_and_setup_tpu $VM_NAME $ZONE && \
-    register_tpu && \
+    # get_and_setup_tpu $VM_NAME $ZONE && \
+    # register_tpu && \
     while_run $STAGE_DIR "${EXTRA_ARGS[@]}"
 }
 
@@ -380,8 +438,8 @@ zrerun(){
     fi
     
     # prepare TPU
-    get_and_setup_tpu $VM_NAME $ZONE && \
-    register_tpu && \
+    # get_and_setup_tpu $VM_NAME $ZONE && \
+    # register_tpu && \
     while_run "$(pwd)" "${EXTRA_ARGS[@]}"
 }
 
@@ -414,14 +472,14 @@ zqueue(){
         echo -e "\033[33m[Info] TPU VM $VM_NAME has failure. Will enter queue state...\033[0m"
     elif good_tpu $VM_NAME $ZONE && queue_isempty $VM_NAME; then
         echo -e "\033[32m[INFO] TPU VM $VM_NAME is already free and no jobs in queue. Directly running...\033[0m"
-        setup_tpu $VM_NAME $ZONE && \
+        # setup_tpu $VM_NAME $ZONE && \
         while_run $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
         return $ret
     fi
 
     queue_job $STAGE_DIR && \
-    get_and_setup_tpu $VM_NAME $ZONE && \
-    register_tpu && \
+    # get_and_setup_tpu $VM_NAME $ZONE && \
+    # register_tpu && \
     while_run $STAGE_DIR "${EXTRA_ARGS[@]}"
 }
 
@@ -457,14 +515,14 @@ zqueue_rerun(){
 
     if good_tpu $VM_NAME $ZONE && queue_isempty $VM_NAME && ! has_failure $VM_NAME; then
         echo -e "\033[32m[INFO] TPU VM $VM_NAME is already free and no jobs in queue. Directly running...\033[0m"
-        setup_tpu $VM_NAME $ZONE && \
+        # setup_tpu $VM_NAME $ZONE && \
         while_run $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
         return $ret
     fi
 
     queue_job $STAGE_DIR && \
-    get_and_setup_tpu $VM_NAME $ZONE && \
-    register_tpu && \
+    # get_and_setup_tpu $VM_NAME $ZONE && \
+    # register_tpu && \
     while_run $STAGE_DIR "${EXTRA_ARGS[@]}"
 }
 
@@ -592,6 +650,28 @@ zlogin(){
     gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command="gcloud auth activate-service-account --key-file=$json_file"
 }
 
+zclean(){
+    # try KILL all FAILED cards
+    res=$(list_tpus)
+    VM_NAMES=($(echo "$res" | awk '{print $1}'))
+    ZONES=($(echo "$res" | awk '{print $2}'))
+    for i in "${!VM_NAMES[@]}"; do
+        VM_NAME=${VM_NAMES[$i]}
+        ZONE=${ZONES[$i]}
+        if has_failure $VM_NAME; then
+            echo -e "\033[33m[Info] Found failed TPU $VM_NAME in $ZONE, trying to kill...\033[0m"
+            # if VM_NAME doesn't contain kangyang, then deregister it
+            if [[ ! "$VM_NAME" =~ kangyang ]]; then
+                # kill_tpu $VM_NAME $ZONE || true
+                deregister_tpu $VM_NAME
+                echo -e "\033[32m[Info] Deregistered TPU $VM_NAME\033[0m"
+            else
+                kill_tpu $VM_NAME $ZONE && killed_command  || deregister_tpu $VM_NAME
+            fi
+        fi
+    done;
+}
+
 check_config_sanity(){
     if [ -z "$WANDB_API_KEY" ]; then
         for _ in {1..10}; do 
@@ -608,14 +688,14 @@ check_config_sanity(){
 
     auto_select
 
-    if [[ $VM_NAME =~ v4 ]]; then
+    if [[ $VM_NAME =~ 'v4-' ]]; then
         export INF_ZONE=us-central2-b
-    elif [[ $VM_NAME =~ v5litepod ]]; then
+    elif [[ $VM_NAME =~ 'v5litepod-' ]]; then
         export INF_ZONE=us-central1-a
-    elif [[ $VM_NAME =~ v5p ]]; then
+    elif [[ $VM_NAME =~ 'v5p-' ]]; then
         # export INF_ZONE=us-east5-a
         echo "current will not infer v5p zone"
-    elif [[ $VM_NAME =~ v6e ]]; then
+    elif [[ $VM_NAME =~ 'v6e-' ]]; then
         # export INF_ZONE=us-east1-d
         echo "current will not infer v6e zone"
     fi

@@ -103,13 +103,13 @@ check_env(){
         IS_V6=1
     fi
 
-    ENV_CHECK="$py_path -c 'import jax, torch; print(jax.__file__)'"
+    ENV_CHECK="ls /kmh-nfs-ssd-us-mount/code/siri > /dev/null && $py_path -c 'import jax, torch; print(jax.__file__)'"
     # read both stdout and stderr
     result=$(timeout 60s gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
     --worker=all --command "$ENV_CHECK" 2>&1 || true)
     # first, eliminate module not found
-    if [[ $result == *"ModuleNotFoundError"* ]]; then
-        echo "Environment is not proper setup: Cannot find torch/jax. Use \`SCRIPT_DEBUG=1\` for more info."
+    if [[ $result == *"No such file"*  || $result == *"ModuleNotFoundError"* ]]; then
+        echo "Environment is not proper setup: Have not mount disk or Cannot find torch/jax. Use \`SCRIPT_DEBUG=1\` for more info."
         return 4
     fi
     # if not IS_V6, assert miniforge3 is in result
@@ -121,7 +121,7 @@ check_env(){
         fi
     fi
 
-    TEST="$py_path -c 'import jax; print(jax.devices())'"
+    TEST="sudo rm -rf /tmp/*tpu* && $py_path -c 'import jax; print(jax.devices())'"
     # read both stdout and stderr
     result=$(timeout 120s gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
     --worker=all --command "$TEST" 2>&1 || true)
@@ -274,7 +274,6 @@ run_setup_script(){
         json_file=$(get_service_json)
         if use_v5_env $VM_NAME; then
             PIP_INSTALL_STR="
-            # set -euo pipefail
 
             sudo snap refresh google-cloud-cli || true
             pip uninstall pyOpenSSL cryptography -y || true
@@ -290,7 +289,6 @@ run_setup_script(){
             "
         else
             PIP_INSTALL_STR="
-            # set -euo pipefail
 
             cd
             # gsutil -m cp -r $gs_str/hanhong/v6_wheels.tar.gz ./wheels.tar.gz

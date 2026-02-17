@@ -52,6 +52,7 @@ killed_command(){
 
     sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
     echo "KILLED" | sudo tee $SSCRIPT_HOME/$VM_NAME/status
+    echo "good" | sudo tee $SSCRIPT_HOME/$VM_NAME/check_result
 }
 
 success_command(){
@@ -238,9 +239,6 @@ show_all_tpu_status(){
             fi
         fi
 
-        if [ ! -z "$WHO" ] && [[ "$workdir" != *"/staging/$WHO/"* ]]; then
-            continue
-        fi
 
         # highlight workdir part
         workdir_hl=$(echo $workdir | sed -E 's#staging/([a-zA-Z0-9_-]+)/([a-zA-Z0-9_-]+)(/launch_.*)#staging/\\033[36m\1\\033[0m/\\033[33m\2\\033[0m\3#g')
@@ -255,7 +253,8 @@ show_all_tpu_status(){
                 # echo -e "\033[33m[Warning] stage dir not found for $raw_vm_name\033[0m"
                 # continue
             fi
-            workdir_hl=$stage_dir
+            # workdir_hl=$stage_dir
+            workdir_hl=$(echo $stage_dir | sed -E 's#staging/([a-zA-Z0-9_-]+)/([a-zA-Z0-9_-]+)(/launch_.*)#staging/\\033[36m\1\\033[0m/\\033[33m\2\\033[0m\3#g')
         else
             # stagedir is workdir/../..
             stage_dir=$(dirname $(dirname $workdir))
@@ -268,21 +267,31 @@ show_all_tpu_status(){
         fi
 
 
+        if [ ! -z "$WHO" ] && [[ "$stage_dir" != *"/staging/$WHO/"* ]]; then
+            continue
+        fi
+
         # grep log dir: --workdir=/kmh-nfs-us-mount/staging/siri/mf_rev/launch_20250917_203208_gitfd6ce86_f72f4085/logs/log1_20250917_203225_9912f3e1/output.log
         log_file="$workdir/output.log"
 
         raw_status=$(cat $SSCRIPT_HOME/$raw_vm_name/status 2>/dev/null || echo "UNKNOWN")
-        status=$(echo $raw_status | sed -E 's/STARTED/\\033[34m&\\033[0m/g' | sed -E 's/FAILED/\\033[31m&\\033[0m/g' | sed -E 's/FINISHED/\\033[32m&\\033[0m/g' | sed -E 's/KILLED/\\033[33m&\\033[0m/g')
+        status=$(echo $raw_status | sed -E 's/STARTED/\\033[34m&\\033[0m/g' | sed -E 's/FAILED/\\033[31m&\\033[0m/g' | sed -E 's/FINISHED/\\033[32m&\\033[0m/g' | sed -E 's/KILLED/\\033[33m&\\033[0m/g' | sed -E 's/CREATING/\\033[30m&\\033[0m/g')
 
         raw_tpu_check_result=$(get_tpu_check_result $raw_vm_name)
-        tpu_check_result=$(echo $raw_tpu_check_result | sed -E 's/ready/\\033[32mgood\\033[0m/g' | sed -E 's/good/\\033[32mgood\\033[0m/g' | sed -E 's/deleted/\\033[31m&\\033[0m/g' | sed -E 's/in\ use/\\033[33mgood\\033[0m/g') # we use good for both ready and in use
+        tpu_check_result=$(echo $raw_tpu_check_result | sed -E 's/ready/\\033[32mgood\\033[0m/g' | sed -E 's/good/\\033[32mgood\\033[0m/g' | sed -E 's/deleted/\\033[31m&\\033[0m/g' | sed -E 's/in\ use/\\033[33mgood\\033[0m/g' | sed -E 's/creating/\\033[30mcreating\\033[0m/g') # we use good for both ready and in use
 
         # if no log for 30 min, switch "STARTED" to "STALED"
         # grep last log time from logdir
         # I0918 00:10:41.255399 139818289895424
-        last_time=$(cat $log_file 2>/dev/null | grep -a -oE '^[IWE][0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]+' | tail -n 1 | awk '{print $1, $2}')
+        # last_time=$(cat $log_file 2>/dev/null | grep -a -oE '^[IWE][0-9]{4} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]+' | tail -n 1 | awk '{print $1, $2}')
+
+        # last_time is the last modified time of log_file, in format of "YYYYMMDD_HHMMSS"
+        # last_time=$(stat -c %y $log_file 2>/dev/null | cut -d'.' -f1 | sed 's/[-: ]//g' || echo "")
+        last_time=$(date -r "$log_file" +"%Y%m%d_%H%M%S" 2>/dev/null || echo "")
+
         if [ ! -z "$last_time" ]; then
-            last_epoch=$(date -d "$(date +%Y)${last_time:1:4} ${last_time:6:8}" +%s)
+            # last_epoch=$(date -d "$(date +%Y)${last_time:1:4} ${last_time:6:8}" +%s)
+            last_epoch=$(date -d "${last_time:0:4}-${last_time:4:2}-${last_time:6:2} ${last_time:9:2}:${last_time:11:2}:${last_time:13:2}" +%s)
             now_epoch=$(date +%s)
             diff_min=$(( (now_epoch - last_epoch) / 60 ))
             if [ $diff_min -ge 30 ]; then
@@ -297,6 +306,8 @@ show_all_tpu_status(){
             if [ $diff_min -ge 1440 ]; then
                 diff_msg="$((diff_min / 1440)) days"
             fi
+        else
+            diff_msg="???"
         fi
 
         # echo -e "\n[$status] (last log: $diff_msg ago) \033[1m$vm_name @ $vm_zone\033[0m ($tpu_check_result) -> $notes\n\t===> check at $workdir_hl/output.log"
@@ -309,16 +320,28 @@ show_all_tpu_status(){
     echo -e "\n\033[1mHint\033[0m: The TPU status may not be new. Use \`zhh wall\` to refresh."
 }
 
+tpu_info_available(){
+    folder=$1
+    vm_name=$(basename $folder)
+
+    # if dir doesn't exist, return 0
+    if [ ! -d "$folder" ]; then
+        return 0
+    fi
+
+    tpu_check=$(cat $folder/check_result 2>/dev/null || echo "NO CHECK RESULT")
+    zone=$(cat $folder/zone 2>/dev/null || echo "INTERNAL_ERROR")
+    status=$(cat $folder/status 2>/dev/null || echo "UNKNOWN")
+    if [ "$status" = "KILLED" ] || [ "$status" = "FINISHED" ]; then
+        return 0
+    else
+        return 1
+    fi
+}
+
 get_available_tpu_infos(){
     for folder in $SSCRIPT_HOME/*; do
-        vm_name=$(basename $folder)
-        tpu_check=$(cat $folder/check_result 2>/dev/null || echo "NO CHECK RESULT")
-        if [ "$tpu_check" == "deleted" ]; then
-            continue
-        fi
-        zone=$(cat $folder/zone 2>/dev/null || echo "INTERNAL_ERROR")
-        status=$(cat $folder/status 2>/dev/null || echo "UNKNOWN")
-        if [ "$status" = "KILLED" ] || [ "$status" = "FINISHED" ]; then
+        if tpu_info_available $folder; then
             echo -e "$vm_name $zone"
         fi
     done;
