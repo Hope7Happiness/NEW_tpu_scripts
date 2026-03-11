@@ -112,6 +112,24 @@ zkill(){
     fi
 }
 
+killer_trap(){
+    echo -e "\n\033[33m[Info] Caught interrupt signal. Running kill...\033[0m"
+    zkill
+    # if FAST_DEBUG is set, run again
+    if [ ! -z "$FAST_DEBUG" ]; then
+        echo -e "\033[33m[Info] FAST_DEBUG is set. Running job again...\033[0m"
+        cd $HERE
+        echo -e "[Debug] now, at $(pwd)"
+        trap - INT # reset trap, avoid multiple traps stacking
+        echo -e "[Debug] re-running job in 5s (Ctrl+C now if you do not want)..."
+        sleep 5
+        zrun
+    else
+        echo -e "\033[33m[Info] Not re-running job since FAST_DEBUG is not set. If you want to enable fast debug, set FAST_DEBUG=1 and re-run the command.\033[0m"
+    fi
+    exit 0
+}
+
 
 run_job(){
     # args: $1=STAGE_DIR, $2...=extra args (passed to main.py)
@@ -165,7 +183,17 @@ run_job(){
                 else
                     echo "[INFO]   ===>copying checkpoint from gs://kmh-gcp-$zone/$GS_STAGING_NAME/$subpath to gs://kmh-gcp-$correct_gs_zone/$GS_STAGING_NAME/$subpath"
 
-                    gcloud storage cp -r gs://kmh-gcp-$zone/$GS_STAGING_NAME/$subpath gs://kmh-gcp-$correct_gs_zone/$GS_STAGING_NAME/$subpath
+                    # we only copy the last checkpoint, sort by numerical order, and copy the last one
+                    last_ckpt=$(
+                        gsutil ls "$GS_DIR"/checkpoint_* |
+                        sed 's|.*/checkpoint_||' |
+                        cut -d/ -f1 |
+                        sort -n |
+                        tail -n 1
+                    )
+                    echo "[INFO]   ===>copying last checkpoint checkpoint_$last_ckpt"
+
+                    gcloud storage cp -r gs://kmh-gcp-$zone/$GS_STAGING_NAME/$subpath/checkpoint_$last_ckpt gs://kmh-gcp-$correct_gs_zone/$GS_STAGING_NAME/$subpath/checkpoint_$last_ckpt
                 fi
             fi
 
@@ -218,7 +246,19 @@ run_job(){
 
     if [ -f "$STAGE_DIR/补.sh" ]; then
         echo "[INFO] executing 补.sh"
-        source $STAGE_DIR/补.sh > /dev/null 2>&1
+        # bash $STAGE_DIR/补.sh && ret=0 || ret=$?
+
+        # two cases:
+        # 1. "gcloud" is found in 补.sh, which means it is doing some gcloud command, we should run it on local machine
+        if grep -q "gcloud" $STAGE_DIR/补.sh; then
+            echo "[INFO] found gcloud command in 补.sh, running it on local machine"
+            bash $STAGE_DIR/补.sh && ret=0 || ret=$?
+        else
+            echo "[INFO] no gcloud command found in 补.sh, running it on remote machine"
+            gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command "bash $STAGE_DIR/补.sh" && ret=0 || ret=$?
+        fi
+
+        echo "[INFO] finished executing 补.sh, returned $ret"
     fi
 
     # COMMAND="ls /foo/bar | sudo tee -a $LOG_DIR/output.log"
@@ -238,12 +278,15 @@ run_job(){
 
 
     # trap a ^C signal
-    trap 'echo -e "\n\033[33m[Info] Caught interrupt signal. Running kill...\033[0m"; zkill; exit 0' INT
+    trap - INT # reset trap, avoid multiple traps stacking
+    echo -e "[DEBUG] FAST DEBUG is $FAST_DEBUG"
+    trap killer_trap INT
 
     cd $STAGE_DIR && \
     gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command "$DBG_COMMANDS && cd $STAGE_DIR && $COMMAND" 2>&1 | stdbuf -oL -eL sudo tee -a $LOG_DIR/output.log
 
     status=${PIPESTATUS[0]}   # this get the return code of gcloud
+    unset FAST_DEBUG # when job preempted/finished, reset FAST_DEBUG
 
     trap - INT # reset trap
 
@@ -293,7 +336,9 @@ while_run(){
 
         get_and_setup_tpu $VM_NAME $ZONE && \
         register_tpu && \
-        run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
+        run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
+        && ret=0 || ret=$?
+        echo "[Debug] Initial run returned $ret"
 
         if [ $ret -eq 0 ]; then
             echo -e "\033[32m[Info] Job finished successfully (in one trial! lucky you!).\033[0m"
@@ -312,32 +357,33 @@ while_run(){
             # this will avoid infinite loop
 
             # check if there is GRPC error
-            if grep -q "This TPU is going through a maintenance event, and might be unavailable" $LOG_DIR/output.log; then
-                echo -e "\033[33m[Info] Found maintenance event in logs, this TPU is no longer usable. Aborted.\033[0m"
-                return 1
-            elif grep -q '\[/usr/bin/ssh\] exited with return code \[255\]' $LOG_DIR/output.log || grep -q "Terminating process because the coordinator detected missing heartbeats." $LOG_DIR/output.log; then
+            # if grep -q "This TPU is going through a maintenance event, and might be unavailable" $LOG_DIR/output.log; then
+            #     echo -e "\033[33m[Info] Found maintenance event in logs, this TPU is no longer usable. Aborted.\033[0m"
+            #     return 1
+            if grep -q '\[/usr/bin/ssh\] exited with return code \[255\]' $LOG_DIR/output.log || grep -q "Terminating process because the coordinator detected missing heartbeats." $LOG_DIR/output.log; then
                 echo -e "\033[33m[Info] Found GRPC/heartbeat error in logs, will re-setup env and re-run.\033[0m"
                 # sleep 60
                 # kill_tpu $VM_NAME $ZONE
                 echo "[Debug] Re-running job..."
-                (
-                    get_and_setup_tpu $VM_NAME $ZONE && \
-                    register_tpu && \
-                    kill_tpu $VM_NAME $ZONE && \
-                    run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
-                ) && ret=0 || ret=$?
+                get_and_setup_tpu $VM_NAME $ZONE && \
+                register_tpu && \
+                kill_tpu $VM_NAME $ZONE && \
+                sleep 60 && \
+                kill_tpu $VM_NAME $ZONE && \
+                sleep 30 && \
+                run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
+                && ret=0 || ret=$?
                 echo "[Debug] Re-run returned $ret"
             elif grep -q "Fatal Python error: Aborted" $LOG_DIR/output.log; then
                 echo -e "\033[33m[Info] Found Segfault in logs, will wait and re-run...\033[0m"
                 echo "[Debug] Re-running job..."
-                (
-                    kill_tpu $VM_NAME $ZONE && \
-                    echo "[Debug] Sleep for a while before re-running..." && \
-                    sleep 300 && \
-                    run_job $STAGE_DIR "${EXTRA_ARGS[@]}"
-                ) && ret=0 || ret=$?
+                kill_tpu $VM_NAME $ZONE && \
+                echo "[Debug] Sleep for a while before re-running..." && \
+                sleep 300 && \
+                run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
+                && ret=0 || ret=$?
                 echo "[Debug] Re-run returned $ret"
-            elif grep -q "(core dumped)" $LOG_DIR/output.log || grep -q "Command execution on worker 0 failed with exit status 134" $LOG_DIR/output.log; then
+            elif grep -q "(core dumped)" $LOG_DIR/output.log || grep -q "Command execution on worker 0 failed with exit status 134" $LOG_DIR/output.log || grep -q "UNKNOWN: TPU initialization failed:" $LOG_DIR/output.log; then
                 echo -e "\033[33m[Info] Our job is killed by others. Will change card and re-run...\033[0m"
                 deregister_tpu $VM_NAME $ZONE
                 ret=42
@@ -361,7 +407,9 @@ while_run(){
             log_stage_dir "$STAGE_DIR" && \
             get_and_setup_tpu $VM_NAME $ZONE && \
             register_tpu && \
-            run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
+            run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
+            && ret=0 || ret=$?
+            echo "[Debug] Re-run with auto-select returned $ret"
         fi
 
         while [ $ret -eq 42 ]; do
@@ -378,7 +426,9 @@ while_run(){
             log_stage_dir "$STAGE_DIR" && \
             get_and_setup_tpu $VM_NAME $ZONE && \
             register_tpu && \
-            run_job $STAGE_DIR "${EXTRA_ARGS[@]}" && ret=0 || ret=$?
+            run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
+            && ret=0 || ret=$?
+            echo "[Debug] Re-doing auto-select returned $ret"
         done
     done
 
@@ -404,9 +454,9 @@ zrun(){
     log_stage_dir "$STAGE_DIR"
 
     # if EXTRA_ARGS exists, write to a file in STAGE_DIR
-    if [ ! -z "$EXTRA_ARGS" ]; then
-        (printf "'%s' " "${EXTRA_ARGS[@]}" | sudo tee $STAGE_DIR/.extra_args) > /dev/null
-    fi
+    # if [ ! -z "$EXTRA_ARGS" ]; then
+    #     (printf "'%s' " "${EXTRA_ARGS[@]}" | sudo tee $STAGE_DIR/.extra_args) > /dev/null
+    # fi
 
     # prepare TPU
     # get_and_setup_tpu $VM_NAME $ZONE && \
@@ -431,8 +481,9 @@ zrerun(){
     # check if .extra_args exists
     # EXTRA_ARGS=""
     if [ -f .extra_args ]; then
-        read -a EXTRA_ARGS < <(cat .extra_args) || true
-        echo "[INFO] Using extra args: ${EXTRA_ARGS[@]}"
+        echo -e "\033[31m[WARNING] Exist .extra_args found in current directory. This is no longer supported, it will have no effect." >&2
+        # read -a EXTRA_ARGS < <(cat .extra_args) || true
+        # echo "[INFO] Using extra args: ${EXTRA_ARGS[@]}"
     else
         echo "[INFO] No extra args found."
     fi
@@ -458,9 +509,9 @@ zqueue(){
     STAGE_DIR=$(echo $STAGE_DIR | head -n 1 | awk '{print $3}')
 
     # if EXTRA_ARGS exists, write to a file in STAGE_DIR
-    if [ ! -z "$EXTRA_ARGS" ]; then
-        (printf "'%s' " "${EXTRA_ARGS[@]}" | sudo tee $STAGE_DIR/.extra_args) > /dev/null
-    fi
+    # if [ ! -z "$EXTRA_ARGS" ]; then
+    #     (printf "'%s' " "${EXTRA_ARGS[@]}" | sudo tee $STAGE_DIR/.extra_args) > /dev/null
+    # fi
 
     # if good_tpu $VM_NAME $ZONE && queue_isempty $VM_NAME && ! has_failure $VM_NAME; then
     #     echo -e "\033[32m[INFO] TPU VM $VM_NAME is already free and no jobs in queue. Directly running...\033[0m"
@@ -491,8 +542,9 @@ zqueue_rerun(){
     fi
 
     if [ -f .extra_args ]; then
-        read -a EXTRA_ARGS < <(cat .extra_args) || true
-        echo "[INFO] Using extra args: ${EXTRA_ARGS[@]}"
+        echo -e "\033[31m[WARNING] Exist .extra_args found in current directory. This is no longer supported, it will have no effect." >&2
+        # read -a EXTRA_ARGS < <(cat .extra_args) || true
+        # echo "[INFO] Using extra args: ${EXTRA_ARGS[@]}"
     else
         echo "[INFO] No extra args found."
     fi
@@ -509,9 +561,9 @@ zqueue_rerun(){
     STAGE_DIR=$(echo $STAGE_DIR | head -n 1 | awk '{print $3}')
 
     # if EXTRA_ARGS exists, write to a file in STAGE_DIR
-    if [ ! -z "$EXTRA_ARGS" ]; then
-        (printf "'%s' " "${EXTRA_ARGS[@]}" | sudo tee $STAGE_DIR/.extra_args) > /dev/null
-    fi
+    # if [ ! -z "$EXTRA_ARGS" ]; then
+    #     (printf "'%s' " "${EXTRA_ARGS[@]}" | sudo tee $STAGE_DIR/.extra_args) > /dev/null
+    # fi
 
     if good_tpu $VM_NAME $ZONE && queue_isempty $VM_NAME && ! has_failure $VM_NAME; then
         echo -e "\033[32m[INFO] TPU VM $VM_NAME is already free and no jobs in queue. Directly running...\033[0m"

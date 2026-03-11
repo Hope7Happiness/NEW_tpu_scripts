@@ -452,9 +452,15 @@ setup_tpu(){
 
 get_and_setup_tpu(){
 
+    # write name lock (group shared):
+    # zak_$VM_NAME_2026-02-26_21-42-42
+    echo "Writing lock file for TPU $VM_NAME"
+    LOCK_FILE="/kmh-nfs-ssd-us-mount/code/qiao/tpu_lock/zak_${VM_NAME}_$(date +%Y-%m-%d_%H-%M-%S)"
+    sudo touch $LOCK_FILE
+
     if [ ! -z "$FAST_DEBUG" ]; then
         echo -e "\033[33m[INFO] FAST_DEBUG is set, skipping TPU get and setup.\033[0m"
-        unset FAST_DEBUG # if for second time (i.e. card preempted), then do normal
+        # unset FAST_DEBUG # if for second time (i.e. card preempted), then do normal
         return 0
     fi
 
@@ -465,6 +471,7 @@ get_and_setup_tpu(){
         get_tpu $VM_NAME $ZONE && ret=0 || ret=$?
         if [ $ret -ne 0 ]; then
             echo -e "\033[31m[ERROR] Failed to apply TPU $VM_NAME @ $ZONE with ret=$ret. Exiting.\033[0m"
+            deregister_tpu $VM_NAME
             return 42
         fi
         setup_tpu $VM_NAME $ZONE && ret=0 || ret=$?
@@ -476,13 +483,17 @@ get_and_setup_tpu(){
         export SCRIPT_DEBUG=1 # for the subsequent runs, always use verbose mode
         if [ $trial -ge 5 ]; then
             echo -e "\033[31m[Error] TPU $VM_NAME @ $ZONE setup failed after 5 trials. Exiting.\033[0m"
+            deregister_tpu $VM_NAME
             return 1
         fi
         echo -e "\033[33m[INFO] Retrying to get and setup TPU after 5 minutes...\033[0m"
         sleep 300
     done
     echo -e "\033[31m[ERROR] get_and_setup_tpu exited with ret=$ret\033[0m"
-    return $ret
+    echo -e "\033[32m[INFO] we will automatically switch a card (by returning 42)"
+    deregister_tpu $VM_NAME
+    return 42
+    # return $ret
 }
 
 # This haven't been used

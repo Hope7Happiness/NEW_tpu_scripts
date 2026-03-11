@@ -1,4 +1,6 @@
 # until ls /kmh-nfs-ssd-us-mount/code/siri works, repeat
+sudo rm -rf /tmp/* || true
+
 sudo mkdir -p /kmh-nfs-ssd-us-mount
 sudo mount -o vers=3 10.97.81.98:/kmh_nfs_ssd_us /kmh-nfs-ssd-us-mount
 sudo chmod go+rw /kmh-nfs-ssd-us-mount

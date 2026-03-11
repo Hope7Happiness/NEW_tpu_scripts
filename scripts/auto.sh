@@ -98,6 +98,25 @@ auto_select(){
             continue
         fi
 
+        # or, if the lock file (shared across group) exists, skip
+        group_lock_file="/kmh-nfs-ssd-us-mount/code/qiao/tpu_lock/*_${vm_name}_*"
+        # get the actual file
+        actual_lock_file=$(ls $group_lock_file 2>/dev/null || true)
+        if [ -f "$actual_lock_file" ]; then
+            echo -e "[INFO] Found locked TPU VM $vm_name in zone $zone (lock file: $(basename $actual_lock_file))..."
+            # check the last modified time of the lock file
+            lmt=$(stat -c %Y "$actual_lock_file")
+            now=$(date +%s)
+            # if the lock file is older than 30 mins, consider it stale and ignore
+            if (( now - lmt > 1800 )); then
+                echo -e "\033[33m[WARNING] Found stale lock file for TPU VM $vm_name: $(basename $actual_lock_file). Ignoring the lock.\033[0m"
+                # remove the stale lock file
+                sudo rm -f "$actual_lock_file"
+            else
+                continue
+            fi
+        fi
+
         echo -e "Found TPU VM: \033[32m$vm_name @ $zone\033[0m (type $tpu_cls-$tpu_type)"
         export VM_NAME=$vm_name
         export ZONE=$zone
