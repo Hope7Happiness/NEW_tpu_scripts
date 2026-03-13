@@ -1,4 +1,9 @@
-ka.sh
+.ka
 
 secret.json
 补.sh
+
+*.pyc
+logs/
+
+*.json

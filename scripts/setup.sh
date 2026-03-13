@@ -341,7 +341,7 @@ run_wandb_login(){
     fi
 
     if [ -z "$WANDB_API_KEY" ]; then
-        echo -e "\033[31m[Error] WANDB_API_KEY is not set, so you cannot perform wandb login. Please run \`source ka.sh\`.\033[0m" >&2
+        echo -e "\033[31m[Error] WANDB_API_KEY is not set, so you cannot perform wandb login. Please run \`source .ka\`.\033[0m" >&2
         return 1
     fi
 

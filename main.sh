@@ -7,10 +7,11 @@ if [ ! -z "$SCRIPT_DEBUG" ]; then
 fi
 
 export ZHH_SCRIPT_ROOT=$(realpath "$(dirname "${BASH_SOURCE[0]}")")
+
 source $ZHH_SCRIPT_ROOT/scripts/launch.sh
 
-# ka.sh has to be sourced in each TMUX window
-# source ka.sh
+# .ka has to be sourced in each TMUX window
+# source .ka
 no_need_check=$(
     [[ "$1" == "s" || "$1" == "wall" || ("$1" == "w" && "$2" == "all") || "$1" == "dall" || ("$1" == "d" && "$2" == "all") || ("$1" == "c") || ("$1" =~ ^h) ]] \
     && echo true || echo false

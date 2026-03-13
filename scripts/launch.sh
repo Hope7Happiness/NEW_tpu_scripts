@@ -294,11 +294,15 @@ run_job(){
         echo -e "\033[31m[Error] Job failed. Check logs in $LOG_DIR/output.log\033[0m" >&2
         fail_command
 
-        # this is a temporal fix, eventually we figure it out
-        if [[ ! "$VM_NAME" =~ kangyang ]]; then
-            echo "[INFO] Releasing TPU $VM_NAME in $ZONE..."
-            deregister_tpu $VM_NAME
-        fi
+        # now, in anyway, we deregister it
+        echo -e "\033[33m[Info] Releasing TPU $VM_NAME in $ZONE...\033[0m"
+        deregister_tpu $VM_NAME
+
+        # # this is a temporal fix, eventually we figure it out
+        # if [[ ! "$VM_NAME" =~ kangyang ]]; then
+        #     echo "[INFO] Releasing TPU $VM_NAME in $ZONE..."
+        #     deregister_tpu $VM_NAME
+        # fi
 
         # NOTE: default, we don't release queue slot on failure
         return 7
@@ -727,13 +731,13 @@ zclean(){
 check_config_sanity(){
     if [ -z "$WANDB_API_KEY" ]; then
         for _ in {1..10}; do 
-        echo -e "\033[31m[FATAL Warning] WANDB_API_KEY is not set. Please run \`source ka.sh\`.\033[0m" >&2
+        echo -e "\033[31m[FATAL Warning] WANDB_API_KEY is not set. Please run \`source .ka\`.\033[0m" >&2
         done
         # return 1
     fi
 
     if [ -z "$VM_NAME" ]; then
-        echo -e "\033[31m[Error] VM_NAME is not set. Please run \`source ka.sh\`.\033[0m" >&2
+        echo -e "\033[31m[Error] VM_NAME is not set. Please run \`source .ka\`.\033[0m" >&2
         echo -e "\033[33m[Hint] Use \`zhh help\` for more info.\033[0m" >&2
         return 1
     fi
@@ -756,7 +760,7 @@ check_config_sanity(){
         echo -e "\033[33m[Info] ZONE is not set. Will automatically infer zone.\033[0m" >&2
 
         if [[ -z "$INF_ZONE" ]]; then
-            echo -e "\033[31m[Error] Cannot infer ZONE from VM_NAME. Please set ZONE manually in ka.sh.\033[0m" >&2
+            echo -e "\033[31m[Error] Cannot infer ZONE from VM_NAME. Please set ZONE manually in .ka.\033[0m" >&2
             return 1
         fi
         ZONE=$INF_ZONE
