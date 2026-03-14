@@ -46,6 +46,7 @@ def zhh_request(
 def get_conversation_jobs(zhh_server_url: str, conversation: dict) -> list[dict]:
     job_ids = conversation.get("job_ids", []) or []
     task_meta = conversation.get("task_meta", {}) or {}
+    messages = conversation.get("messages", []) or []
     if not job_ids:
         return []
 
@@ -55,18 +56,42 @@ def get_conversation_jobs(zhh_server_url: str, conversation: dict) -> list[dict]
 
     jobs = status_data.get("jobs", [])
     by_id = {job.get("job_id"): job for job in jobs if isinstance(job, dict) and job.get("job_id")}
+    system_run_jobs = {
+        str(msg.get("job_id") or "").strip()
+        for msg in messages
+        if isinstance(msg, dict)
+        and str(msg.get("role") or "") == "system"
+        and str(msg.get("system_event") or "") == "task_run"
+        and str(msg.get("job_id") or "").strip()
+    }
 
     ordered = []
     for job_id in reversed(job_ids):
+        meta = task_meta.get(job_id) if isinstance(task_meta.get(job_id), dict) else {}
         nickname = ""
-        if isinstance(task_meta.get(job_id), dict):
-            nickname = str(task_meta[job_id].get("nickname") or "").strip()
+        if meta:
+            nickname = str(meta.get("nickname") or "").strip()
+        cached_status = str(meta.get("last_status") or "").strip().lower() if meta else ""
+        if cached_status == "unknown":
+            cached_status = ""
         if job_id in by_id:
             item = dict(by_id[job_id])
             item["nickname"] = nickname
+            if (not item.get("status") or str(item.get("status")).lower() == "unknown") and cached_status:
+                item["status"] = cached_status
             ordered.append(item)
         else:
-            ordered.append({"job_id": job_id, "status": "unknown", "missing": True, "nickname": nickname})
+            fallback_status = cached_status or ("canceled" if job_id in system_run_jobs else "unknown")
+            item = {
+                "job_id": job_id,
+                "status": fallback_status,
+                "missing": True,
+                "nickname": nickname,
+            }
+            for key in ("zhh_args", "created_at", "final_log_file", "pane_log_file", "command", "cwd"):
+                if meta and meta.get(key):
+                    item[key] = meta.get(key)
+            ordered.append(item)
     return ordered
 
 

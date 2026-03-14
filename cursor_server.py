@@ -16,6 +16,7 @@ import argparse
 import os
 import threading
 import time
+import uuid
 from pathlib import Path
 
 from flask import Flask, jsonify, request
@@ -32,6 +33,7 @@ from conversation_store import (
 )
 from tasks_runtime import (
   build_prompt_with_task_refs,
+  fetch_task_log_payload,
   fetch_task_reference_payload,
   get_conversation_jobs,
   zhh_request,
@@ -290,6 +292,55 @@ def clear_task_unread_alert(conversation_id: str, job_id: str) -> None:
   update_conversation(conversation_id, clear_unread)
 
 
+def _safe_positive_int(text: str | None, default: int) -> int:
+  try:
+    value = int(str(text or default))
+  except Exception:
+    return default
+  return value if value > 0 else default
+
+
+def _tail_text_file(path: Path, lines: int = 500, max_chars: int = 120_000) -> str:
+  try:
+    raw = path.read_text(encoding="utf-8", errors="replace")
+  except Exception:
+    return ""
+  rows = raw.splitlines()
+  tail = "\n".join(rows[-lines:]) if lines > 0 else raw
+  if len(tail) <= max_chars:
+    return tail
+  return tail[-max_chars:]
+
+
+def _local_task_log_payload(conv: dict, job_id: str, lines: int = 500) -> dict | None:
+  task_meta = conv.get("task_meta")
+  if not isinstance(task_meta, dict):
+    return None
+  entry = task_meta.get(job_id)
+  if not isinstance(entry, dict):
+    return None
+
+  for key in ("final_log_file", "pane_log_file"):
+    candidate = str(entry.get(key) or "").strip()
+    if not candidate:
+      continue
+    path = Path(candidate)
+    if not path.exists() or not path.is_file():
+      continue
+    text = _tail_text_file(path, lines=lines)
+    if not text.strip():
+      continue
+    return {
+      "job_id": job_id,
+      "lines": lines,
+      "log": text,
+      "source": "local_file",
+      "log_path": str(path),
+    }
+
+  return None
+
+
 def list_workdir_children(workdir: str | None) -> dict:
   current = normalize_workdir(workdir or str(WORKDIR_ROOT))
   children = []
@@ -498,8 +549,27 @@ def api_run_task(conversation_id: str):
       job_ids = c.setdefault("job_ids", [])
       if job_id not in job_ids:
         job_ids.append(job_id)
+      task_meta = c.setdefault("task_meta", {})
+      entry = task_meta.get(job_id)
+      if not isinstance(entry, dict):
+        entry = {}
+      else:
+        entry = dict(entry)
+      entry["last_status"] = normalize_task_status(run_data.get("status") or "starting")
+      entry["updated_at"] = utc_now()
+      for key in ("zhh_args", "created_at", "final_log_file", "pane_log_file", "command", "cwd"):
+        value = run_data.get(key)
+        if value is not None and value != "":
+          entry[key] = value
+      task_meta[job_id] = entry
 
     update_conversation(conversation_id, add_job)
+    append_message(conversation_id, "system", f"Runned job {job_id}", {
+      "system_event": "task_run",
+      "job_id": job_id,
+      "job_status": str(run_data.get("status") or "starting"),
+      "zhh_args": str(run_data.get("zhh_args") or ""),
+    })
 
   return jsonify({"conversation_id": conversation_id, "job": run_data}), 200
 
@@ -515,6 +585,19 @@ def api_cancel_task(conversation_id: str, job_id: str):
     return jsonify({"error": "job does not belong to this conversation"}), 404
 
   status_code, payload = zhh_request(ZHH_SERVER_URL, "POST", f"/cancel/{job_id}")
+  if status_code == 200:
+    def mark_canceled(c: dict):
+      task_meta = c.setdefault("task_meta", {})
+      entry = task_meta.get(job_id)
+      if not isinstance(entry, dict):
+        entry = {}
+      else:
+        entry = dict(entry)
+      entry["last_status"] = "canceled"
+      entry["updated_at"] = utc_now()
+      task_meta[job_id] = entry
+
+    update_conversation(conversation_id, mark_canceled)
   return jsonify(payload), status_code
 
 
@@ -609,11 +692,23 @@ def api_task_log(conversation_id: str, job_id: str):
   if job_id not in job_ids:
     return jsonify({"error": "job does not belong to this conversation"}), 404
 
-  lines = request.args.get("lines", "500")
+  lines = _safe_positive_int(request.args.get("lines", "500"), default=500)
   upstream_path = f"/log/{job_id}?lines={lines}"
   status_code, payload = zhh_request(ZHH_SERVER_URL, "GET", upstream_path)
 
   if status_code != 200:
+    fallback_payload = _local_task_log_payload(conv, job_id, lines=lines)
+    if fallback_payload is not None:
+      clear_task_unread_alert(conversation_id, job_id)
+      return jsonify(fallback_payload), 200
+    if status_code in {404, 410}:
+      clear_task_unread_alert(conversation_id, job_id)
+      return jsonify({
+        "job_id": job_id,
+        "lines": lines,
+        "log": f"[{job_id}] is canceled or removed; upstream log is no longer available.",
+        "source": "synthetic",
+      }), 200
     detail = payload.get("error") if isinstance(payload, dict) else str(payload)
     return jsonify({
       "error": f"upstream log request failed: GET {ZHH_SERVER_URL}{upstream_path}",
@@ -622,6 +717,10 @@ def api_task_log(conversation_id: str, job_id: str):
     }), status_code
 
   if not isinstance(payload, dict) or ("log" not in payload):
+    fallback_payload = _local_task_log_payload(conv, job_id, lines=lines)
+    if fallback_payload is not None:
+      clear_task_unread_alert(conversation_id, job_id)
+      return jsonify(fallback_payload), 200
     return jsonify({
       "error": f"upstream returned unexpected payload: GET {ZHH_SERVER_URL}{upstream_path}",
       "upstream_status": status_code,
@@ -629,6 +728,10 @@ def api_task_log(conversation_id: str, job_id: str):
     }), 502
 
   if not str(payload.get("log", "")).strip():
+    fallback_payload = _local_task_log_payload(conv, job_id, lines=lines)
+    if fallback_payload is not None:
+      clear_task_unread_alert(conversation_id, job_id)
+      return jsonify(fallback_payload), 200
     return jsonify({
       "error": f"upstream returned empty log: GET {ZHH_SERVER_URL}{upstream_path}",
       "upstream_status": status_code,

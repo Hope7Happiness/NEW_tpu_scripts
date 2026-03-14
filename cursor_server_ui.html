@@ -197,6 +197,24 @@ body {
 .msg.assistant .bubble {
   background: #1b1f28;
 }
+.msg.system .bubble {
+  background: #1a2230;
+  border: 1px solid #2e405a;
+}
+.system-task-actions {
+  margin-top: 8px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.system-task-actions button {
+  border: 1px solid #2b3240;
+  background: #1b1f28;
+  color: #d9dde7;
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
 #composer-wrap {
   border-top: 1px solid #262b36;
   padding: 14px 18px 18px;
@@ -1342,12 +1360,69 @@ async function openConversation(id, updateList = true) {
   document.getElementById('delete-btn').disabled = currentConversation.status === 'running';
   document.getElementById('run-task-btn').disabled = false;
   document.getElementById('refresh-task-btn').disabled = false;
-  if (currentView === 'tasks') {
-    await loadTasksForCurrentConversation();
-  } else if (currentView === 'yaml') {
+  await loadTasksForCurrentConversation(true);
+  if (currentView === 'yaml') {
     await loadYamlFileListForCurrentConversation(true);
   }
   if (updateList) await loadConversations();
+}
+
+function isCanceledTaskStatus(status) {
+  const value = String(status || '').toLowerCase();
+  return ['canceled', 'cancelled', 'aborted'].includes(value);
+}
+
+function taskDisplayStatus(status) {
+  return isCanceledTaskStatus(status) ? '[canceled]' : String(status || 'unknown');
+}
+
+function getCurrentTaskById(jobId) {
+  const target = String(jobId || '').trim();
+  if (!target) return null;
+  const list = Array.isArray(currentTasks) ? currentTasks : [];
+  return list.find(item => String((item && item.job_id) || '') === target) || null;
+}
+
+function conversationHasJob(jobId) {
+  if (!currentConversation || !Array.isArray(currentConversation.job_ids)) return false;
+  return currentConversation.job_ids.includes(String(jobId || ''));
+}
+
+function renderSystemTaskCard(job, forceCanceled = false) {
+  const jobId = String((job && job.job_id) || 'unknown');
+  const statusRaw = String((job && job.status) || 'unknown');
+  const effectiveStatusRaw = forceCanceled ? 'canceled' : statusRaw;
+  const status = taskDisplayStatus(effectiveStatusRaw);
+  const args = String((job && job.zhh_args) || '');
+  const nickname = String((job && job.nickname) || '').trim();
+  const createdAt = String((job && job.created_at) || '-');
+  const runBtnDisabled = !currentId ? 'disabled' : '';
+  const statusLower = String(effectiveStatusRaw || '').toLowerCase();
+  const canCancel = statusLower === 'running' || statusLower === 'starting';
+  const canRemove = !['running', 'starting', 'queued', 'pending'].includes(statusLower);
+  const canceled = forceCanceled || isCanceledTaskStatus(effectiveStatusRaw);
+
+  const actionsHtml = canceled
+    ? `<div class="task-meta" style="margin-top:8px;">${escapeHtml(jobId)} is canceled</div>`
+    : `
+      <div class="task-actions">
+        <button ${runBtnDisabled} onclick="addTaskReference('${escapeHtml(jobId)}')">Reference</button>
+        <button ${runBtnDisabled} onclick="viewTaskLog('${escapeHtml(jobId)}')">Log</button>
+        ${canCancel ? `<button ${runBtnDisabled} onclick="cancelTask('${escapeHtml(jobId)}')">Cancel</button>` : ''}
+        ${canRemove ? `<button ${runBtnDisabled} onclick="removeTask('${escapeHtml(jobId)}')">Remove</button>` : ''}
+      </div>
+    `;
+
+  return `
+    <div class="task-item" style="margin-top:8px;">
+      <div class="task-top">
+        <div class="task-id">${escapeHtml(jobId)}${nickname ? ` · 🏷 ${escapeHtml(nickname)}` : ''}</div>
+        <div class="task-status">${escapeHtml(status)}</div>
+      </div>
+      <div class="task-meta">args: ${escapeHtml(args)} · created: ${escapeHtml(createdAt)}</div>
+      ${actionsHtml}
+    </div>
+  `;
 }
 
 function renderConversation(conv) {
@@ -1372,10 +1447,26 @@ function renderConversation(conv) {
           </div>
         `;
       }).join(' ');
+      const systemTaskRun = m && m.role === 'system' && m.system_event === 'task_run' && m.job_id;
+      let systemTaskCardHtml = '';
+      if (systemTaskRun) {
+        const synced = getCurrentTaskById(m.job_id);
+        const missingInConversation = !conversationHasJob(m.job_id);
+        const job = synced || {
+          job_id: m.job_id,
+          status: m.job_status || 'starting',
+          zhh_args: m.zhh_args || '',
+          created_at: m.created_at || '-',
+          nickname: '',
+        };
+        systemTaskCardHtml = renderSystemTaskCard(job, missingInConversation);
+      }
+
       wrap.innerHTML = `
         <div class="role">${escapeHtml(m.role)}</div>
         <div class="bubble">${escapeHtml(m.content)}</div>
         ${refs ? `<div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">${refs}</div>` : ''}
+        ${systemTaskCardHtml}
       `;
       messages.appendChild(wrap);
     }
@@ -1707,25 +1798,31 @@ async function saveTaskNickname(jobId, nicknameValue) {
   }
 }
 
-async function loadTasksForCurrentConversation() {
+async function loadTasksForCurrentConversation(silent = false) {
   const targetId = currentId;
   if (!targetId) {
     document.getElementById('tasks-list').innerHTML = '<div class="empty">No conversation selected.</div>';
     return;
   }
   try {
-    setStatus('Loading tasks...', 'busy');
+    if (!silent) {
+      setStatus('Loading tasks...', 'busy');
+    }
     const data = await api(`/api/conversations/${targetId}/tasks`);
     renderTasks(data.jobs || [], targetId);
     if (targetId !== currentId) {
       return;
     }
-    setStatus('Tasks refreshed.', 'success');
+    if (!silent) {
+      setStatus('Tasks refreshed.', 'success');
+    }
   } catch (err) {
     if (targetId !== currentId) {
       return;
     }
-    setStatus('Load tasks failed: ' + err.message, 'error');
+    if (!silent) {
+      setStatus('Load tasks failed: ' + err.message, 'error');
+    }
   }
 }
 
