@@ -63,6 +63,28 @@ body {
   font-size: 13px;
   font-weight: 700;
   margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.conv-alert {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #ff5f57;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.conv-alert.failed {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #ff5f57;
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  font-weight: 700;
 }
 .conv-meta {
   font-size: 11px;
@@ -95,6 +117,29 @@ body {
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
+}
+.tab-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.tab-alert {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #ff5f57;
+  display: none;
+}
+.tab-alert.failed {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #ff5f57;
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  font-weight: 700;
 }
 .tab-btn.active {
   border-color: #4da3ff;
@@ -189,6 +234,17 @@ body {
   cursor: pointer;
   font-size: 12px;
   line-height: 1;
+}
+.ref-chip-wrap {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.ref-source-line {
+  margin-left: 4px;
+  font-size: 10px;
+  color: #8b95aa;
+  line-height: 1.2;
 }
 #input {
   flex: 1;
@@ -445,6 +501,28 @@ body {
   font-size: 12px;
   color: #9fb2ce;
   word-break: break-all;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.task-alert {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #ff5f57;
+  display: inline-block;
+  flex-shrink: 0;
+}
+.task-alert.failed {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  background: #ff5f57;
+  color: #fff;
+  font-size: 11px;
+  line-height: 16px;
+  text-align: center;
+  font-weight: 700;
 }
 .task-status {
   font-size: 11px;
@@ -580,7 +658,7 @@ body {
     </div>
     <div id="view-tabs">
       <button id="tab-chat" class="tab-btn active" onclick="switchTab('chat')">Chat</button>
-      <button id="tab-tasks" class="tab-btn" onclick="switchTab('tasks')">Tasks</button>
+      <button id="tab-tasks" class="tab-btn" onclick="switchTab('tasks')"><span class="tab-label">Tasks <span id="tab-tasks-alert" class="tab-alert"></span></span></button>
       <button id="tab-yaml" class="tab-btn" onclick="switchTab('yaml')">YAML</button>
     </div>
 
@@ -663,6 +741,9 @@ let yamlCmView = null;
 let yamlCmEditableCompartment = null;
 let yamlCmReadOnlyCompartment = null;
 let yamlCmInitStarted = false;
+let conversationSummariesById = {};
+let taskPollTimer = null;
+let taskPollInFlight = false;
 const WORKDIR_ROOT = '__WORKDIR_ROOT__';
 let pickerCurrentPath = WORKDIR_ROOT;
 let pickerSelectedPath = WORKDIR_ROOT;
@@ -750,6 +831,101 @@ function getTaskRefsForConversation(conversationId) {
     conversationTaskRefs[conversationId] = [];
   }
   return conversationTaskRefs[conversationId];
+}
+
+function normalizeTaskStatus(status) {
+  return String(status || 'unknown').toLowerCase();
+}
+
+function isRunningLikeTaskStatus(status) {
+  return ['running', 'starting', 'queued', 'pending'].includes(normalizeTaskStatus(status));
+}
+
+function isTerminalTaskStatus(status) {
+  return !isRunningLikeTaskStatus(status);
+}
+
+function isFailedTaskStatus(status) {
+  return ['failed', 'error', 'timeout', 'aborted'].includes(normalizeTaskStatus(status));
+}
+
+function getConversationAlertSummary(conversationId) {
+  const item = conversationSummariesById[conversationId] || {};
+  const unreadCount = Number(item.task_unread_count || 0);
+  const hasFailedUnread = !!item.task_has_failed_unread;
+  return {
+    unreadCount: Number.isFinite(unreadCount) ? unreadCount : 0,
+    hasFailedUnread,
+  };
+}
+
+function renderConversationAlertHtml(conversationItem) {
+  const summary = {
+    unreadCount: Number(conversationItem && conversationItem.task_unread_count || 0),
+    hasFailedUnread: !!(conversationItem && conversationItem.task_has_failed_unread),
+  };
+  if (summary.hasFailedUnread) {
+    return '<span class="conv-alert failed" title="Task failed">!</span>';
+  }
+  if (summary.unreadCount > 0) {
+    return '<span class="conv-alert" title="Task update"></span>';
+  }
+  return '';
+}
+
+function refreshTaskTabAlert() {
+  const el = document.getElementById('tab-tasks-alert');
+  if (!el) return;
+  const summary = currentId
+    ? getConversationAlertSummary(currentId)
+    : { unreadCount: 0, hasFailedUnread: false };
+  const hasUnread = summary.unreadCount > 0;
+  const hasFailed = !!summary.hasFailedUnread;
+  if (hasFailed) {
+    el.style.display = 'inline-block';
+    el.classList.add('failed');
+    el.textContent = '!';
+    return;
+  }
+  if (hasUnread) {
+    el.style.display = 'inline-block';
+    el.classList.remove('failed');
+    el.textContent = '';
+    return;
+  }
+  el.style.display = 'none';
+  el.classList.remove('failed');
+  el.textContent = '';
+}
+
+async function pollTaskNotifications() {
+  if (taskPollInFlight) return;
+  taskPollInFlight = true;
+  try {
+    const data = await api('/api/conversations');
+    const conversations = Array.isArray(data.conversations) ? data.conversations : [];
+    await Promise.all(conversations.map(async (item) => {
+      try {
+        await api(`/api/conversations/${item.id}/tasks`);
+      } catch (_) {
+        // keep polling other conversations
+      }
+    }));
+    const refreshed = await api('/api/conversations');
+    const latest = Array.isArray(refreshed.conversations) ? refreshed.conversations : [];
+    renderConversationList(latest);
+    refreshTaskTabAlert();
+  } catch (err) {
+    console.warn('Task notification poll failed:', err);
+  } finally {
+    taskPollInFlight = false;
+  }
+}
+
+function startTaskNotificationPolling() {
+  if (taskPollTimer) return;
+  pollTaskNotifications();
+  taskPollTimer = setInterval(pollTaskNotifications, 10000);
 }
 
 function switchTab(view) {
@@ -1031,17 +1207,23 @@ async function saveSelectedYamlForCurrentConversation() {
 function renderConversationList(items) {
   const list = document.getElementById('conv-list');
   list.innerHTML = '';
+  conversationSummariesById = {};
   for (const item of items) {
+    if (item && item.id) {
+      conversationSummariesById[item.id] = item;
+    }
     const li = document.createElement('li');
     if (item.id === currentId) li.classList.add('active');
     li.onclick = () => openConversation(item.id);
+    const alertHtml = renderConversationAlertHtml(item);
     li.innerHTML = `
-      <div class="conv-title">${escapeHtml(item.workdir_base || basenameFromPath(item.cwd) || item.title || 'Untitled')}</div>
+      <div class="conv-title">${escapeHtml(item.workdir_base || basenameFromPath(item.cwd) || item.title || 'Untitled')}${alertHtml}</div>
       <div class="conv-meta">${escapeHtml(item.mode)} · ${escapeHtml(item.status)} · ${item.message_count} msgs · ${item.task_count || 0} tasks</div>
       <div class="conv-path">${escapeHtml(item.cwd || '')}</div>
     `;
     list.appendChild(li);
   }
+  refreshTaskTabAlert();
 }
 
 async function createConversation() {
@@ -1179,7 +1361,17 @@ function renderConversation(conv) {
     for (const m of conv.messages) {
       const wrap = document.createElement('div');
       wrap.className = 'msg ' + m.role;
-      const refs = (m.task_refs || []).map(jobId => `<span class="ref-chip">🔗 ${escapeHtml(taskRefLabel(jobId))}</span>`).join(' ');
+      const refSources = (m && typeof m.task_ref_sources === 'object' && m.task_ref_sources) ? m.task_ref_sources : {};
+      const refs = (m.task_refs || []).map(jobId => {
+        const sourceRaw = refSources ? refSources[jobId] : '';
+        const sourceLabel = taskRefSourceLabel(sourceRaw);
+        return `
+          <div class="ref-chip-wrap">
+            <span class="ref-chip">🔗 ${escapeHtml(taskRefLabel(jobId))}</span>
+            ${sourceLabel ? `<div class="ref-source-line">source: ${escapeHtml(sourceLabel)}</div>` : ''}
+          </div>
+        `;
+      }).join(' ');
       wrap.innerHTML = `
         <div class="role">${escapeHtml(m.role)}</div>
         <div class="bubble">${escapeHtml(m.content)}</div>
@@ -1210,6 +1402,13 @@ function taskRefLabel(jobId) {
   const entry = taskMeta ? taskMeta[jobId] : null;
   const nickname = entry && entry.nickname ? String(entry.nickname).trim() : '';
   return nickname || shortJobId(jobId);
+}
+
+function taskRefSourceLabel(source) {
+  const raw = String(source || '').trim();
+  if (!raw) return '';
+  if (raw === 'tmux out' || raw === 'zhh_log') return 'tmux out';
+  return 'output.log';
 }
 
 function addTaskReference(jobId) {
@@ -1352,11 +1551,13 @@ async function sendMessage() {
   }
 }
 
-function renderTasks(items) {
-  currentTasks = items || [];
-  if (currentConversation) {
+function renderTasks(items, conversationId = currentId) {
+  if (conversationId === currentId) {
+    currentTasks = items || [];
+  }
+  if (conversationId === currentId && currentConversation) {
     const taskMeta = currentConversation.task_meta || {};
-    for (const job of currentTasks) {
+    for (const job of (items || [])) {
       const jobId = job && job.job_id ? String(job.job_id) : '';
       if (!jobId) continue;
       const nickname = String(job.nickname || '').trim();
@@ -1373,6 +1574,9 @@ function renderTasks(items) {
     renderConversation(currentConversation);
     renderPendingTaskRefs();
   }
+  if (conversationId !== currentId) {
+    return;
+  }
   const root = document.getElementById('tasks-list');
   if (!items || !items.length) {
     root.innerHTML = '<div class="empty">No tasks in this conversation yet.</div>';
@@ -1383,6 +1587,7 @@ function renderTasks(items) {
   for (const [jobIndex, job] of items.entries()) {
     const div = document.createElement('div');
     div.className = 'task-item';
+    const jobId = String(job.job_id || 'unknown');
     const status = job.status || 'unknown';
     const args = job.zhh_args || '';
     const nickname = (job.nickname || '').trim();
@@ -1391,18 +1596,25 @@ function renderTasks(items) {
     const canCancel = status === 'running' || status === 'starting';
     const statusLower = String(status).toLowerCase();
     const canRemove = !['running', 'starting', 'queued', 'pending'].includes(statusLower);
+    const unread = !!job.unread;
+    const alertKind = String(job.alert_kind || '').toLowerCase();
+    const taskAlertHtml = unread
+      ? (alertKind === 'failed'
+        ? '<span class="task-alert failed" title="Task failed">!</span>'
+        : '<span class="task-alert" title="Task update"></span>')
+      : '';
     div.innerHTML = `
       <div class="task-top">
-        <div class="task-id">${escapeHtml(job.job_id || 'unknown')}${nickname ? ` · 🏷 ${escapeHtml(nickname)}` : ''}</div>
+        <div class="task-id">${escapeHtml(jobId)}${nickname ? ` · 🏷 ${escapeHtml(nickname)}` : ''}${taskAlertHtml}</div>
         <div class="task-status">${escapeHtml(status)}</div>
       </div>
       <div class="task-meta">args: ${escapeHtml(args)} · created: ${escapeHtml(createdAt)}</div>
       <div class="task-actions">
         <button type="button" class="task-nickname-btn" data-task-index="${jobIndex}">Nickname</button>
-        <button ${runBtnDisabled} onclick="addTaskReference('${escapeHtml(job.job_id || '')}')">Reference</button>
-        <button ${runBtnDisabled} onclick="viewTaskLog('${escapeHtml(job.job_id || '')}')">Log</button>
-        ${canCancel ? `<button ${runBtnDisabled} onclick="cancelTask('${escapeHtml(job.job_id || '')}')">Cancel</button>` : ''}
-        ${canRemove ? `<button ${runBtnDisabled} onclick="removeTask('${escapeHtml(job.job_id || '')}')">Remove</button>` : ''}
+        <button ${runBtnDisabled} onclick="addTaskReference('${escapeHtml(jobId)}')">Reference</button>
+        <button ${runBtnDisabled} onclick="viewTaskLog('${escapeHtml(jobId)}')">Log</button>
+        ${canCancel ? `<button ${runBtnDisabled} onclick="cancelTask('${escapeHtml(jobId)}')">Cancel</button>` : ''}
+        ${canRemove ? `<button ${runBtnDisabled} onclick="removeTask('${escapeHtml(jobId)}')">Remove</button>` : ''}
       </div>
       <div class="task-nickname-editor" data-task-index="${jobIndex}">
         <input type="text" class="task-nickname-input" maxlength="80" placeholder="Task nickname" />
@@ -1496,16 +1708,23 @@ async function saveTaskNickname(jobId, nicknameValue) {
 }
 
 async function loadTasksForCurrentConversation() {
-  if (!currentId) {
+  const targetId = currentId;
+  if (!targetId) {
     document.getElementById('tasks-list').innerHTML = '<div class="empty">No conversation selected.</div>';
     return;
   }
   try {
     setStatus('Loading tasks...', 'busy');
-    const data = await api(`/api/conversations/${currentId}/tasks`);
-    renderTasks(data.jobs || []);
+    const data = await api(`/api/conversations/${targetId}/tasks`);
+    renderTasks(data.jobs || [], targetId);
+    if (targetId !== currentId) {
+      return;
+    }
     setStatus('Tasks refreshed.', 'success');
   } catch (err) {
+    if (targetId !== currentId) {
+      return;
+    }
     setStatus('Load tasks failed: ' + err.message, 'error');
   }
 }
@@ -1526,6 +1745,7 @@ async function runTaskForCurrentConversation(argsOverride = null) {
     });
     await loadConversations(currentId);
     await loadTasksForCurrentConversation();
+    pollTaskNotifications();
     setStatus('Task created.', 'success');
   } catch (err) {
     setStatus('Run task failed: ' + err.message, 'error');
@@ -1546,6 +1766,7 @@ async function cancelTask(jobId) {
     setStatus('Cancelling task...', 'busy');
     await api(`/api/conversations/${currentId}/tasks/${jobId}/cancel`, { method: 'POST' });
     await loadTasksForCurrentConversation();
+    pollTaskNotifications();
     setStatus('Task cancelled.', 'success');
   } catch (err) {
     setStatus('Cancel failed: ' + err.message, 'error');
@@ -1565,6 +1786,7 @@ async function removeTask(jobId) {
     }
     await loadConversations(currentId);
     await loadTasksForCurrentConversation();
+    pollTaskNotifications();
     setStatus('Task removed.', 'success');
   } catch (err) {
     setStatus('Remove task failed: ' + err.message, 'error');
@@ -1578,6 +1800,8 @@ async function viewTaskLog(jobId) {
     const data = await api(`/api/conversations/${currentId}/tasks/${jobId}/log?lines=400`);
     const logText = data.log || '[no log output]';
     alert(logText.slice(-12000));
+    await loadTasksForCurrentConversation();
+    await loadConversations();
     setStatus('Log fetched.', 'success');
   } catch (err) {
     setStatus('Fetch log failed: ' + err.message, 'error');
@@ -1609,6 +1833,12 @@ function shortJobId(jobId) {
 }
 
 loadConversations();
+startTaskNotificationPolling();
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) {
+    pollTaskNotifications();
+  }
+});
 </script>
 </body>
 </html>

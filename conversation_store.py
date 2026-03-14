@@ -34,6 +34,18 @@ def save_store(store_path: Path, data: dict) -> None:
 def conversation_summary(conv: dict, workdir_base_fn) -> dict:
     messages = conv.get("messages", [])
     job_ids = conv.get("job_ids", [])
+    task_meta = conv.get("task_meta", {}) or {}
+    task_unread_count = 0
+    task_has_failed_unread = False
+    if isinstance(task_meta, dict):
+        for value in task_meta.values():
+            if not isinstance(value, dict):
+                continue
+            if not value.get("unread"):
+                continue
+            task_unread_count += 1
+            if str(value.get("alert_kind") or "").lower() == "failed":
+                task_has_failed_unread = True
     last_message = messages[-1]["content"] if messages else ""
     return {
         "id": conv["id"],
@@ -47,6 +59,9 @@ def conversation_summary(conv: dict, workdir_base_fn) -> dict:
         "updated_at": conv.get("updated_at"),
         "message_count": len(messages),
         "task_count": len(job_ids),
+        "task_unread_count": task_unread_count,
+        "task_has_unread": task_unread_count > 0,
+        "task_has_failed_unread": task_has_failed_unread,
         "last_message_preview": last_message[:120],
     }
 

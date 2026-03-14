@@ -32,7 +32,7 @@ from conversation_store import (
 )
 from tasks_runtime import (
   build_prompt_with_task_refs,
-  fetch_task_log_payload,
+  fetch_task_reference_payload,
   get_conversation_jobs,
   zhh_request,
 )
@@ -99,6 +99,195 @@ def workdir_base(cwd: str) -> str:
   except Exception:
     pass
   return cwd
+
+
+def normalize_task_status(status: str | None) -> str:
+  return str(status or "unknown").strip().lower()
+
+
+def is_running_like_task_status(status: str | None) -> bool:
+  return normalize_task_status(status) in {"running", "starting", "queued", "pending"}
+
+
+def is_terminal_task_status(status: str | None) -> bool:
+  return not is_running_like_task_status(status)
+
+
+def is_failed_task_status(status: str | None) -> bool:
+  return normalize_task_status(status) in {"failed", "error", "timeout", "aborted"}
+
+
+def task_alert_kind_for_status(status: str | None) -> str:
+  return "failed" if is_failed_task_status(status) else "done"
+
+
+def has_error_signature_in_log(log_text: str) -> bool:
+  text = str(log_text or "")
+  if not text.strip():
+    return False
+  lower = text.lower()
+  return (
+    "traceback (most recent call last)" in lower
+    or "\ntraceback" in lower
+    or " exited with code" in lower
+    or "exited with code" in lower
+  )
+
+
+def diagnose_completed_jobs_once(conversation_id: str, conv: dict, jobs: list[dict]) -> tuple[dict, list[dict]]:
+  task_meta = conv.get("task_meta", {}) or {}
+  if not isinstance(task_meta, dict):
+    task_meta = {}
+
+  next_meta: dict[str, dict] = {}
+  changed = False
+  updated_jobs: list[dict] = []
+
+  for job in jobs:
+    if not isinstance(job, dict):
+      continue
+
+    job_id = str(job.get("job_id") or "").strip()
+    if not job_id:
+      continue
+
+    entry = task_meta.get(job_id, {})
+    if not isinstance(entry, dict):
+      entry = {}
+    else:
+      entry = dict(entry)
+
+    status = normalize_task_status(job.get("status"))
+    checked = bool(entry.get("completion_log_checked", False))
+
+    if status == "completed" and not checked:
+      status_code, payload = fetch_task_log_payload(ZHH_SERVER_URL, job_id, lines=1200)
+      log_text = ""
+      if status_code == 200 and isinstance(payload, dict):
+        log_text = str(payload.get("log") or "")
+
+      has_error = has_error_signature_in_log(log_text)
+      entry["completion_log_checked"] = True
+      entry["completion_log_checked_at"] = utc_now()
+      entry["completion_log_diagnosis"] = "error" if has_error else "ok"
+
+      if has_error:
+        entry["unread"] = True
+        entry["alert_kind"] = "failed"
+
+      changed = True
+
+    diagnosis = str(entry.get("completion_log_diagnosis") or "").lower()
+    enriched = dict(job)
+    if status == "completed" and diagnosis == "error":
+      enriched["status"] = "error"
+      enriched["diagnosed_error"] = True
+
+    updated_jobs.append(enriched)
+    next_meta[job_id] = entry
+
+  for key, value in task_meta.items():
+    if key not in next_meta and isinstance(value, dict):
+      next_meta[key] = value
+
+  if changed or next_meta != task_meta:
+    def save_meta(c: dict):
+      c["task_meta"] = next_meta
+
+    conv = update_conversation(conversation_id, save_meta)
+
+  return conv, updated_jobs
+
+
+def update_task_alert_state(conversation_id: str, conv: dict, jobs: list[dict]) -> tuple[dict, list[dict]]:
+  task_meta = conv.get("task_meta", {}) or {}
+  if not isinstance(task_meta, dict):
+    task_meta = {}
+
+  prev_meta = {job_id: meta for job_id, meta in task_meta.items() if isinstance(meta, dict)}
+  next_meta: dict[str, dict] = {}
+  updated_jobs: list[dict] = []
+
+  for job in jobs:
+    if not isinstance(job, dict):
+      continue
+
+    job_id = str(job.get("job_id") or "").strip()
+    if not job_id:
+      continue
+
+    now_status = normalize_task_status(job.get("status"))
+    prev_entry = prev_meta.get(job_id, {})
+
+    nickname = str(job.get("nickname") or prev_entry.get("nickname") or "").strip()
+    old_status = normalize_task_status(prev_entry.get("last_status")) if prev_entry.get("last_status") is not None else ""
+    unread = bool(prev_entry.get("unread", False))
+    alert_kind = str(prev_entry.get("alert_kind") or "").strip().lower()
+
+    should_mark_unread = False
+    if old_status:
+      if is_running_like_task_status(old_status) and is_terminal_task_status(now_status):
+        should_mark_unread = True
+    elif is_terminal_task_status(now_status):
+      should_mark_unread = True
+
+    if should_mark_unread:
+      unread = True
+      alert_kind = task_alert_kind_for_status(now_status)
+    elif unread:
+      if is_failed_task_status(now_status):
+        alert_kind = "failed"
+      elif alert_kind != "failed":
+        alert_kind = "done"
+    else:
+      alert_kind = ""
+
+    next_entry: dict[str, object] = dict(prev_entry)
+    next_entry["last_status"] = now_status
+    if nickname:
+      next_entry["nickname"] = nickname
+    else:
+      next_entry.pop("nickname", None)
+    if unread:
+      next_entry["unread"] = True
+      next_entry["alert_kind"] = alert_kind or task_alert_kind_for_status(now_status)
+    else:
+      next_entry.pop("unread", None)
+      next_entry.pop("alert_kind", None)
+
+    if isinstance(prev_entry.get("updated_at"), (int, float)) and "updated_at" not in next_entry:
+      next_entry["updated_at"] = prev_entry.get("updated_at")
+
+    next_meta[job_id] = next_entry
+
+    enriched = dict(job)
+    enriched["nickname"] = nickname
+    enriched["unread"] = bool(next_entry.get("unread", False))
+    enriched["alert_kind"] = str(next_entry.get("alert_kind") or "")
+    updated_jobs.append(enriched)
+
+  if prev_meta != next_meta:
+    def set_task_meta(c: dict):
+      c["task_meta"] = next_meta
+
+    conv = update_conversation(conversation_id, set_task_meta)
+
+  return conv, updated_jobs
+
+
+def clear_task_unread_alert(conversation_id: str, job_id: str) -> None:
+  def clear_unread(c: dict):
+    task_meta = c.get("task_meta")
+    if not isinstance(task_meta, dict):
+      return
+    entry = task_meta.get(job_id)
+    if not isinstance(entry, dict):
+      return
+    entry.pop("unread", None)
+    entry.pop("alert_kind", None)
+    entry["updated_at"] = utc_now()
+
+  update_conversation(conversation_id, clear_unread)
 
 
 def list_workdir_children(workdir: str | None) -> dict:
@@ -283,6 +472,8 @@ def api_list_tasks(conversation_id: str):
     return jsonify({"error": "not found"}), 404
   try:
     jobs = get_conversation_jobs(ZHH_SERVER_URL, conv)
+    conv, jobs = diagnose_completed_jobs_once(conversation_id, conv, jobs)
+    conv, jobs = update_task_alert_state(conversation_id, conv, jobs)
     return jsonify({"conversation_id": conversation_id, "count": len(jobs), "jobs": jobs})
   except Exception as e:
     return jsonify({"error": str(e)}), 502
@@ -386,13 +577,19 @@ def api_task_nickname(conversation_id: str, job_id: str):
 
   def set_nickname(c: dict):
     task_meta = c.setdefault("task_meta", {})
-    if nickname:
-      task_meta[job_id] = {
-        "nickname": nickname,
-        "updated_at": utc_now(),
-      }
+    entry = task_meta.get(job_id)
+    if not isinstance(entry, dict):
+      entry = {}
     else:
-      task_meta.pop(job_id, None)
+      entry = dict(entry)
+    if nickname:
+      entry["nickname"] = nickname
+      entry["updated_at"] = utc_now()
+      task_meta[job_id] = entry
+    else:
+      entry.pop("nickname", None)
+      entry["updated_at"] = utc_now()
+      task_meta[job_id] = entry
 
   update_conversation(conversation_id, set_nickname)
   return jsonify({
@@ -438,6 +635,8 @@ def api_task_log(conversation_id: str, job_id: str):
       "upstream_payload": payload,
     }), 502
 
+  clear_task_unread_alert(conversation_id, job_id)
+
   return jsonify(payload), status_code
 
 
@@ -478,13 +677,27 @@ def api_send_message(conversation_id: str):
     update_conversation(conversation_id, lambda c: c.update({"status": "running"}))
 
     refs_payload: list[dict] = []
+    ref_sources: dict[str, str] = {}
     for job_id in normalized_refs:
-      status_code, payload = fetch_task_log_payload(ZHH_SERVER_URL, job_id, lines=400)
-      if status_code == 200 and isinstance(payload, dict) and "log" in payload:
+      status_code, payload = fetch_task_reference_payload(ZHH_SERVER_URL, job_id, lines=400)
+      if status_code == 200 and isinstance(payload, dict) and "stdout" in payload:
+        source = str(payload.get("stdout_source") or "").strip()
+        full_log_path = str(payload.get("full_log_path") or "").strip()
+        if source and source != "zhh_log":
+          ref_sources[job_id] = source
+        else:
+          ref_sources[job_id] = "tmux out"
+        stdout_text = str(payload.get("stdout", ""))
+        if full_log_path:
+          stdout_text = (
+            f"{stdout_text}\n\n"
+            f"[Full log path]\n{full_log_path}"
+          )
         refs_payload.append({
-          "stdout": str(payload.get("log", "")),
+          "stdout": stdout_text,
         })
       else:
+        ref_sources[job_id] = "tmux out"
         refs_payload.append({
           "stdout": "",
         })
@@ -492,6 +705,7 @@ def api_send_message(conversation_id: str):
     prompt_text = build_prompt_with_task_refs(text, refs_payload)
     append_message(conversation_id, "user", text, {
       "task_refs": normalized_refs,
+      "task_ref_sources": ref_sources,
     })
 
     result = acp_prompt_session(
