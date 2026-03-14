@@ -1,0 +1,1614 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Cursor ACP Chat</title>
+<style>
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: #111318;
+  color: #d9dde7;
+  font-family: Inter, system-ui, -apple-system, sans-serif;
+  height: 100vh;
+  display: grid;
+  grid-template-columns: 280px 1fr;
+}
+#sidebar {
+  border-right: 1px solid #262b36;
+  background: #171a21;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+#sidebar .head {
+  padding: 16px;
+  border-bottom: 1px solid #262b36;
+}
+#sidebar .head h1 {
+  margin: 0 0 10px;
+  font-size: 16px;
+}
+#new-btn {
+  width: 100%;
+  border: 0;
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  background: #4da3ff;
+  color: #09111f;
+  font-weight: 700;
+}
+#conv-list {
+  list-style: none;
+  padding: 8px;
+  margin: 0;
+  overflow-y: auto;
+  flex: 1;
+}
+#conv-list li {
+  padding: 10px 12px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  background: #1b1f28;
+}
+#conv-list li.active {
+  border-color: #4da3ff;
+  background: #1b2433;
+}
+.conv-title {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+.conv-meta {
+  font-size: 11px;
+  color: #8992a3;
+}
+.conv-path {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #6e7890;
+  word-break: break-all;
+}
+#main {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+#view-tabs {
+  display: flex;
+  gap: 8px;
+  padding: 10px 18px;
+  border-bottom: 1px solid #262b36;
+  background: #141822;
+}
+.tab-btn {
+  border: 1px solid #2b3240;
+  background: #1b1f28;
+  color: #c8d0df;
+  border-radius: 999px;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.tab-btn.active {
+  border-color: #4da3ff;
+  color: #9cc9ff;
+  background: #1b2433;
+}
+#topbar {
+  padding: 14px 18px;
+  border-bottom: 1px solid #262b36;
+  background: #171a21;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+#title {
+  font-size: 15px;
+  font-weight: 700;
+}
+#meta {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #8992a3;
+}
+#messages {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+.empty {
+  color: #8992a3;
+  text-align: center;
+  margin-top: 100px;
+}
+.msg {
+  max-width: 900px;
+  margin: 0 auto 14px;
+}
+.msg .role {
+  font-size: 11px;
+  color: #8992a3;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.bubble {
+  white-space: pre-wrap;
+  line-height: 1.5;
+  padding: 12px 14px;
+  border-radius: 12px;
+}
+.msg.user .bubble {
+  background: #22324a;
+}
+.msg.assistant .bubble {
+  background: #1b1f28;
+}
+#composer-wrap {
+  border-top: 1px solid #262b36;
+  padding: 14px 18px 18px;
+  background: #171a21;
+}
+#composer-wrap.busy {
+  background: #241f12;
+  box-shadow: inset 0 1px 0 rgba(255, 196, 64, .18);
+}
+#composer {
+  display: flex;
+  gap: 10px;
+}
+#composer-ref-row {
+  margin-top: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.ref-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #d9dde7;
+  border: 1px solid #2b3240;
+  border-radius: 999px;
+  background: #1b1f28;
+  padding: 4px 8px;
+}
+.ref-chip button {
+  border: 0;
+  background: transparent;
+  color: #9aa7bf;
+  cursor: pointer;
+  font-size: 12px;
+  line-height: 1;
+}
+#input {
+  flex: 1;
+  min-height: 78px;
+  max-height: 220px;
+  resize: vertical;
+  border-radius: 12px;
+  border: 1px solid #2b3240;
+  background: #0f1218;
+  color: #d9dde7;
+  padding: 12px 14px;
+  font: inherit;
+}
+#send-btn {
+  width: 110px;
+  border: 0;
+  border-radius: 12px;
+  background: #4da3ff;
+  color: #09111f;
+  font-weight: 700;
+  cursor: pointer;
+}
+#run-quick-btn {
+  width: 88px;
+  border: 1px solid #2b3240;
+  border-radius: 12px;
+  background: #1b1f28;
+  color: #d9dde7;
+  font-weight: 700;
+  cursor: pointer;
+}
+#send-btn:disabled, #new-btn:disabled {
+  opacity: .55;
+  cursor: default;
+}
+#status {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #8992a3;
+  min-height: 18px;
+  transition: color .15s ease, background .15s ease, border-color .15s ease;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0;
+}
+#status[data-kind="busy"] {
+  color: #ffd166;
+  background: rgba(255, 209, 102, .12);
+  border: 1px solid rgba(255, 209, 102, .28);
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-weight: 700;
+}
+#status[data-kind="busy"]::before {
+  content: "●";
+  animation: busyPulse 1s infinite;
+}
+#delete-btn {
+  border: 1px solid rgba(255, 107, 107, .25);
+  background: rgba(255, 107, 107, .10);
+  color: #ff9c9c;
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+#delete-btn:disabled {
+  opacity: .5;
+  cursor: default;
+}
+#status[data-kind="error"] {
+  color: #ff8f8f;
+  background: rgba(255, 107, 107, .10);
+  border: 1px solid rgba(255, 107, 107, .24);
+  border-radius: 999px;
+  padding: 6px 10px;
+}
+#status[data-kind="success"] {
+  color: #8ce99a;
+  background: rgba(105, 219, 124, .10);
+  border: 1px solid rgba(105, 219, 124, .22);
+  border-radius: 999px;
+  padding: 6px 10px;
+}
+@keyframes busyPulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: .45; transform: scale(.85); }
+}
+#modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .55);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+#modal-backdrop.show {
+  display: flex;
+}
+#modal {
+  width: min(760px, 100%);
+  max-height: min(680px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  background: #171a21;
+  border: 1px solid #2b3240;
+  border-radius: 16px;
+  overflow: hidden;
+}
+#modal-head {
+  padding: 16px 18px;
+  border-bottom: 1px solid #262b36;
+}
+#modal-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+#modal-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #8992a3;
+  word-break: break-all;
+}
+#modal-body {
+  padding: 16px 18px;
+  overflow: auto;
+}
+#picker-toolbar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+#picker-current {
+  flex: 1;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid #2b3240;
+  background: #0f1218;
+  color: #d9dde7;
+  font-size: 12px;
+  word-break: break-all;
+}
+.secondary-btn {
+  border: 1px solid #2b3240;
+  background: #1b1f28;
+  color: #d9dde7;
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+#dir-list {
+  display: grid;
+  gap: 8px;
+}
+.dir-item {
+  padding: 11px 12px;
+  border-radius: 10px;
+  border: 1px solid #2b3240;
+  background: #111318;
+  cursor: pointer;
+}
+.dir-item:hover {
+  border-color: #4da3ff;
+}
+.dir-name {
+  font-size: 13px;
+  font-weight: 700;
+}
+.dir-path {
+  margin-top: 4px;
+  font-size: 11px;
+  color: #8992a3;
+}
+#modal-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 16px 18px;
+  border-top: 1px solid #262b36;
+}
+#selected-workdir {
+  font-size: 12px;
+  color: #8992a3;
+  word-break: break-all;
+}
+#panel-chat, #panel-tasks, #panel-yaml {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+#panel-tasks {
+  display: none;
+}
+#panel-yaml {
+  display: none;
+}
+#tasks-toolbar {
+  padding: 14px 18px;
+  border-bottom: 1px solid #262b36;
+  background: #171a21;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+#task-args {
+  width: 220px;
+  border-radius: 10px;
+  border: 1px solid #2b3240;
+  background: #0f1218;
+  color: #d9dde7;
+  padding: 10px 12px;
+}
+#run-task-btn {
+  border: 0;
+  border-radius: 10px;
+  background: #4da3ff;
+  color: #09111f;
+  font-weight: 700;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+#refresh-task-btn {
+  border: 1px solid #2b3240;
+  border-radius: 10px;
+  background: #1b1f28;
+  color: #d9dde7;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+#tasks-list {
+  padding: 14px 18px 22px;
+  overflow: auto;
+  flex: 1;
+}
+.task-item {
+  border: 1px solid #2b3240;
+  border-radius: 12px;
+  padding: 12px;
+  background: #161a23;
+  margin-bottom: 10px;
+}
+.task-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+.task-id {
+  font-size: 12px;
+  color: #9fb2ce;
+  word-break: break-all;
+}
+.task-status {
+  font-size: 11px;
+  font-weight: 700;
+  border-radius: 999px;
+  padding: 4px 10px;
+  border: 1px solid #2b3240;
+  background: #111318;
+}
+.task-meta {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #8b95aa;
+}
+.task-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+}
+.task-actions button {
+  border: 1px solid #2b3240;
+  background: #1b1f28;
+  color: #d9dde7;
+  border-radius: 8px;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+.task-nickname-editor {
+  margin-top: 8px;
+  display: none;
+  gap: 8px;
+  align-items: center;
+}
+.task-nickname-input {
+  flex: 1;
+  min-width: 180px;
+  border-radius: 8px;
+  border: 1px solid #2b3240;
+  background: #0f1218;
+  color: #d9dde7;
+  padding: 6px 10px;
+}
+#yaml-toolbar {
+  padding: 14px 18px;
+  border-bottom: 1px solid #262b36;
+  background: #171a21;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+#yaml-file-select {
+  min-width: 300px;
+  border-radius: 10px;
+  border: 1px solid #2b3240;
+  background: #0f1218;
+  color: #d9dde7;
+  padding: 10px 12px;
+}
+#refresh-yaml-btn,
+#save-yaml-btn {
+  border: 1px solid #2b3240;
+  border-radius: 10px;
+  background: #1b1f28;
+  color: #d9dde7;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+#yaml-path {
+  color: #8992a3;
+  font-size: 12px;
+  margin-left: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+}
+#yaml-editor-wrap {
+  padding: 14px 18px 22px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+#yaml-editor-cm {
+  width: 100%;
+  height: 100%;
+  min-height: 260px;
+  display: none;
+}
+#yaml-editor {
+  width: 100%;
+  height: 100%;
+  min-height: 260px;
+  border-radius: 10px;
+  border: 1px solid #2b3240;
+  background: #0f1218;
+  color: #d9dde7;
+  padding: 12px;
+  resize: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  line-height: 1.45;
+}
+#yaml-editor-cm .cm-editor {
+  height: 100%;
+  border-radius: 10px;
+  border: 1px solid #2b3240;
+  background: #0f1218;
+}
+#yaml-editor-cm .cm-scroller {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  line-height: 1.45;
+}
+#yaml-editor-cm.disabled {
+  opacity: .7;
+}
+</style>
+</head>
+<body>
+  <aside id="sidebar">
+    <div class="head">
+      <h1>Cursor ACP</h1>
+      <button id="new-btn" onclick="createConversation()">+ New conversation</button>
+    </div>
+    <ul id="conv-list"></ul>
+  </aside>
+
+  <main id="main">
+    <div id="topbar">
+      <div>
+        <div id="title">No conversation selected</div>
+        <div id="meta">Create a new session first.</div>
+      </div>
+      <button id="delete-btn" onclick="deleteCurrentConversation()" disabled>Delete session</button>
+    </div>
+    <div id="view-tabs">
+      <button id="tab-chat" class="tab-btn active" onclick="switchTab('chat')">Chat</button>
+      <button id="tab-tasks" class="tab-btn" onclick="switchTab('tasks')">Tasks</button>
+      <button id="tab-yaml" class="tab-btn" onclick="switchTab('yaml')">YAML</button>
+    </div>
+
+    <section id="panel-chat">
+      <div id="messages"><div class="empty">No conversation selected.</div></div>
+      <div id="composer-wrap">
+        <div id="composer">
+          <textarea id="input" placeholder="Type a message..." onkeydown="handleKey(event)"></textarea>
+          <button id="run-quick-btn" onclick="runTaskQuickFromChat()" disabled>Run</button>
+          <button id="send-btn" onclick="sendMessage()" disabled>Send</button>
+        </div>
+        <div id="composer-ref-row"></div>
+      </div>
+    </section>
+
+    <section id="panel-tasks">
+      <div id="tasks-toolbar">
+        <input id="task-args" placeholder="Optional args, e.g. s / q / rr" />
+        <button id="run-task-btn" onclick="runTaskForCurrentConversation()" disabled>Run</button>
+        <button id="refresh-task-btn" onclick="loadTasksForCurrentConversation()" disabled>Refresh</button>
+      </div>
+      <div id="tasks-list"><div class="empty">No conversation selected.</div></div>
+    </section>
+
+    <section id="panel-yaml">
+      <div id="yaml-toolbar">
+        <select id="yaml-file-select" onchange="loadSelectedYamlForCurrentConversation()" disabled>
+          <option value="">No YAML file available</option>
+        </select>
+        <button id="refresh-yaml-btn" onclick="loadYamlFileListForCurrentConversation(true)" disabled>Refresh</button>
+        <button id="save-yaml-btn" onclick="saveSelectedYamlForCurrentConversation()" disabled>Save</button>
+        <div id="yaml-path"></div>
+      </div>
+      <div id="yaml-editor-wrap">
+        <div id="yaml-editor-cm"></div>
+        <textarea id="yaml-editor" placeholder="Select a YAML file to edit." disabled></textarea>
+      </div>
+    </section>
+
+    <div style="padding: 0 18px 12px; background:#171a21; border-top:1px solid #262b36;">
+      <div id="status">Ready.</div>
+    </div>
+  </main>
+
+  <div id="modal-backdrop" onclick="handleModalBackdrop(event)">
+    <div id="modal">
+      <div id="modal-head">
+        <h2>Choose workdir</h2>
+        <div id="modal-sub">Root: __WORKDIR_ROOT__</div>
+      </div>
+      <div id="modal-body">
+        <div id="picker-toolbar">
+          <button class="secondary-btn" onclick="goParentDir()">Up</button>
+          <div id="picker-current">Loading...</div>
+        </div>
+        <div id="dir-list"></div>
+      </div>
+      <div id="modal-foot">
+        <div id="selected-workdir">Selected: —</div>
+        <div style="display:flex; gap:10px;">
+          <button class="secondary-btn" onclick="closeCreateModal()">Cancel</button>
+          <button id="confirm-create-btn" onclick="createConversationConfirmed()">Create</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+let currentId = null;
+let currentConversation = null;
+let currentView = 'chat';
+let currentTasks = [];
+let conversationDrafts = {};
+let conversationTaskRefs = {};
+const sendingConversationIds = new Set();
+let lastStatusByConversation = {};
+let yamlFilesByConversation = {};
+let yamlSelectionByConversation = {};
+let yamlCmView = null;
+let yamlCmEditableCompartment = null;
+let yamlCmReadOnlyCompartment = null;
+let yamlCmInitStarted = false;
+const WORKDIR_ROOT = '__WORKDIR_ROOT__';
+let pickerCurrentPath = WORKDIR_ROOT;
+let pickerSelectedPath = WORKDIR_ROOT;
+
+function applyStatusToUI(text, kind = 'normal') {
+  const el = document.getElementById('status');
+  el.textContent = text;
+  el.dataset.kind = kind;
+  document.getElementById('composer-wrap').classList.toggle('busy', kind === 'busy');
+}
+
+function fallbackStatusForConversation(conversation) {
+  const status = String((conversation && conversation.status) || '').toLowerCase();
+  if (status === 'running') {
+    return { text: 'Waiting for Cursor...', kind: 'busy' };
+  }
+  if (status === 'error') {
+    const err = conversation && conversation.last_error ? String(conversation.last_error) : 'Cursor request failed.';
+    return { text: err, kind: 'error' };
+  }
+  return { text: 'Ready.', kind: 'normal' };
+}
+
+function renderCurrentConversationStatus() {
+  if (!currentId) {
+    applyStatusToUI('Ready.', 'normal');
+    return;
+  }
+  const backendStatus = String((currentConversation && currentConversation.status) || '').toLowerCase();
+  if (backendStatus === 'running' || backendStatus === 'error') {
+    const fallback = fallbackStatusForConversation(currentConversation);
+    applyStatusToUI(fallback.text, fallback.kind);
+    return;
+  }
+  const saved = lastStatusByConversation[currentId];
+  if (saved && typeof saved.text === 'string') {
+    applyStatusToUI(saved.text, saved.kind || 'normal');
+  } else {
+    const fallback = fallbackStatusForConversation(currentConversation);
+    applyStatusToUI(fallback.text, fallback.kind);
+  }
+}
+
+function setStatus(text, kind = 'normal', conversationId = null) {
+  const targetConversationId = conversationId || currentId;
+  if (targetConversationId) {
+    lastStatusByConversation[targetConversationId] = { text, kind };
+  }
+  if (conversationId && currentId && conversationId !== currentId) {
+    return;
+  }
+  applyStatusToUI(text, kind);
+}
+
+async function api(url, options) {
+  const res = await fetch(url, options);
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
+  return data;
+}
+
+async function loadConversations(selectId = null) {
+  const data = await api('/api/conversations');
+  renderConversationList(data.conversations || []);
+  if (selectId) {
+    await openConversation(selectId, false);
+  } else if (currentId) {
+    const found = (data.conversations || []).find(x => x.id === currentId);
+    if (found) await openConversation(currentId, false);
+  }
+}
+
+function refreshComposerControls() {
+  const input = document.getElementById('input');
+  const hasCurrent = !!currentId;
+  const draftText = hasCurrent ? (conversationDrafts[currentId] || input.value || '') : '';
+  const busyCurrent = hasCurrent && sendingConversationIds.has(currentId);
+  document.getElementById('send-btn').disabled = !hasCurrent || !draftText.trim() || busyCurrent;
+  document.getElementById('run-quick-btn').disabled = !hasCurrent;
+}
+
+function getTaskRefsForConversation(conversationId) {
+  if (!conversationId) return [];
+  if (!Array.isArray(conversationTaskRefs[conversationId])) {
+    conversationTaskRefs[conversationId] = [];
+  }
+  return conversationTaskRefs[conversationId];
+}
+
+function switchTab(view) {
+  currentView = view;
+  const chatPanel = document.getElementById('panel-chat');
+  const taskPanel = document.getElementById('panel-tasks');
+  const yamlPanel = document.getElementById('panel-yaml');
+  const chatTab = document.getElementById('tab-chat');
+  const taskTab = document.getElementById('tab-tasks');
+  const yamlTab = document.getElementById('tab-yaml');
+  if (view === 'tasks') {
+    chatPanel.style.display = 'none';
+    taskPanel.style.display = 'flex';
+    yamlPanel.style.display = 'none';
+    chatTab.classList.remove('active');
+    taskTab.classList.add('active');
+    yamlTab.classList.remove('active');
+    loadTasksForCurrentConversation();
+  } else if (view === 'yaml') {
+    initYamlCodeEditor();
+    chatPanel.style.display = 'none';
+    taskPanel.style.display = 'none';
+    yamlPanel.style.display = 'flex';
+    chatTab.classList.remove('active');
+    taskTab.classList.remove('active');
+    yamlTab.classList.add('active');
+    loadYamlFileListForCurrentConversation(true);
+  } else {
+    chatPanel.style.display = 'flex';
+    taskPanel.style.display = 'none';
+    yamlPanel.style.display = 'none';
+    taskTab.classList.remove('active');
+    yamlTab.classList.remove('active');
+    chatTab.classList.add('active');
+  }
+}
+
+async function initYamlCodeEditor() {
+  if (yamlCmView || yamlCmInitStarted) return;
+  yamlCmInitStarted = true;
+  const textarea = document.getElementById('yaml-editor');
+  const cmHost = document.getElementById('yaml-editor-cm');
+  if (!textarea || !cmHost) return;
+
+  try {
+    const [
+      stateMod,
+      viewMod,
+      languageMod,
+      yamlMod,
+      commandsMod,
+      historyMod,
+      lezerMod,
+    ] = await Promise.all([
+      import('https://esm.sh/@codemirror/state@6.4.1'),
+      import('https://esm.sh/@codemirror/view@6.28.6'),
+      import('https://esm.sh/@codemirror/language@6.10.2'),
+      import('https://esm.sh/@codemirror/lang-yaml@6.1.1'),
+      import('https://esm.sh/@codemirror/commands@6.6.2'),
+      import('https://esm.sh/@codemirror/history@0.19.2'),
+      import('https://esm.sh/@lezer/highlight@1.2.1'),
+    ]);
+
+    const { EditorState, Compartment } = stateMod;
+    const { EditorView, keymap } = viewMod;
+    const { HighlightStyle, syntaxHighlighting } = languageMod;
+    const { yaml } = yamlMod;
+    const { defaultKeymap } = commandsMod;
+    const { history, historyKeymap } = historyMod;
+    const { tags } = lezerMod;
+
+    yamlCmEditableCompartment = new Compartment();
+    yamlCmReadOnlyCompartment = new Compartment();
+
+    const commentHighlight = HighlightStyle.define([
+      { tag: tags.comment, color: '#7fb3ff', fontStyle: 'italic' },
+    ]);
+
+    yamlCmView = new EditorView({
+      state: EditorState.create({
+        doc: textarea.value || '',
+        extensions: [
+          history(),
+          keymap.of([...defaultKeymap, ...historyKeymap]),
+          yaml(),
+          syntaxHighlighting(commentHighlight),
+          EditorView.lineWrapping,
+          EditorView.theme({
+            '&': { color: '#d9dde7', backgroundColor: '#0f1218' },
+            '.cm-content': { padding: '12px', caretColor: '#d9dde7' },
+            '.cm-gutters': {
+              backgroundColor: '#0f1218',
+              color: '#78849b',
+              borderRight: '1px solid #2b3240',
+            },
+            '&.cm-focused': { outline: 'none' },
+            '.cm-activeLineGutter': { backgroundColor: '#171d29' },
+            '.cm-selectionBackground': { backgroundColor: '#234169 !important' },
+          }, { dark: true }),
+          yamlCmEditableCompartment.of(EditorView.editable.of(false)),
+          yamlCmReadOnlyCompartment.of(EditorState.readOnly.of(true)),
+          EditorView.updateListener.of((update) => {
+            if (update.docChanged) {
+              textarea.value = update.state.doc.toString();
+            }
+          }),
+        ],
+      }),
+      parent: cmHost,
+    });
+
+    cmHost.style.display = 'block';
+    textarea.style.display = 'none';
+  } catch (err) {
+    console.warn('CodeMirror YAML init failed, fallback to textarea editor.', err);
+  }
+}
+
+function getYamlEditorValue() {
+  const textarea = document.getElementById('yaml-editor');
+  if (yamlCmView) {
+    return yamlCmView.state.doc.toString();
+  }
+  return textarea.value;
+}
+
+function setYamlEditorValue(text) {
+  const textarea = document.getElementById('yaml-editor');
+  const next = String(text || '');
+  textarea.value = next;
+  if (yamlCmView) {
+    const current = yamlCmView.state.doc.toString();
+    if (current !== next) {
+      yamlCmView.dispatch({
+        changes: { from: 0, to: current.length, insert: next },
+      });
+    }
+  }
+}
+
+function setYamlEditorEnabled(enabled) {
+  const textarea = document.getElementById('yaml-editor');
+  const cmHost = document.getElementById('yaml-editor-cm');
+  textarea.disabled = !enabled;
+  if (yamlCmView && yamlCmEditableCompartment && yamlCmReadOnlyCompartment) {
+    yamlCmView.dispatch({
+      effects: [
+        yamlCmEditableCompartment.reconfigure(EditorView.editable.of(enabled)),
+        yamlCmReadOnlyCompartment.reconfigure(EditorState.readOnly.of(!enabled)),
+      ],
+    });
+  }
+  cmHost.classList.toggle('disabled', !enabled);
+}
+
+function renderYamlUnavailable(text) {
+  const select = document.getElementById('yaml-file-select');
+  const refreshBtn = document.getElementById('refresh-yaml-btn');
+  const saveBtn = document.getElementById('save-yaml-btn');
+  const editor = document.getElementById('yaml-editor');
+  const pathEl = document.getElementById('yaml-path');
+
+  select.innerHTML = `<option value="">${escapeHtml(text)}</option>`;
+  select.disabled = true;
+  refreshBtn.disabled = !currentId;
+  saveBtn.disabled = true;
+  setYamlEditorValue('');
+  setYamlEditorEnabled(false);
+  pathEl.textContent = '';
+}
+
+function renderYamlFileOptions(conversationId, files) {
+  const select = document.getElementById('yaml-file-select');
+  const refreshBtn = document.getElementById('refresh-yaml-btn');
+  const editor = document.getElementById('yaml-editor');
+
+  refreshBtn.disabled = !conversationId;
+  if (!conversationId) {
+    renderYamlUnavailable('No conversation selected.');
+    return;
+  }
+
+  if (!files.length) {
+    renderYamlUnavailable('No YAML file available');
+    editor.placeholder = 'This conversation has no editable YAML file under configs/.';
+    return;
+  }
+
+  const savedName = yamlSelectionByConversation[conversationId] || '';
+  const chosen = files.find(x => x.name === savedName) ? savedName : files[0].name;
+  yamlSelectionByConversation[conversationId] = chosen;
+
+  select.innerHTML = files
+    .map(item => `<option value="${escapeHtml(item.name)}">${escapeHtml(item.name)}</option>`)
+    .join('');
+  select.disabled = false;
+  select.value = chosen;
+}
+
+async function loadYamlFileListForCurrentConversation(loadSelected = true) {
+  if (!currentId) {
+    renderYamlUnavailable('No conversation selected.');
+    return;
+  }
+  try {
+    setStatus('Loading YAML files...', 'busy');
+    const data = await api(`/api/conversations/${currentId}/yaml/files`);
+    const files = Array.isArray(data.files) ? data.files : [];
+    yamlFilesByConversation[currentId] = files;
+    renderYamlFileOptions(currentId, files);
+    if (files.length && loadSelected) {
+      await loadSelectedYamlForCurrentConversation();
+    } else {
+      setStatus('YAML files refreshed.', 'success');
+    }
+  } catch (err) {
+    renderYamlUnavailable('YAML load failed');
+    setStatus('Load YAML files failed: ' + err.message, 'error');
+  }
+}
+
+async function loadSelectedYamlForCurrentConversation() {
+  if (!currentId) return;
+  const select = document.getElementById('yaml-file-select');
+  const editor = document.getElementById('yaml-editor');
+  const saveBtn = document.getElementById('save-yaml-btn');
+  const pathEl = document.getElementById('yaml-path');
+  const name = String(select.value || '').trim();
+  if (!name) {
+    saveBtn.disabled = true;
+    setYamlEditorValue('');
+    setYamlEditorEnabled(false);
+    pathEl.textContent = '';
+    return;
+  }
+  yamlSelectionByConversation[currentId] = name;
+
+  try {
+    setStatus('Loading YAML content...', 'busy');
+    const data = await api(`/api/conversations/${currentId}/yaml/file?name=${encodeURIComponent(name)}`);
+    setYamlEditorValue(data.content || '');
+    setYamlEditorEnabled(true);
+    saveBtn.disabled = false;
+
+    const files = yamlFilesByConversation[currentId] || [];
+    const match = files.find(x => x.name === name);
+    pathEl.textContent = match ? match.relative_path : (data.relative_path || '');
+    setStatus('YAML loaded.', 'success');
+  } catch (err) {
+    saveBtn.disabled = true;
+    setYamlEditorValue('');
+    setYamlEditorEnabled(false);
+    setStatus('Load YAML failed: ' + err.message, 'error');
+  }
+}
+
+async function saveSelectedYamlForCurrentConversation() {
+  if (!currentId) return;
+  const select = document.getElementById('yaml-file-select');
+  const editor = document.getElementById('yaml-editor');
+  const name = String(select.value || '').trim();
+  if (!name) {
+    setStatus('Please select a YAML file.', 'error');
+    return;
+  }
+  try {
+    setStatus('Saving YAML...', 'busy');
+    await api(`/api/conversations/${currentId}/yaml/file`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ name, content: getYamlEditorValue() })
+    });
+    setStatus('YAML saved.', 'success');
+  } catch (err) {
+    setStatus('Save YAML failed: ' + err.message, 'error');
+  }
+}
+
+function renderConversationList(items) {
+  const list = document.getElementById('conv-list');
+  list.innerHTML = '';
+  for (const item of items) {
+    const li = document.createElement('li');
+    if (item.id === currentId) li.classList.add('active');
+    li.onclick = () => openConversation(item.id);
+    li.innerHTML = `
+      <div class="conv-title">${escapeHtml(item.workdir_base || basenameFromPath(item.cwd) || item.title || 'Untitled')}</div>
+      <div class="conv-meta">${escapeHtml(item.mode)} · ${escapeHtml(item.status)} · ${item.message_count} msgs · ${item.task_count || 0} tasks</div>
+      <div class="conv-path">${escapeHtml(item.cwd || '')}</div>
+    `;
+    list.appendChild(li);
+  }
+}
+
+async function createConversation() {
+  pickerSelectedPath = WORKDIR_ROOT;
+  document.getElementById('selected-workdir').textContent = 'Selected: ' + pickerSelectedPath;
+  document.getElementById('modal-backdrop').classList.add('show');
+  await browseDir(WORKDIR_ROOT);
+}
+
+async function browseDir(path) {
+  setStatus('Loading directories...', 'busy');
+  const data = await api('/api/workdirs?path=' + encodeURIComponent(path));
+  pickerCurrentPath = data.current;
+  if (!pickerSelectedPath) pickerSelectedPath = data.current;
+  document.getElementById('picker-current').textContent = data.current;
+  document.getElementById('selected-workdir').textContent = 'Selected: ' + pickerSelectedPath;
+
+  const list = document.getElementById('dir-list');
+  list.innerHTML = '';
+
+  const currentItem = document.createElement('div');
+  currentItem.className = 'dir-item';
+  currentItem.onclick = () => selectWorkdir(data.current);
+  currentItem.innerHTML = `
+    <div class="dir-name">📁 Select this directory</div>
+    <div class="dir-path">${escapeHtml(data.current_relative)} </div>
+  `;
+  list.appendChild(currentItem);
+
+  for (const dir of data.children) {
+    const item = document.createElement('div');
+    item.className = 'dir-item';
+    item.innerHTML = `
+      <div class="dir-name">📂 ${escapeHtml(dir.name)}</div>
+      <div class="dir-path">${escapeHtml(dir.relative_path)}</div>
+    `;
+    item.onclick = () => browseDir(dir.path);
+    list.appendChild(item);
+  }
+
+  document.getElementById('confirm-create-btn').disabled = !pickerSelectedPath;
+  setStatus('Ready.');
+}
+
+function selectWorkdir(path) {
+  pickerSelectedPath = path;
+  document.getElementById('selected-workdir').textContent = 'Selected: ' + pickerSelectedPath;
+  document.getElementById('confirm-create-btn').disabled = false;
+}
+
+async function goParentDir() {
+  try {
+    const data = await api('/api/workdirs?path=' + encodeURIComponent(pickerCurrentPath));
+    if (data.parent) {
+      await browseDir(data.parent);
+    }
+  } catch (err) {
+    setStatus('Browse failed: ' + err.message, 'error');
+  }
+}
+
+function closeCreateModal() {
+  document.getElementById('modal-backdrop').classList.remove('show');
+}
+
+function handleModalBackdrop(event) {
+  if (event.target.id === 'modal-backdrop') {
+    closeCreateModal();
+  }
+}
+
+async function createConversationConfirmed() {
+  if (!pickerSelectedPath) {
+    setStatus('Please choose a workdir.', 'error');
+    return;
+  }
+  try {
+    document.getElementById('new-btn').disabled = true;
+    document.getElementById('confirm-create-btn').disabled = true;
+    setStatus('Creating Cursor session...', 'busy');
+    const data = await api('/api/conversations', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ title: 'New chat', workdir: pickerSelectedPath })
+    });
+    currentId = data.conversation.id;
+    closeCreateModal();
+    await loadConversations(currentId);
+    refreshComposerControls();
+    if (data.reused) {
+      setStatus('Existing session opened for this workdir.', 'success');
+    } else {
+      setStatus('Conversation created.', 'success');
+    }
+  } catch (err) {
+    setStatus('Create failed: ' + err.message, 'error');
+  } finally {
+    document.getElementById('new-btn').disabled = false;
+    document.getElementById('confirm-create-btn').disabled = false;
+  }
+}
+
+async function openConversation(id, updateList = true) {
+  const input = document.getElementById('input');
+  if (currentId && input) {
+    conversationDrafts[currentId] = input.value;
+  }
+  currentId = id;
+  const data = await api('/api/conversations/' + id);
+  currentConversation = data.conversation;
+  input.value = conversationDrafts[currentId] || '';
+  renderConversation(currentConversation);
+  renderPendingTaskRefs();
+  renderCurrentConversationStatus();
+  refreshComposerControls();
+  document.getElementById('delete-btn').disabled = currentConversation.status === 'running';
+  document.getElementById('run-task-btn').disabled = false;
+  document.getElementById('refresh-task-btn').disabled = false;
+  if (currentView === 'tasks') {
+    await loadTasksForCurrentConversation();
+  } else if (currentView === 'yaml') {
+    await loadYamlFileListForCurrentConversation(true);
+  }
+  if (updateList) await loadConversations();
+}
+
+function renderConversation(conv) {
+  document.getElementById('title').textContent = basenameFromPath(conv.cwd) || conv.title || 'Untitled';
+  document.getElementById('meta').textContent = `${conv.mode} · ${conv.status} · ${conv.cwd}`;
+  const messages = document.getElementById('messages');
+  messages.innerHTML = '';
+  if (!conv.messages || !conv.messages.length) {
+    messages.innerHTML = '<div class="empty">No messages yet.</div>';
+  } else {
+    for (const m of conv.messages) {
+      const wrap = document.createElement('div');
+      wrap.className = 'msg ' + m.role;
+      const refs = (m.task_refs || []).map(jobId => `<span class="ref-chip">🔗 ${escapeHtml(taskRefLabel(jobId))}</span>`).join(' ');
+      wrap.innerHTML = `
+        <div class="role">${escapeHtml(m.role)}</div>
+        <div class="bubble">${escapeHtml(m.content)}</div>
+        ${refs ? `<div style="margin-top:8px; display:flex; gap:6px; flex-wrap:wrap;">${refs}</div>` : ''}
+      `;
+      messages.appendChild(wrap);
+    }
+  }
+  messages.scrollTop = messages.scrollHeight;
+}
+
+function renderPendingTaskRefs() {
+  const row = document.getElementById('composer-ref-row');
+  const refs = getTaskRefsForConversation(currentId);
+  if (!refs.length) {
+    row.innerHTML = '';
+    return;
+  }
+  row.innerHTML = refs.map(jobId => `
+    <span class="ref-chip">🔗 ${escapeHtml(taskRefLabel(jobId))}
+      <button onclick="removeTaskReference('${escapeHtml(jobId)}')">×</button>
+    </span>
+  `).join('');
+}
+
+function taskRefLabel(jobId) {
+  const taskMeta = (currentConversation && currentConversation.task_meta) ? currentConversation.task_meta : {};
+  const entry = taskMeta ? taskMeta[jobId] : null;
+  const nickname = entry && entry.nickname ? String(entry.nickname).trim() : '';
+  return nickname || shortJobId(jobId);
+}
+
+function addTaskReference(jobId) {
+  if (!jobId) return;
+  const refs = getTaskRefsForConversation(currentId);
+  if (!refs.includes(jobId)) {
+    refs.push(jobId);
+    renderPendingTaskRefs();
+    setStatus(`Referenced task ${shortJobId(jobId)}.`, 'success');
+  }
+}
+
+function removeTaskReference(jobId) {
+  if (!currentId) return;
+  conversationTaskRefs[currentId] = getTaskRefsForConversation(currentId).filter(x => x !== jobId);
+  renderPendingTaskRefs();
+}
+
+function basenameFromPath(path) {
+  if (!path) return '';
+  const cleaned = String(path).replace(/\/+$/, '');
+  const parts = cleaned.split('/');
+  return parts[parts.length - 1] || cleaned;
+}
+
+function resetConversationView() {
+  currentId = null;
+  currentConversation = null;
+  document.getElementById('title').textContent = 'No conversation selected';
+  document.getElementById('meta').textContent = 'Create a new session first.';
+  document.getElementById('messages').innerHTML = '<div class="empty">No conversation selected.</div>';
+  document.getElementById('tasks-list').innerHTML = '<div class="empty">No conversation selected.</div>';
+  document.getElementById('input').value = '';
+  refreshComposerControls();
+  document.getElementById('delete-btn').disabled = true;
+  document.getElementById('run-task-btn').disabled = true;
+  document.getElementById('refresh-task-btn').disabled = true;
+  renderYamlUnavailable('No conversation selected.');
+  renderPendingTaskRefs();
+  renderCurrentConversationStatus();
+}
+
+async function deleteCurrentConversation() {
+  if (!currentId) return;
+  const taskCount = (currentConversation && currentConversation.job_ids)
+    ? currentConversation.job_ids.length
+    : 0;
+  const confirmText = taskCount > 0
+    ? `This session has ${taskCount} task(s). Deleting session will clear all tasks (running tasks will be cancelled). Continue?`
+    : 'Delete this managed session from the server list?';
+  if (!confirm(confirmText)) return;
+
+  const deletingId = currentId;
+  try {
+    document.getElementById('delete-btn').disabled = true;
+    setStatus('Deleting session...', 'busy');
+    await api(`/api/conversations/${deletingId}`, { method: 'DELETE' });
+    delete conversationDrafts[deletingId];
+    delete conversationTaskRefs[deletingId];
+    delete lastStatusByConversation[deletingId];
+    delete yamlFilesByConversation[deletingId];
+    delete yamlSelectionByConversation[deletingId];
+    resetConversationView();
+    await loadConversations();
+    setStatus('Session deleted.', 'success');
+  } catch (err) {
+    if (currentConversation) {
+      document.getElementById('delete-btn').disabled = currentConversation.status === 'running';
+    }
+    setStatus('Delete failed: ' + err.message, 'error');
+  }
+}
+
+async function sendMessage() {
+  const input = document.getElementById('input');
+  const originalDraft = input.value;
+  const text = originalDraft.trim();
+  if (!currentId || !text) return;
+  const targetId = currentId;
+  const refs = [...getTaskRefsForConversation(targetId)];
+  const optimisticMessageId = 'optimistic-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  let forceSend = false;
+  if (currentConversation && currentConversation.status === 'running') {
+    const ok = confirm('This session is still marked as waiting for Cursor. Force send and ignore previous unprocessed message?');
+    if (!ok) return;
+    forceSend = true;
+  }
+  try {
+    sendingConversationIds.add(targetId);
+    conversationDrafts[targetId] = '';
+    if (currentId === targetId) {
+      input.value = '';
+      if (currentConversation) {
+        const messages = Array.isArray(currentConversation.messages) ? currentConversation.messages : [];
+        messages.push({
+          id: optimisticMessageId,
+          role: 'user',
+          content: text,
+          created_at: Date.now() / 1000,
+          task_refs: refs,
+        });
+        currentConversation.messages = messages;
+        renderConversation(currentConversation);
+      }
+    }
+    refreshComposerControls();
+    
+    setStatus('Waiting for Cursor...', 'busy', targetId);
+    const data = await api(`/api/conversations/${targetId}/messages`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ text, task_refs: refs, force_send: forceSend })
+    });
+    conversationDrafts[targetId] = '';
+    conversationTaskRefs[targetId] = [];
+    if (currentId === targetId) {
+      input.value = '';
+      renderPendingTaskRefs();
+      currentConversation = data.conversation;
+      renderConversation(currentConversation);
+    }
+    await loadConversations();
+    setStatus('Done.', 'success', targetId);
+  } catch (err) {
+    conversationDrafts[targetId] = originalDraft;
+    if (currentId === targetId) {
+      input.value = originalDraft;
+      if (currentConversation && Array.isArray(currentConversation.messages)) {
+        currentConversation.messages = currentConversation.messages.filter(m => m.id !== optimisticMessageId);
+        renderConversation(currentConversation);
+      }
+    }
+    setStatus('Send failed: ' + err.message, 'error', targetId);
+  } finally {
+    sendingConversationIds.delete(targetId);
+    refreshComposerControls();
+    if (currentConversation) {
+      document.getElementById('delete-btn').disabled = currentConversation.status === 'running';
+    }
+  }
+}
+
+function renderTasks(items) {
+  currentTasks = items || [];
+  if (currentConversation) {
+    const taskMeta = currentConversation.task_meta || {};
+    for (const job of currentTasks) {
+      const jobId = job && job.job_id ? String(job.job_id) : '';
+      if (!jobId) continue;
+      const nickname = String(job.nickname || '').trim();
+      if (nickname) {
+        taskMeta[jobId] = {
+          ...(taskMeta[jobId] || {}),
+          nickname,
+        };
+      } else {
+        delete taskMeta[jobId];
+      }
+    }
+    currentConversation.task_meta = taskMeta;
+    renderConversation(currentConversation);
+    renderPendingTaskRefs();
+  }
+  const root = document.getElementById('tasks-list');
+  if (!items || !items.length) {
+    root.innerHTML = '<div class="empty">No tasks in this conversation yet.</div>';
+    return;
+  }
+
+  root.innerHTML = '';
+  for (const [jobIndex, job] of items.entries()) {
+    const div = document.createElement('div');
+    div.className = 'task-item';
+    const status = job.status || 'unknown';
+    const args = job.zhh_args || '';
+    const nickname = (job.nickname || '').trim();
+    const createdAt = job.created_at || '-';
+    const runBtnDisabled = !currentId ? 'disabled' : '';
+    const canCancel = status === 'running' || status === 'starting';
+    const statusLower = String(status).toLowerCase();
+    const canRemove = !['running', 'starting', 'queued', 'pending'].includes(statusLower);
+    div.innerHTML = `
+      <div class="task-top">
+        <div class="task-id">${escapeHtml(job.job_id || 'unknown')}${nickname ? ` · 🏷 ${escapeHtml(nickname)}` : ''}</div>
+        <div class="task-status">${escapeHtml(status)}</div>
+      </div>
+      <div class="task-meta">args: ${escapeHtml(args)} · created: ${escapeHtml(createdAt)}</div>
+      <div class="task-actions">
+        <button type="button" class="task-nickname-btn" data-task-index="${jobIndex}">Nickname</button>
+        <button ${runBtnDisabled} onclick="addTaskReference('${escapeHtml(job.job_id || '')}')">Reference</button>
+        <button ${runBtnDisabled} onclick="viewTaskLog('${escapeHtml(job.job_id || '')}')">Log</button>
+        ${canCancel ? `<button ${runBtnDisabled} onclick="cancelTask('${escapeHtml(job.job_id || '')}')">Cancel</button>` : ''}
+        ${canRemove ? `<button ${runBtnDisabled} onclick="removeTask('${escapeHtml(job.job_id || '')}')">Remove</button>` : ''}
+      </div>
+      <div class="task-nickname-editor" data-task-index="${jobIndex}">
+        <input type="text" class="task-nickname-input" maxlength="80" placeholder="Task nickname" />
+        <button type="button" class="task-nickname-save-btn">Save</button>
+        <button type="button" class="task-nickname-cancel-btn">Cancel</button>
+      </div>
+    `;
+    const nicknameBtn = div.querySelector('.task-nickname-btn');
+    const nicknameEditor = div.querySelector('.task-nickname-editor');
+    const nicknameInput = div.querySelector('.task-nickname-input');
+    const nicknameSaveBtn = div.querySelector('.task-nickname-save-btn');
+    const nicknameCancelBtn = div.querySelector('.task-nickname-cancel-btn');
+
+    if (nicknameInput) nicknameInput.value = nickname;
+
+    if (nicknameBtn && nicknameEditor && nicknameInput) {
+      nicknameBtn.addEventListener('click', () => {
+        nicknameEditor.style.display = 'flex';
+        nicknameInput.focus();
+        nicknameInput.select();
+      });
+    }
+
+    if (nicknameSaveBtn && nicknameInput && nicknameEditor) {
+      nicknameSaveBtn.addEventListener('click', async () => {
+        await saveTaskNicknameByIndex(jobIndex, nicknameInput.value);
+      });
+    }
+
+    if (nicknameCancelBtn && nicknameInput && nicknameEditor) {
+      nicknameCancelBtn.addEventListener('click', () => {
+        nicknameInput.value = nickname;
+        nicknameEditor.style.display = 'none';
+      });
+    }
+
+    if (nicknameInput) {
+      nicknameInput.addEventListener('keydown', async (event) => {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          await saveTaskNicknameByIndex(jobIndex, nicknameInput.value);
+        }
+      });
+    }
+
+    root.appendChild(div);
+  }
+}
+
+async function saveTaskNicknameByIndex(index, nicknameValue) {
+  const task = currentTasks[index] || {};
+  const jobId = String(task.job_id || '').trim();
+  if (!jobId) {
+    setStatus('Task id missing, cannot set nickname.', 'error');
+    return;
+  }
+  await saveTaskNickname(jobId, nicknameValue);
+}
+
+async function saveTaskNickname(jobId, nicknameValue) {
+  if (!currentId || !jobId) return;
+  try {
+    const nextNickname = String(nicknameValue || '').trim();
+    setStatus('Saving nickname...', 'busy');
+    await api(`/api/conversations/${currentId}/tasks/${jobId}/nickname`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ nickname: nextNickname })
+    });
+
+    if (currentConversation) {
+      const taskMeta = currentConversation.task_meta || {};
+      if (nextNickname) {
+        taskMeta[jobId] = {
+          ...(taskMeta[jobId] || {}),
+          nickname: nextNickname,
+        };
+      } else {
+        delete taskMeta[jobId];
+      }
+      currentConversation.task_meta = taskMeta;
+      renderConversation(currentConversation);
+      renderPendingTaskRefs();
+    }
+
+    await loadTasksForCurrentConversation();
+    setStatus('Nickname saved.', 'success');
+  } catch (err) {
+    setStatus('Save nickname failed: ' + err.message, 'error');
+  }
+}
+
+async function loadTasksForCurrentConversation() {
+  if (!currentId) {
+    document.getElementById('tasks-list').innerHTML = '<div class="empty">No conversation selected.</div>';
+    return;
+  }
+  try {
+    setStatus('Loading tasks...', 'busy');
+    const data = await api(`/api/conversations/${currentId}/tasks`);
+    renderTasks(data.jobs || []);
+    setStatus('Tasks refreshed.', 'success');
+  } catch (err) {
+    setStatus('Load tasks failed: ' + err.message, 'error');
+  }
+}
+
+async function runTaskForCurrentConversation(argsOverride = null) {
+  if (!currentId || !currentConversation) return;
+  try {
+    const args = argsOverride === null
+      ? document.getElementById('task-args').value.trim()
+      : String(argsOverride);
+    document.getElementById('run-task-btn').disabled = true;
+    document.getElementById('run-quick-btn').disabled = true;
+    setStatus('Creating task in /run...', 'busy');
+    await api(`/api/conversations/${currentId}/tasks/run`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ args })
+    });
+    await loadConversations(currentId);
+    await loadTasksForCurrentConversation();
+    setStatus('Task created.', 'success');
+  } catch (err) {
+    setStatus('Run task failed: ' + err.message, 'error');
+  } finally {
+    document.getElementById('run-task-btn').disabled = !currentId;
+    document.getElementById('run-quick-btn').disabled = !currentId;
+  }
+}
+
+async function runTaskQuickFromChat() {
+  await runTaskForCurrentConversation('');
+}
+
+async function cancelTask(jobId) {
+  if (!currentId || !jobId) return;
+  if (!confirm(`Cancel task ${jobId}?`)) return;
+  try {
+    setStatus('Cancelling task...', 'busy');
+    await api(`/api/conversations/${currentId}/tasks/${jobId}/cancel`, { method: 'POST' });
+    await loadTasksForCurrentConversation();
+    setStatus('Task cancelled.', 'success');
+  } catch (err) {
+    setStatus('Cancel failed: ' + err.message, 'error');
+  }
+}
+
+async function removeTask(jobId) {
+  if (!currentId || !jobId) return;
+  try {
+    setStatus('Removing task...', 'busy');
+    await api(`/api/conversations/${currentId}/tasks/${jobId}`, { method: 'DELETE' });
+    conversationTaskRefs[currentId] = getTaskRefsForConversation(currentId).filter(x => x !== jobId);
+    renderPendingTaskRefs();
+    if (currentConversation && currentConversation.task_meta) {
+      delete currentConversation.task_meta[jobId];
+      renderConversation(currentConversation);
+    }
+    await loadConversations(currentId);
+    await loadTasksForCurrentConversation();
+    setStatus('Task removed.', 'success');
+  } catch (err) {
+    setStatus('Remove task failed: ' + err.message, 'error');
+  }
+}
+
+async function viewTaskLog(jobId) {
+  if (!currentId || !jobId) return;
+  try {
+    setStatus('Fetching task log...', 'busy');
+    const data = await api(`/api/conversations/${currentId}/tasks/${jobId}/log?lines=400`);
+    const logText = data.log || '[no log output]';
+    alert(logText.slice(-12000));
+    setStatus('Log fetched.', 'success');
+  } catch (err) {
+    setStatus('Fetch log failed: ' + err.message, 'error');
+  }
+}
+
+function handleKey(event) {
+  if (event.key === 'Enter' && !event.shiftKey) {
+    event.preventDefault();
+    sendMessage();
+  }
+}
+
+document.getElementById('input').addEventListener('input', (event) => {
+  if (!currentId) return;
+  conversationDrafts[currentId] = event.target.value;
+  refreshComposerControls();
+});
+
+function escapeHtml(s) {
+  return String(s)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+function shortJobId(jobId) {
+  return String(jobId || '').slice(0, 8);
+}
+
+loadConversations();
+</script>
+</body>
+</html>
