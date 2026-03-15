@@ -336,10 +336,16 @@ tpu_info_available(){
     tpu_check=$(cat $folder/check_result 2>/dev/null || echo "NO CHECK RESULT")
     zone=$(cat $folder/zone 2>/dev/null || echo "INTERNAL_ERROR")
     status=$(cat $folder/status 2>/dev/null || echo "UNKNOWN")
-    if [ "$status" = "KILLED" ] || [ "$status" = "FINISHED" ]; then
-        return 0
-    else
+    # if [ "$status" = "KILLED" ] || [ "$status" = "FINISHED" ]; then
+    #     return 0
+    # else
+    #     return 1
+    # fi
+
+    if [ "$status" = "STARTED" ]; then
         return 1
+    else
+        return 0
     fi
 }
 
