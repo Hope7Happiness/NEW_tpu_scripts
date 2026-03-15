@@ -119,7 +119,7 @@ def extract_text(update: dict) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="Minimal Cursor ACP probe")
-    parser.add_argument("--agent-path", default="/home/siri/.local/bin/agent")
+    parser.add_argument("--agent-path", default=str(Path.home() / ".local/bin/agent"))
     parser.add_argument("--cwd", default=str(Path.cwd()))
     parser.add_argument("--prompt", default="Reply with exactly: ACP probe OK")
     parser.add_argument("--load-session", default="", help="Existing ACP/CLI session id to load")

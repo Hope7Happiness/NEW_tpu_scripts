@@ -7,6 +7,14 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 
+def _is_running_like_status(status: str | None) -> bool:
+    return str(status or "").strip().lower() in {"running", "starting", "queued", "pending"}
+
+
+def _is_local_cancel_like(status: str | None) -> bool:
+    return str(status or "").strip().lower() in {"canceled", "cancelled", "aborted"}
+
+
 def zhh_request(
     zhh_server_url: str,
     method: str,
@@ -77,7 +85,10 @@ def get_conversation_jobs(zhh_server_url: str, conversation: dict) -> list[dict]
         if job_id in by_id:
             item = dict(by_id[job_id])
             item["nickname"] = nickname
-            if (not item.get("status") or str(item.get("status")).lower() == "unknown") and cached_status:
+            live_status = str(item.get("status") or "").strip().lower()
+            if cached_status and _is_local_cancel_like(cached_status) and _is_running_like_status(live_status):
+                item["status"] = cached_status
+            elif (not item.get("status") or live_status == "unknown") and cached_status:
                 item["status"] = cached_status
             ordered.append(item)
         else:

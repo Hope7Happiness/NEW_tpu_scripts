@@ -227,6 +227,7 @@ body {
 #composer {
   display: flex;
   gap: 10px;
+  align-items: stretch;
 }
 #composer-ref-row {
   margin-top: 8px;
@@ -277,7 +278,7 @@ body {
   font: inherit;
 }
 #send-btn {
-  width: 110px;
+  width: 136px;
   border: 0;
   border-radius: 12px;
   background: #4da3ff;
@@ -285,13 +286,32 @@ body {
   font-weight: 700;
   cursor: pointer;
 }
+#quick-actions {
+  width: 112px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
 #run-quick-btn {
-  width: 88px;
+  width: 100%;
   border: 1px solid #2b3240;
   border-radius: 12px;
   background: #1b1f28;
   color: #d9dde7;
   font-weight: 700;
+  font-size: 14px;
+  min-height: 48px;
+  cursor: pointer;
+}
+#auto-iterate-btn {
+  width: 100%;
+  border: 1px solid #2b3240;
+  border-radius: 12px;
+  background: #1b1f28;
+  color: #d9dde7;
+  font-weight: 700;
+  font-size: 11px;
+  min-height: 32px;
   cursor: pointer;
 }
 #send-btn:disabled, #new-btn:disabled {
@@ -364,6 +384,66 @@ body {
 }
 #modal-backdrop.show {
   display: flex;
+}
+#log-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .62);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 40;
+}
+#log-modal-backdrop.show {
+  display: flex;
+}
+#log-modal {
+  width: min(900px, 100%);
+  max-height: min(720px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  background: #171a21;
+  border: 1px solid #2b3240;
+  border-radius: 14px;
+  overflow: hidden;
+}
+#log-modal-head {
+  padding: 12px 14px;
+  border-bottom: 1px solid #262b36;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+#log-modal-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #d9dde7;
+}
+#log-modal-close {
+  border: 1px solid #2b3240;
+  border-radius: 8px;
+  background: #1b1f28;
+  color: #d9dde7;
+  cursor: pointer;
+  padding: 6px 10px;
+}
+#log-modal-body {
+  padding: 0;
+  overflow: auto;
+  flex: 1;
+  min-height: 180px;
+}
+#log-modal-content {
+  margin: 0;
+  padding: 12px 14px 16px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #d9dde7;
 }
 #modal {
   width: min(760px, 100%);
@@ -685,8 +765,11 @@ body {
       <div id="composer-wrap">
         <div id="composer">
           <textarea id="input" placeholder="Type a message..." onkeydown="handleKey(event)"></textarea>
-          <button id="run-quick-btn" onclick="runTaskQuickFromChat()" disabled>Run</button>
           <button id="send-btn" onclick="sendMessage()" disabled>Send</button>
+          <div id="quick-actions">
+            <button id="run-quick-btn" onclick="runTaskQuickFromChat()" disabled>Run</button>
+            <button id="auto-iterate-btn" onclick="handleAutoIterateButton()" disabled>Auto Iterate</button>
+          </div>
         </div>
         <div id="composer-ref-row"></div>
       </div>
@@ -744,6 +827,18 @@ body {
     </div>
   </div>
 
+  <div id="log-modal-backdrop" onclick="handleLogModalBackdrop(event)">
+    <div id="log-modal">
+      <div id="log-modal-head">
+        <div id="log-modal-title">Task Log</div>
+        <button id="log-modal-close" onclick="closeLogModal()">Close</button>
+      </div>
+      <div id="log-modal-body">
+        <pre id="log-modal-content"></pre>
+      </div>
+    </div>
+  </div>
+
 <script>
 let currentId = null;
 let currentConversation = null;
@@ -760,6 +855,8 @@ let yamlCmEditableCompartment = null;
 let yamlCmReadOnlyCompartment = null;
 let yamlCmInitStarted = false;
 let conversationSummariesById = {};
+let conversationStatusOverrides = {};
+let conversationTaskRuntimeStatus = {};
 let taskPollTimer = null;
 let taskPollInFlight = false;
 const WORKDIR_ROOT = '__WORKDIR_ROOT__';
@@ -818,15 +915,35 @@ function setStatus(text, kind = 'normal', conversationId = null) {
 
 async function api(url, options) {
   const res = await fetch(url, options);
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || ('HTTP ' + res.status));
-  return data;
+  const raw = await res.text();
+  let data = null;
+  try {
+    data = raw ? JSON.parse(raw) : {};
+  } catch (_) {
+    data = null;
+  }
+
+  if (!res.ok) {
+    if (data && typeof data === 'object' && data.error) {
+      throw new Error(String(data.error));
+    }
+    const brief = String(raw || '').trim().slice(0, 120).replace(/\s+/g, ' ');
+    if (brief) {
+      throw new Error(`HTTP ${res.status}: ${brief}`);
+    }
+    throw new Error('HTTP ' + res.status);
+  }
+
+  if (data && typeof data === 'object') {
+    return data;
+  }
+  return {};
 }
 
-async function loadConversations(selectId = null) {
+async function loadConversations(selectId = null, forceSelect = false) {
   const data = await api('/api/conversations');
   renderConversationList(data.conversations || []);
-  if (selectId) {
+  if (selectId && (forceSelect || !currentId)) {
     await openConversation(selectId, false);
   } else if (currentId) {
     const found = (data.conversations || []).find(x => x.id === currentId);
@@ -839,8 +956,18 @@ function refreshComposerControls() {
   const hasCurrent = !!currentId;
   const draftText = hasCurrent ? (conversationDrafts[currentId] || input.value || '') : '';
   const busyCurrent = hasCurrent && sendingConversationIds.has(currentId);
-  document.getElementById('send-btn').disabled = !hasCurrent || !draftText.trim() || busyCurrent;
+  const summary = hasCurrent ? (conversationSummariesById[currentId] || {}) : {};
+  const autoRunning = !!(summary && summary.auto_iterating);
+  const autoStopping = autoRunning && String(summary.status || '').toLowerCase() === 'stopping';
+  document.getElementById('send-btn').disabled = !hasCurrent || !draftText.trim() || busyCurrent || autoRunning;
   document.getElementById('run-quick-btn').disabled = !hasCurrent;
+  const autoBtn = document.getElementById('auto-iterate-btn');
+  if (autoBtn) {
+    autoBtn.textContent = autoStopping
+      ? 'Stopping...'
+      : (autoRunning ? 'Stop Auto Iterate' : 'Auto Iterate');
+    autoBtn.disabled = !hasCurrent || busyCurrent || autoStopping || (!autoRunning && !draftText.trim());
+  }
 }
 
 function getTaskRefsForConversation(conversationId) {
@@ -853,6 +980,36 @@ function getTaskRefsForConversation(conversationId) {
 
 function normalizeTaskStatus(status) {
   return String(status || 'unknown').toLowerCase();
+}
+
+function displayConversationStatus(rawStatus) {
+  const value = String(rawStatus || 'unknown').toLowerCase();
+  if (value === 'running') return 'waiting';
+  return value;
+}
+
+function effectiveConversationStatus(item) {
+  if (!item || !item.id) return 'unknown';
+  const statusRaw = String(item.status || '').toLowerCase();
+  if (statusRaw === 'stopping') return 'stopping';
+  if (item.auto_iterating) {
+    return 'iterating';
+  }
+  const override = conversationStatusOverrides[item.id];
+  if (override) return override;
+  const runtime = conversationTaskRuntimeStatus[item.id];
+  if (runtime) return runtime;
+  return displayConversationStatus(item.status);
+}
+
+function runtimeStatusFromJobs(jobs) {
+  const list = Array.isArray(jobs) ? jobs : [];
+  for (const job of list) {
+    if (isRunningLikeTaskStatus(job && job.status)) {
+      return 'waiting';
+    }
+  }
+  return '';
 }
 
 function isRunningLikeTaskStatus(status) {
@@ -922,13 +1079,29 @@ async function pollTaskNotifications() {
   try {
     const data = await api('/api/conversations');
     const conversations = Array.isArray(data.conversations) ? data.conversations : [];
-    await Promise.all(conversations.map(async (item) => {
+    const taskResults = await Promise.all(conversations.map(async (item) => {
       try {
-        await api(`/api/conversations/${item.id}/tasks`);
+        const taskData = await api(`/api/conversations/${item.id}/tasks`);
+        return { id: item.id, jobs: Array.isArray(taskData.jobs) ? taskData.jobs : [] };
       } catch (_) {
-        // keep polling other conversations
+        return { id: item.id, jobs: null };
       }
     }));
+    const validIds = new Set(conversations.map(item => item.id));
+    for (const id of Object.keys(conversationTaskRuntimeStatus)) {
+      if (!validIds.has(id)) {
+        delete conversationTaskRuntimeStatus[id];
+      }
+    }
+    for (const result of taskResults) {
+      if (!result.jobs) continue;
+      const runtime = runtimeStatusFromJobs(result.jobs);
+      if (runtime) {
+        conversationTaskRuntimeStatus[result.id] = runtime;
+      } else {
+        delete conversationTaskRuntimeStatus[result.id];
+      }
+    }
     const refreshed = await api('/api/conversations');
     const latest = Array.isArray(refreshed.conversations) ? refreshed.conversations : [];
     renderConversationList(latest);
@@ -1234,9 +1407,10 @@ function renderConversationList(items) {
     if (item.id === currentId) li.classList.add('active');
     li.onclick = () => openConversation(item.id);
     const alertHtml = renderConversationAlertHtml(item);
+    const statusText = effectiveConversationStatus(item);
     li.innerHTML = `
       <div class="conv-title">${escapeHtml(item.workdir_base || basenameFromPath(item.cwd) || item.title || 'Untitled')}${alertHtml}</div>
-      <div class="conv-meta">${escapeHtml(item.mode)} · ${escapeHtml(item.status)} · ${item.message_count} msgs · ${item.task_count || 0} tasks</div>
+      <div class="conv-meta">${escapeHtml(statusText)} · ${item.message_count} msgs · ${item.task_count || 0} tasks</div>
       <div class="conv-path">${escapeHtml(item.cwd || '')}</div>
     `;
     list.appendChild(li);
@@ -1310,6 +1484,33 @@ function closeCreateModal() {
 function handleModalBackdrop(event) {
   if (event.target.id === 'modal-backdrop') {
     closeCreateModal();
+  }
+}
+
+function openLogModal(jobId, content, source = '') {
+  const backdrop = document.getElementById('log-modal-backdrop');
+  const title = document.getElementById('log-modal-title');
+  const body = document.getElementById('log-modal-content');
+  const sourceText = String(source || '').trim();
+  title.textContent = sourceText
+    ? `Task Log · ${jobId} · ${sourceText}`
+    : `Task Log · ${jobId}`;
+  body.textContent = String(content || '[no log output]');
+  backdrop.classList.add('show');
+  const scrollContainer = document.getElementById('log-modal-body');
+  if (scrollContainer) {
+    scrollContainer.scrollTop = scrollContainer.scrollHeight;
+  }
+}
+
+function closeLogModal() {
+  const backdrop = document.getElementById('log-modal-backdrop');
+  backdrop.classList.remove('show');
+}
+
+function handleLogModalBackdrop(event) {
+  if (event.target && event.target.id === 'log-modal-backdrop') {
+    closeLogModal();
   }
 }
 
@@ -1403,7 +1604,7 @@ function renderSystemTaskCard(job, forceCanceled = false) {
   const canceled = forceCanceled || isCanceledTaskStatus(effectiveStatusRaw);
 
   const actionsHtml = canceled
-    ? `<div class="task-meta" style="margin-top:8px;">${escapeHtml(jobId)} is canceled</div>`
+    ? `<div class="task-meta" style="margin-top:8px;">${escapeHtml(jobId)} is canceled/removed</div>`
     : `
       <div class="task-actions">
         <button ${runBtnDisabled} onclick="addTaskReference('${escapeHtml(jobId)}')">Reference</button>
@@ -1427,7 +1628,9 @@ function renderSystemTaskCard(job, forceCanceled = false) {
 
 function renderConversation(conv) {
   document.getElementById('title').textContent = basenameFromPath(conv.cwd) || conv.title || 'Untitled';
-  document.getElementById('meta').textContent = `${conv.mode} · ${conv.status} · ${conv.cwd}`;
+  const summary = conversationSummariesById[conv.id] || { id: conv.id, status: conv.status };
+  const statusText = effectiveConversationStatus(summary);
+  document.getElementById('meta').textContent = `${statusText} · ${conv.cwd}`;
   const messages = document.getElementById('messages');
   messages.innerHTML = '';
   if (!conv.messages || !conv.messages.length) {
@@ -1577,7 +1780,7 @@ async function sendMessage() {
   const input = document.getElementById('input');
   const originalDraft = input.value;
   const text = originalDraft.trim();
-  if (!currentId || !text) return;
+  if (!currentId || !text) return false;
   const targetId = currentId;
   const refs = [...getTaskRefsForConversation(targetId)];
   const optimisticMessageId = 'optimistic-' + Date.now() + '-' + Math.random().toString(36).slice(2);
@@ -1623,6 +1826,7 @@ async function sendMessage() {
     }
     await loadConversations();
     setStatus('Done.', 'success', targetId);
+    return true;
   } catch (err) {
     conversationDrafts[targetId] = originalDraft;
     if (currentId === targetId) {
@@ -1633,6 +1837,7 @@ async function sendMessage() {
       }
     }
     setStatus('Send failed: ' + err.message, 'error', targetId);
+    return false;
   } finally {
     sendingConversationIds.delete(targetId);
     refreshComposerControls();
@@ -1809,7 +2014,14 @@ async function loadTasksForCurrentConversation(silent = false) {
       setStatus('Loading tasks...', 'busy');
     }
     const data = await api(`/api/conversations/${targetId}/tasks`);
-    renderTasks(data.jobs || [], targetId);
+    const jobs = Array.isArray(data.jobs) ? data.jobs : [];
+    const runtime = runtimeStatusFromJobs(jobs);
+    if (runtime) {
+      conversationTaskRuntimeStatus[targetId] = runtime;
+    } else {
+      delete conversationTaskRuntimeStatus[targetId];
+    }
+    renderTasks(jobs, targetId);
     if (targetId !== currentId) {
       return;
     }
@@ -1826,34 +2038,114 @@ async function loadTasksForCurrentConversation(silent = false) {
   }
 }
 
-async function runTaskForCurrentConversation(argsOverride = null) {
-  if (!currentId || !currentConversation) return;
+async function runTaskForCurrentConversation(argsOverride = null, conversationId = null) {
+  const targetId = String(conversationId || currentId || '').trim();
+  if (!targetId) return null;
   try {
     const args = argsOverride === null
       ? document.getElementById('task-args').value.trim()
       : String(argsOverride);
     document.getElementById('run-task-btn').disabled = true;
-    document.getElementById('run-quick-btn').disabled = true;
-    setStatus('Creating task in /run...', 'busy');
-    await api(`/api/conversations/${currentId}/tasks/run`, {
+    setStatus('Creating task in /run...', 'busy', targetId);
+    const runData = await api(`/api/conversations/${targetId}/tasks/run`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({ args })
     });
-    await loadConversations(currentId);
-    await loadTasksForCurrentConversation();
+    const jobId = String((runData.job && runData.job.job_id) || '').trim();
+    await loadConversations(targetId);
+    if (currentId === targetId) {
+      await loadTasksForCurrentConversation();
+    }
     pollTaskNotifications();
-    setStatus('Task created.', 'success');
+    setStatus('Task created.', 'success', targetId);
+    return jobId || null;
   } catch (err) {
-    setStatus('Run task failed: ' + err.message, 'error');
+    setStatus('Run task failed: ' + err.message, 'error', targetId);
+    return null;
   } finally {
     document.getElementById('run-task-btn').disabled = !currentId;
-    document.getElementById('run-quick-btn').disabled = !currentId;
+    refreshComposerControls();
   }
 }
 
 async function runTaskQuickFromChat() {
   await runTaskForCurrentConversation('');
+}
+
+async function handleAutoIterateButton() {
+  const targetId = currentId;
+  if (!targetId) return;
+  const summary = conversationSummariesById[targetId] || {};
+  if (summary.auto_iterating) {
+    await stopAutoIteration();
+    return;
+  }
+  await startAutoIteration();
+}
+
+async function startAutoIteration() {
+  const targetId = currentId;
+  const input = document.getElementById('input');
+  const firstText = String((input && input.value) || '').trim();
+  if (!targetId) return;
+  if (!firstText) {
+    setStatus('Auto iterate requires message text in the input box.', 'error');
+    return;
+  }
+  const summary = conversationSummariesById[targetId] || {};
+  if (summary.auto_iterating) {
+    setStatus('Auto iterate is already running for this conversation.', 'busy');
+    return;
+  }
+
+  try {
+    setStatus('Starting backend auto iterate...', 'busy', targetId);
+    await api(`/api/conversations/${targetId}/auto-iterate/start`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ text: firstText, max_rounds: 8 })
+    });
+
+    conversationDrafts[targetId] = '';
+    if (currentId === targetId && input) {
+      input.value = '';
+    }
+    await loadConversations(targetId);
+    if (currentId === targetId) {
+      await openConversation(targetId, false);
+    }
+    setStatus('Auto iterate running in backend.', 'success', targetId);
+  } catch (err) {
+    setStatus('Auto iterate failed: ' + (err && err.message ? err.message : String(err)), 'error', targetId);
+  }
+  refreshComposerControls();
+}
+
+async function stopAutoIteration() {
+  const targetId = currentId;
+  if (!targetId) return;
+  try {
+    setStatus('Stopping auto iterate...', 'busy', targetId);
+    if (conversationSummariesById[targetId]) {
+      conversationSummariesById[targetId].status = 'stopping';
+      conversationSummariesById[targetId].auto_iterating = true;
+    }
+    refreshComposerControls();
+    renderCurrentConversationStatus();
+    await api(`/api/conversations/${targetId}/auto-iterate/stop`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+    });
+    await loadConversations(targetId);
+    if (currentId === targetId) {
+      await openConversation(targetId, false);
+    }
+    setStatus('Stop signal sent for auto iterate.', 'success', targetId);
+  } catch (err) {
+    setStatus('Stop auto iterate failed: ' + (err && err.message ? err.message : String(err)), 'error', targetId);
+  }
+  refreshComposerControls();
 }
 
 async function cancelTask(jobId) {
@@ -1896,7 +2188,7 @@ async function viewTaskLog(jobId) {
     setStatus('Fetching task log...', 'busy');
     const data = await api(`/api/conversations/${currentId}/tasks/${jobId}/log?lines=400`);
     const logText = data.log || '[no log output]';
-    alert(logText.slice(-12000));
+    openLogModal(jobId, logText, data.source || '');
     await loadTasksForCurrentConversation();
     await loadConversations();
     setStatus('Log fetched.', 'success');

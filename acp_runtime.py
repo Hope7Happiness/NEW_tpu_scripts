@@ -4,6 +4,8 @@ import json
 import queue
 import subprocess
 import threading
+import time
+from typing import Callable
 from collections import deque
 
 
@@ -78,7 +80,13 @@ class ACPClient:
         for line in self.proc.stderr:
             self._recent_stderr.append(line.rstrip("\n"))
 
-    def request(self, method: str, params: dict, timeout: float = 120.0) -> dict:
+    def request(
+        self,
+        method: str,
+        params: dict,
+        timeout: float = 120.0,
+        cancel_event: threading.Event | None = None,
+    ) -> dict:
         request_id = self._next_id
         self._next_id += 1
 
@@ -95,17 +103,32 @@ class ACPClient:
         self.proc.stdin.write(json.dumps(payload) + "\n")
         self.proc.stdin.flush()
 
-        try:
-            msg = waiter.get(timeout=timeout)
-        except queue.Empty as exc:
-            with self.pending_lock:
-                self.pending.pop(request_id, None)
-            stderr_tail = " | ".join(list(self._recent_stderr)[-5:])
-            proc_state = "exited" if (self.proc and self.proc.poll() is not None) else "running"
-            detail = f"{method} timed out after {timeout}s (agent process {proc_state})"
-            if stderr_tail:
-                detail += f"; stderr: {stderr_tail}"
-            raise RuntimeError(detail) from exc
+        started_at = time.time()
+        msg = None
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                with self.pending_lock:
+                    self.pending.pop(request_id, None)
+                raise InterruptedError(f"{method} canceled")
+
+            elapsed = time.time() - started_at
+            remaining = timeout - elapsed
+            if remaining <= 0:
+                with self.pending_lock:
+                    self.pending.pop(request_id, None)
+                stderr_tail = " | ".join(list(self._recent_stderr)[-5:])
+                proc_state = "exited" if (self.proc and self.proc.poll() is not None) else "running"
+                detail = f"{method} timed out after {timeout}s (agent process {proc_state})"
+                if stderr_tail:
+                    detail += f"; stderr: {stderr_tail}"
+                raise RuntimeError(detail)
+
+            wait_for = min(0.2, remaining)
+            try:
+                msg = waiter.get(timeout=wait_for)
+                break
+            except queue.Empty:
+                continue
         if "error" in msg:
             raise RuntimeError(msg["error"])
         return msg["result"]
@@ -146,10 +169,14 @@ def acp_prompt_session(
     text: str,
     cursor_session_id: str | None = None,
     timeout: float = 300.0,
+    cancel_event: threading.Event | None = None,
+    on_client_ready: Callable[[ACPClient], None] | None = None,
 ) -> dict:
     client = ACPClient(agent_path, cwd)
     try:
         client.start()
+        if on_client_ready is not None:
+            on_client_ready(client)
         acp_initialize(client)
         if cursor_session_id:
             client.request("session/load", {
@@ -186,7 +213,7 @@ def acp_prompt_session(
         result = client.request("session/prompt", {
             "sessionId": active_session_id,
             "prompt": [{"type": "text", "text": text}],
-        }, timeout=timeout)
+        }, timeout=timeout, cancel_event=cancel_event)
 
         stop_flag["done"] = True
         pump_thread.join(timeout=1)

@@ -1,0 +1,10 @@
+{
+  "ui_server": {
+    "host": "0.0.0.0",
+    "port": 7860,
+    "workdir_root": "..",
+    "default_cwd": ".",
+    "agent_path": "~/.local/bin/agent",
+    "store_file": "cursor_sessions.json"
+  }
+}

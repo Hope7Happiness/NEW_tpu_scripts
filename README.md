@@ -1,3 +1,31 @@
+# NEW: UI server
+
+The repository now includes a web UI server for conversation + task orchestration.
+
+## Start UI server
+
+1. Edit `config.json` (same directory as `cursor_server.py`) to set defaults:
+    - `ui_server.port`
+    - `ui_server.workdir_root`
+    - `ui_server.default_cwd`
+    - `ui_server.agent_path` (defaults to `~/.local/bin/agent`)
+
+2. Start server:
+
+    ```bash
+    python3 cursor_server.py
+    ```
+
+3. Open browser at:
+
+    ```text
+    http://127.0.0.1:<port>
+    ```
+
+Notes:
+- Upstream task service is fixed to `http://localhost:8080`.
+- You can still override port with env `CURSOR_SERVER_PORT` or CLI `--port`.
+
 # 🚀 New TPU Scripts
 
 TODO List:

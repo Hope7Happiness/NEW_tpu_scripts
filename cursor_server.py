@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import threading
 import time
@@ -42,20 +43,78 @@ from yaml_editor_api import register_yaml_editor_routes
 
 
 APP_ROOT = Path(__file__).parent.absolute()
-DEFAULT_PORT = int(os.environ.get("CURSOR_SERVER_PORT", "7860"))
-DEFAULT_AGENT = os.environ.get("CURSOR_AGENT_PATH", str(Path.home() / ".local/bin/agent"))
-STORE_PATH = APP_ROOT / "cursor_sessions.json"
-DEFAULT_CWD = str(APP_ROOT)
-WORKDIR_ROOT = Path(os.environ.get("CURSOR_WORKDIR_ROOT", "/kmh-nfs-ssd-us-mount/code/siri")).resolve()
-ZHH_SERVER_URL = os.environ.get("ZHH_SERVER_URL", "http://localhost:8080")
+CONFIG_PATH = APP_ROOT / "config.json"
+
+
+def load_ui_config() -> dict:
+  defaults = {
+    "host": "0.0.0.0",
+    "port": 7860,
+    "workdir_root": str(APP_ROOT.parent),
+    "default_cwd": str(APP_ROOT),
+    "agent_path": str(Path.home() / ".local/bin/agent"),
+    "store_file": "cursor_sessions.json",
+  }
+
+  if not CONFIG_PATH.exists():
+    return defaults
+
+  try:
+    payload = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+  except Exception:
+    return defaults
+
+  if not isinstance(payload, dict):
+    return defaults
+
+  ui = payload.get("ui_server")
+  if not isinstance(ui, dict):
+    return defaults
+
+  merged = dict(defaults)
+  merged.update({k: v for k, v in ui.items() if v is not None})
+  return merged
+
+
+UI_CONFIG = load_ui_config()
+
+
+def config_path_value(value: str | Path, fallback: Path) -> Path:
+  raw = Path(str(value or fallback)).expanduser()
+  if not raw.is_absolute():
+    raw = (APP_ROOT / raw).resolve()
+  else:
+    raw = raw.resolve()
+  return raw
+
+
+DEFAULT_HOST = str(UI_CONFIG.get("host") or "0.0.0.0")
+DEFAULT_PORT = int(os.environ.get("CURSOR_SERVER_PORT", str(UI_CONFIG.get("port") or 7860)))
+DEFAULT_AGENT = os.environ.get("CURSOR_AGENT_PATH", str(UI_CONFIG.get("agent_path") or (Path.home() / ".local/bin/agent")))
+store_file = Path(str(UI_CONFIG.get("store_file") or "cursor_sessions.json"))
+STORE_PATH = store_file if store_file.is_absolute() else (APP_ROOT / store_file)
+DEFAULT_CWD = str(config_path_value(UI_CONFIG.get("default_cwd") or APP_ROOT, APP_ROOT))
+WORKDIR_ROOT = config_path_value(UI_CONFIG.get("workdir_root") or APP_ROOT.parent, APP_ROOT.parent)
+ZHH_SERVER_URL = "http://localhost:8080"
 UI_TEMPLATE_PATH = APP_ROOT / "cursor_server_ui.html"
+
+try:
+  AUTO_ITERATE_TASK_TIMEOUT_SECONDS = int(os.environ.get("AUTO_ITERATE_TASK_TIMEOUT_SECONDS", "0"))
+except Exception:
+  AUTO_ITERATE_TASK_TIMEOUT_SECONDS = 0
 
 app = Flask(__name__)
 
 store_lock = threading.Lock()
 conversation_locks: dict[str, threading.Lock] = {}
+auto_iterate_threads: dict[str, threading.Thread] = {}
+auto_iterate_controls: dict[str, dict] = {}
 SERVER_CWD = DEFAULT_CWD
 AGENT_PATH = DEFAULT_AGENT
+
+
+class AutoIterateStopRequested(Exception):
+  pass
 
 
 def utc_now() -> float:
@@ -312,7 +371,7 @@ def _tail_text_file(path: Path, lines: int = 500, max_chars: int = 120_000) -> s
   return tail[-max_chars:]
 
 
-def _local_task_log_payload(conv: dict, job_id: str, lines: int = 500) -> dict | None:
+def _local_task_log_payload(conv: dict, job_id: str, lines: int = 500, prefer_pane: bool = False) -> dict | None:
   task_meta = conv.get("task_meta")
   if not isinstance(task_meta, dict):
     return None
@@ -320,7 +379,8 @@ def _local_task_log_payload(conv: dict, job_id: str, lines: int = 500) -> dict |
   if not isinstance(entry, dict):
     return None
 
-  for key in ("final_log_file", "pane_log_file"):
+  key_order = ("pane_log_file", "final_log_file") if prefer_pane else ("final_log_file", "pane_log_file")
+  for key in key_order:
     candidate = str(entry.get(key) or "").strip()
     if not candidate:
       continue
@@ -339,6 +399,23 @@ def _local_task_log_payload(conv: dict, job_id: str, lines: int = 500) -> dict |
     }
 
   return None
+
+
+def _resolve_job_status(conv: dict, job_id: str) -> str:
+  try:
+    jobs = get_conversation_jobs(ZHH_SERVER_URL, conv)
+    for job in jobs:
+      if isinstance(job, dict) and str(job.get("job_id") or "") == job_id:
+        return normalize_task_status(job.get("status"))
+  except Exception:
+    pass
+
+  task_meta = conv.get("task_meta")
+  if isinstance(task_meta, dict):
+    entry = task_meta.get(job_id)
+    if isinstance(entry, dict):
+      return normalize_task_status(entry.get("last_status"))
+  return "unknown"
 
 
 def list_workdir_children(workdir: str | None) -> dict:
@@ -374,6 +451,114 @@ def get_conversation_lock(conversation_id: str) -> threading.Lock:
             lock = threading.Lock()
             conversation_locks[conversation_id] = lock
         return lock
+
+
+def mark_task_status(conversation_id: str, job_id: str, status: str) -> None:
+  normalized = normalize_task_status(status)
+
+  def updater(c: dict):
+    task_meta = c.setdefault("task_meta", {})
+    entry = task_meta.get(job_id)
+    if not isinstance(entry, dict):
+      entry = {}
+    else:
+      entry = dict(entry)
+    entry["last_status"] = normalized
+    entry["updated_at"] = utc_now()
+    task_meta[job_id] = entry
+
+  update_conversation(conversation_id, updater)
+
+
+def _get_or_create_auto_iterate_control(conversation_id: str) -> dict:
+  with store_lock:
+    control = auto_iterate_controls.get(conversation_id)
+    if isinstance(control, dict):
+      if not isinstance(control.get("stop_event"), threading.Event):
+        control["stop_event"] = threading.Event()
+      return control
+    control = {
+      "stop_event": threading.Event(),
+      "phase": "idle",
+      "current_job_id": None,
+      "cursor_cancel": None,
+    }
+    auto_iterate_controls[conversation_id] = control
+    return control
+
+
+def set_auto_iterate_phase(
+  conversation_id: str,
+  *,
+  phase: str,
+  current_job_id: str | None = None,
+  cursor_cancel=None,
+) -> None:
+  control = _get_or_create_auto_iterate_control(conversation_id)
+  with store_lock:
+    control["phase"] = str(phase or "idle")
+    control["current_job_id"] = current_job_id
+    control["cursor_cancel"] = cursor_cancel
+
+
+def is_auto_iterate_worker_alive(conversation_id: str) -> bool:
+  with store_lock:
+    thread = auto_iterate_threads.get(conversation_id)
+  return bool(thread and thread.is_alive())
+
+
+def request_stop_auto_iterate(conversation_id: str) -> dict:
+  control = _get_or_create_auto_iterate_control(conversation_id)
+  stop_event = control.get("stop_event")
+  if isinstance(stop_event, threading.Event):
+    stop_event.set()
+
+  phase = str(control.get("phase") or "unknown")
+  action = "signal"
+  job_id = str(control.get("current_job_id") or "").strip()
+
+  if phase == "cursor":
+    cancel_fn = control.get("cursor_cancel")
+    if callable(cancel_fn):
+      try:
+        cancel_fn()
+      except Exception:
+        pass
+    action = "cursor"
+  elif phase == "task":
+    if job_id:
+      mark_task_status(conversation_id, job_id, "canceled")
+      status_code, _ = zhh_request(ZHH_SERVER_URL, "POST", f"/cancel/{job_id}")
+      if status_code not in {200, 404}:
+        pass
+    action = "task"
+
+  return {
+    "phase": phase,
+    "action": action,
+    "job_id": job_id or None,
+  }
+
+
+def cancel_latest_running_job_best_effort(conversation_id: str) -> str | None:
+  conv = get_conversation(conversation_id)
+  if not conv:
+    return None
+  try:
+    jobs = get_conversation_jobs(ZHH_SERVER_URL, conv)
+  except Exception:
+    jobs = []
+  for job in jobs:
+    if not isinstance(job, dict):
+      continue
+    job_id = str(job.get("job_id") or "").strip()
+    status = normalize_task_status(job.get("status"))
+    if not job_id or not is_running_like_task_status(status):
+      continue
+    mark_task_status(conversation_id, job_id, "canceled")
+    zhh_request(ZHH_SERVER_URL, "POST", f"/cancel/{job_id}")
+    return job_id
+  return None
 
 
 def list_conversations() -> list[dict]:
@@ -437,6 +622,297 @@ def append_message(conversation_id: str, role: str, content: str, extra: dict | 
   if extra:
     message.update(extra)
   return update_conversation(conversation_id, lambda c: c.setdefault("messages", []).append(message))
+
+
+def should_continue_auto_iteration(status: str | None) -> bool:
+  value = normalize_task_status(status)
+  return value in {"failed", "error", "timeout", "aborted", "canceled", "cancelled", "unknown"}
+
+
+def update_auto_iterate_state(conversation_id: str, *, enabled: bool, status: str | None = None, error: str | None = None, round_no: int | None = None) -> None:
+  def updater(c: dict):
+    c["auto_iterating"] = enabled
+    if status is not None:
+      c["status"] = status
+    if enabled:
+      c["auto_iterate_started_at"] = c.get("auto_iterate_started_at") or utc_now()
+      c["auto_iterate_updated_at"] = utc_now()
+      if round_no is not None:
+        c["auto_iterate_round"] = round_no
+      if error:
+        c["auto_iterate_last_error"] = error
+      else:
+        c.pop("auto_iterate_last_error", None)
+      c.pop("auto_iterate_finished_at", None)
+    else:
+      c["auto_iterate_updated_at"] = utc_now()
+      c["auto_iterate_finished_at"] = utc_now()
+      if round_no is not None:
+        c["auto_iterate_round"] = round_no
+      if error:
+        c["auto_iterate_last_error"] = error
+
+  update_conversation(conversation_id, updater)
+
+
+def auto_iterate_agent_turn(
+  conversation_id: str,
+  text: str,
+  task_refs: list[str],
+  *,
+  stop_event: threading.Event | None = None,
+) -> None:
+  conv = get_conversation(conversation_id)
+  if not conv:
+    raise RuntimeError("conversation not found")
+
+  normalized_refs = [str(ref).strip() for ref in (task_refs or []) if str(ref).strip()]
+  normalized_refs = list(dict.fromkeys(normalized_refs))
+
+  conv_job_ids = set(conv.get("job_ids", []) or [])
+  invalid_refs = [ref for ref in normalized_refs if ref not in conv_job_ids]
+  if invalid_refs:
+    raise RuntimeError(f"invalid task refs for auto iterate: {invalid_refs}")
+
+  refs_payload: list[dict] = []
+  ref_sources: dict[str, str] = {}
+  for job_id in normalized_refs:
+    status_code, payload = fetch_task_reference_payload(ZHH_SERVER_URL, job_id, lines=400)
+    if status_code == 200 and isinstance(payload, dict) and "stdout" in payload:
+      source = str(payload.get("stdout_source") or "").strip()
+      full_log_path = str(payload.get("full_log_path") or "").strip()
+      if source and source != "zhh_log":
+        ref_sources[job_id] = source
+      else:
+        ref_sources[job_id] = "tmux out"
+      stdout_text = str(payload.get("stdout", ""))
+      if full_log_path:
+        stdout_text = (
+          f"{stdout_text}\n\n"
+          f"[Full log path]\n{full_log_path}"
+        )
+      refs_payload.append({"stdout": stdout_text})
+    else:
+      ref_sources[job_id] = "tmux out"
+      refs_payload.append({"stdout": ""})
+
+  prompt_text = build_prompt_with_task_refs(text, refs_payload)
+  append_message(conversation_id, "user", text, {
+    "task_refs": normalized_refs,
+    "task_ref_sources": ref_sources,
+    "auto_iterate": True,
+  })
+
+  lock = get_conversation_lock(conversation_id)
+  with lock:
+    if stop_event is not None and stop_event.is_set():
+      raise AutoIterateStopRequested("auto iterate stopped by user")
+    latest = get_conversation(conversation_id)
+    if not latest:
+      raise RuntimeError("conversation disappeared")
+
+    def on_client_ready(client):
+      set_auto_iterate_phase(
+        conversation_id,
+        phase="cursor",
+        current_job_id=None,
+        cursor_cancel=client.close,
+      )
+
+    try:
+      result = acp_prompt_session(
+        agent_path=AGENT_PATH,
+        cwd=latest["cwd"],
+        mode=latest.get("mode", "agent"),
+        text=prompt_text,
+        cursor_session_id=latest.get("cursor_session_id"),
+        cancel_event=stop_event,
+        on_client_ready=on_client_ready,
+      )
+    except InterruptedError as exc:
+      raise AutoIterateStopRequested("auto iterate stopped by user") from exc
+
+    set_auto_iterate_phase(conversation_id, phase="iterating", current_job_id=None, cursor_cancel=None)
+
+    if not latest.get("cursor_session_id"):
+      update_conversation(conversation_id, lambda c: c.update({"cursor_session_id": result["cursor_session_id"]}))
+
+  assistant_text = result["text"] or f"[No text returned; stopReason={result['stop_reason']}]"
+  append_message(conversation_id, "assistant", assistant_text, {"auto_iterate": True})
+  maybe_autoname(conversation_id)
+
+
+def run_auto_iterate_worker(conversation_id: str, first_text: str, max_rounds: int) -> None:
+  final_status = "idle"
+  final_error = None
+  rounds_done = 0
+  control = _get_or_create_auto_iterate_control(conversation_id)
+  stop_event = control.get("stop_event")
+
+  try:
+    append_message(conversation_id, "system", "Auto iterate started.", {
+      "system_event": "auto_iterate_start",
+    })
+
+    auto_iterate_agent_turn(conversation_id, first_text, [], stop_event=stop_event)
+
+    for round_no in range(1, max_rounds + 1):
+      if stop_event is not None and stop_event.is_set():
+        raise AutoIterateStopRequested("auto iterate stopped by user")
+      rounds_done = round_no
+      update_auto_iterate_state(conversation_id, enabled=True, status="iterating", round_no=round_no)
+
+      conv = get_conversation(conversation_id)
+      if not conv:
+        raise RuntimeError("conversation not found")
+
+      status_code, run_data = zhh_request(ZHH_SERVER_URL, "POST", "/run", {"cwd": conv["cwd"], "args": ""})
+      if status_code != 200:
+        raise RuntimeError(run_data.get("error", f"/run failed with {status_code}"))
+
+      job_id = str(run_data.get("job_id") or "").strip()
+      if not job_id:
+        raise RuntimeError("run returned empty job_id")
+
+      set_auto_iterate_phase(conversation_id, phase="task", current_job_id=job_id, cursor_cancel=None)
+
+      def add_job(c: dict):
+        job_ids = c.setdefault("job_ids", [])
+        if job_id not in job_ids:
+          job_ids.append(job_id)
+        task_meta = c.setdefault("task_meta", {})
+        entry = task_meta.get(job_id)
+        if not isinstance(entry, dict):
+          entry = {}
+        else:
+          entry = dict(entry)
+        entry["last_status"] = normalize_task_status(run_data.get("status") or "starting")
+        entry["updated_at"] = utc_now()
+        for key in ("zhh_args", "created_at", "final_log_file", "pane_log_file", "command", "cwd"):
+          value = run_data.get(key)
+          if value is not None and value != "":
+            entry[key] = value
+        task_meta[job_id] = entry
+
+      update_conversation(conversation_id, add_job)
+
+      append_message(conversation_id, "system", f"Runned job {job_id}", {
+        "system_event": "task_run",
+        "job_id": job_id,
+        "job_status": str(run_data.get("status") or "starting"),
+        "zhh_args": str(run_data.get("zhh_args") or ""),
+        "auto_iterate": True,
+      })
+
+      terminal_job = None
+      deadline = (utc_now() + AUTO_ITERATE_TASK_TIMEOUT_SECONDS) if AUTO_ITERATE_TASK_TIMEOUT_SECONDS > 0 else None
+      while True:
+        if stop_event is not None and stop_event.is_set():
+          mark_task_status(conversation_id, job_id, "canceled")
+          status_code, _ = zhh_request(ZHH_SERVER_URL, "POST", f"/cancel/{job_id}")
+          if status_code not in {200, 404}:
+            pass
+          raise AutoIterateStopRequested("auto iterate stopped by user")
+        if deadline is not None and utc_now() >= deadline:
+          break
+        conv = get_conversation(conversation_id)
+        if not conv:
+          raise RuntimeError("conversation not found")
+        jobs = get_conversation_jobs(ZHH_SERVER_URL, conv)
+        conv, jobs = diagnose_completed_jobs_once(conversation_id, conv, jobs)
+        conv, jobs = update_task_alert_state(conversation_id, conv, jobs)
+        match = None
+        for job in jobs:
+          if isinstance(job, dict) and str(job.get("job_id") or "") == job_id:
+            match = job
+            break
+        if match is None:
+          terminal_job = {"job_id": job_id, "status": "canceled", "missing": True}
+          break
+        if is_terminal_task_status(match.get("status")):
+          terminal_job = match
+          break
+        time.sleep(5)
+
+      if terminal_job is None:
+        if AUTO_ITERATE_TASK_TIMEOUT_SECONDS > 0:
+          raise RuntimeError(
+            f"timeout waiting task {job_id} "
+            f"(>{AUTO_ITERATE_TASK_TIMEOUT_SECONDS}s without terminal status)"
+          )
+        raise RuntimeError(f"task {job_id} did not reach terminal status")
+
+      terminal_status = normalize_task_status(terminal_job.get("status"))
+      if not should_continue_auto_iteration(terminal_status):
+        append_message(conversation_id, "system", f"Auto iterate finished: status={terminal_status}.", {
+          "system_event": "auto_iterate_done",
+          "job_id": job_id,
+          "auto_iterate": True,
+        })
+        final_status = "idle"
+        return
+
+      feedback_text = (
+        f"Experiment {job_id} finished with status '{terminal_status}'. "
+        "Please analyze the referenced experiment log, fix the issue, and prepare for the next run."
+      )
+      auto_iterate_agent_turn(conversation_id, feedback_text, [job_id], stop_event=stop_event)
+
+    append_message(conversation_id, "system", f"Auto iterate stopped: reached max rounds ({max_rounds}).", {
+      "system_event": "auto_iterate_max_rounds",
+      "auto_iterate": True,
+    })
+    final_status = "idle"
+  except AutoIterateStopRequested:
+    final_status = "idle"
+    append_message(conversation_id, "system", "Auto iterate stopped by user.", {
+      "system_event": "auto_iterate_stopped",
+      "auto_iterate": True,
+    })
+  except Exception as e:
+    final_error = str(e)
+    final_status = "error"
+    append_message(conversation_id, "system", f"Auto iterate failed: {final_error}", {
+      "system_event": "auto_iterate_error",
+      "auto_iterate": True,
+    })
+  finally:
+    try:
+      update_auto_iterate_state(
+        conversation_id,
+        enabled=False,
+        status=final_status,
+        error=final_error,
+        round_no=rounds_done,
+      )
+    finally:
+      with store_lock:
+        auto_iterate_threads.pop(conversation_id, None)
+        auto_iterate_controls.pop(conversation_id, None)
+
+
+def start_auto_iterate(conversation_id: str, first_text: str, max_rounds: int) -> None:
+  with store_lock:
+    existing = auto_iterate_threads.get(conversation_id)
+    if existing and existing.is_alive():
+      raise RuntimeError("auto iterate already running")
+
+  control = _get_or_create_auto_iterate_control(conversation_id)
+  stop_event = control.get("stop_event")
+  if isinstance(stop_event, threading.Event):
+    stop_event.clear()
+  set_auto_iterate_phase(conversation_id, phase="iterating", current_job_id=None, cursor_cancel=None)
+
+  update_auto_iterate_state(conversation_id, enabled=True, status="iterating", round_no=0)
+  thread = threading.Thread(
+    target=run_auto_iterate_worker,
+    args=(conversation_id, first_text, max_rounds),
+    daemon=True,
+    name=f"auto-iterate-{conversation_id[:8]}",
+  )
+  with store_lock:
+    auto_iterate_threads[conversation_id] = thread
+  thread.start()
 
 
 @app.route("/api/conversations", methods=["GET"])
@@ -574,6 +1050,87 @@ def api_run_task(conversation_id: str):
   return jsonify({"conversation_id": conversation_id, "job": run_data}), 200
 
 
+@app.route("/api/conversations/<conversation_id>/auto-iterate/start", methods=["POST"])
+def api_start_auto_iterate(conversation_id: str):
+  conv = get_conversation(conversation_id)
+  if not conv:
+    return jsonify({"error": "not found"}), 404
+
+  data = request.get_json(force=True, silent=True) or {}
+  text = str(data.get("text") or "").strip()
+  if not text:
+    return jsonify({"error": "text is required"}), 400
+
+  try:
+    max_rounds = int(data.get("max_rounds") or 8)
+  except Exception:
+    max_rounds = 8
+  if max_rounds <= 0:
+    max_rounds = 8
+  max_rounds = min(max_rounds, 20)
+
+  if conv.get("auto_iterating"):
+    if is_auto_iterate_worker_alive(conversation_id):
+      return jsonify({"error": "auto iterate already running"}), 409
+    update_auto_iterate_state(conversation_id, enabled=False, status="idle", error="stale auto iterate state cleared")
+
+  try:
+    start_auto_iterate(conversation_id, text, max_rounds)
+  except RuntimeError as e:
+    return jsonify({"error": str(e)}), 409
+
+  latest = get_conversation(conversation_id) or conv
+  return jsonify({
+    "started": True,
+    "conversation_id": conversation_id,
+    "status": latest.get("status", "iterating"),
+    "auto_iterating": bool(latest.get("auto_iterating", True)),
+    "max_rounds": max_rounds,
+  }), 200
+
+
+@app.route("/api/conversations/<conversation_id>/auto-iterate/stop", methods=["POST"])
+def api_stop_auto_iterate(conversation_id: str):
+  conv = get_conversation(conversation_id)
+  if not conv:
+    return jsonify({"error": "not found"}), 404
+
+  if not conv.get("auto_iterating"):
+    return jsonify({"error": "auto iterate is not running"}), 409
+
+  if not is_auto_iterate_worker_alive(conversation_id):
+    canceled_job_id = cancel_latest_running_job_best_effort(conversation_id)
+    update_auto_iterate_state(conversation_id, enabled=False, status="idle", error="stopped without live worker")
+    append_message(conversation_id, "system", "Auto iterate stopped by user.", {
+      "system_event": "auto_iterate_stopped",
+      "auto_iterate": True,
+    })
+    detail = {
+      "phase": "stale",
+      "action": "cleanup",
+      "job_id": canceled_job_id,
+    }
+    latest = get_conversation(conversation_id) or conv
+    return jsonify({
+      "stopped": True,
+      "conversation_id": conversation_id,
+      "detail": detail,
+      "status": latest.get("status", "idle"),
+      "auto_iterating": bool(latest.get("auto_iterating", False)),
+    }), 200
+
+  update_auto_iterate_state(conversation_id, enabled=True, status="stopping")
+  detail = request_stop_auto_iterate(conversation_id)
+  latest = get_conversation(conversation_id) or conv
+  return jsonify({
+    "stopped": True,
+    "conversation_id": conversation_id,
+    "detail": detail,
+    "status": latest.get("status", "stopping"),
+    "auto_iterating": bool(latest.get("auto_iterating", True)),
+  }), 200
+
+
 @app.route("/api/conversations/<conversation_id>/tasks/<job_id>/cancel", methods=["POST"])
 def api_cancel_task(conversation_id: str, job_id: str):
   conv = get_conversation(conversation_id)
@@ -586,18 +1143,7 @@ def api_cancel_task(conversation_id: str, job_id: str):
 
   status_code, payload = zhh_request(ZHH_SERVER_URL, "POST", f"/cancel/{job_id}")
   if status_code == 200:
-    def mark_canceled(c: dict):
-      task_meta = c.setdefault("task_meta", {})
-      entry = task_meta.get(job_id)
-      if not isinstance(entry, dict):
-        entry = {}
-      else:
-        entry = dict(entry)
-      entry["last_status"] = "canceled"
-      entry["updated_at"] = utc_now()
-      task_meta[job_id] = entry
-
-    update_conversation(conversation_id, mark_canceled)
+    mark_task_status(conversation_id, job_id, "canceled")
   return jsonify(payload), status_code
 
 
@@ -693,11 +1239,15 @@ def api_task_log(conversation_id: str, job_id: str):
     return jsonify({"error": "job does not belong to this conversation"}), 404
 
   lines = _safe_positive_int(request.args.get("lines", "500"), default=500)
+  job_status = _resolve_job_status(conv, job_id)
+
   upstream_path = f"/log/{job_id}?lines={lines}"
   status_code, payload = zhh_request(ZHH_SERVER_URL, "GET", upstream_path)
 
   if status_code != 200:
-    fallback_payload = _local_task_log_payload(conv, job_id, lines=lines)
+    fallback_payload = None
+    if not is_running_like_task_status(job_status):
+      fallback_payload = _local_task_log_payload(conv, job_id, lines=lines)
     if fallback_payload is not None:
       clear_task_unread_alert(conversation_id, job_id)
       return jsonify(fallback_payload), 200
@@ -717,7 +1267,9 @@ def api_task_log(conversation_id: str, job_id: str):
     }), status_code
 
   if not isinstance(payload, dict) or ("log" not in payload):
-    fallback_payload = _local_task_log_payload(conv, job_id, lines=lines)
+    fallback_payload = None
+    if not is_running_like_task_status(job_status):
+      fallback_payload = _local_task_log_payload(conv, job_id, lines=lines)
     if fallback_payload is not None:
       clear_task_unread_alert(conversation_id, job_id)
       return jsonify(fallback_payload), 200
@@ -728,7 +1280,9 @@ def api_task_log(conversation_id: str, job_id: str):
     }), 502
 
   if not str(payload.get("log", "")).strip():
-    fallback_payload = _local_task_log_payload(conv, job_id, lines=lines)
+    fallback_payload = None
+    if not is_running_like_task_status(job_status):
+      fallback_payload = _local_task_log_payload(conv, job_id, lines=lines)
     if fallback_payload is not None:
       clear_task_unread_alert(conversation_id, job_id)
       return jsonify(fallback_payload), 200
@@ -764,6 +1318,8 @@ def api_send_message(conversation_id: str):
   conv = get_conversation(conversation_id)
   if not conv:
     return jsonify({"error": "not found"}), 404
+  if conv.get("auto_iterating"):
+    return jsonify({"error": "auto iterate is running for this conversation"}), 409
 
   conv_job_ids = set(conv.get("job_ids", []) or [])
   invalid_refs = [ref for ref in normalized_refs if ref not in conv_job_ids]
@@ -859,7 +1415,7 @@ def main():
     global SERVER_CWD, AGENT_PATH
 
     parser = argparse.ArgumentParser(description="Cursor ACP conversation server")
-    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--cwd", default=DEFAULT_CWD, help="Default working directory for new sessions")
     parser.add_argument("--agent-path", default=DEFAULT_AGENT)

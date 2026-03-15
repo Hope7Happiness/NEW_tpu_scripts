@@ -59,6 +59,8 @@ def conversation_summary(conv: dict, workdir_base_fn) -> dict:
         "updated_at": conv.get("updated_at"),
         "message_count": len(messages),
         "task_count": len(job_ids),
+        "auto_iterating": bool(conv.get("auto_iterating", False)),
+        "auto_iterate_round": conv.get("auto_iterate_round", 0),
         "task_unread_count": task_unread_count,
         "task_has_unread": task_unread_count > 0,
         "task_has_failed_unread": task_has_failed_unread,
