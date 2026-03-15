@@ -39,7 +39,7 @@ from tasks_runtime import (
   get_conversation_jobs,
   zhh_request,
 )
-from yaml_editor_api import register_yaml_editor_routes
+from yaml_editor_api import register_ka_editor_routes, register_yaml_editor_routes
 
 
 APP_ROOT = Path(__file__).parent.absolute()
@@ -1409,6 +1409,7 @@ def index():
 
 
 register_yaml_editor_routes(app, get_conversation)
+register_ka_editor_routes(app, get_conversation)
 
 
 def main():

@@ -532,7 +532,7 @@ body {
   color: #8992a3;
   word-break: break-all;
 }
-#panel-chat, #panel-tasks, #panel-yaml {
+#panel-chat, #panel-tasks, #panel-yaml, #panel-ka {
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -542,6 +542,9 @@ body {
   display: none;
 }
 #panel-yaml {
+  display: none;
+}
+#panel-ka {
   display: none;
 }
 #tasks-toolbar {
@@ -735,6 +738,51 @@ body {
 #yaml-editor-cm.disabled {
   opacity: .7;
 }
+#ka-toolbar {
+  padding: 14px 18px;
+  border-bottom: 1px solid #262b36;
+  background: #171a21;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+#refresh-ka-btn,
+#save-ka-btn {
+  border: 1px solid #2b3240;
+  border-radius: 10px;
+  background: #1b1f28;
+  color: #d9dde7;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+#ka-path {
+  color: #8992a3;
+  font-size: 12px;
+  margin-left: auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 45%;
+}
+#ka-editor-wrap {
+  padding: 14px 18px 22px;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+#ka-editor {
+  width: 100%;
+  height: 100%;
+  min-height: 260px;
+  border-radius: 10px;
+  border: 1px solid #2b3240;
+  background: #0f1218;
+  color: #d9dde7;
+  padding: 12px;
+  resize: none;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  line-height: 1.45;
+}
 </style>
 </head>
 <body>
@@ -757,7 +805,8 @@ body {
     <div id="view-tabs">
       <button id="tab-chat" class="tab-btn active" onclick="switchTab('chat')">Chat</button>
       <button id="tab-tasks" class="tab-btn" onclick="switchTab('tasks')"><span class="tab-label">Tasks <span id="tab-tasks-alert" class="tab-alert"></span></span></button>
-      <button id="tab-yaml" class="tab-btn" onclick="switchTab('yaml')">YAML</button>
+      <button id="tab-yaml" class="tab-btn" onclick="switchTab('yaml')">config</button>
+      <button id="tab-ka" class="tab-btn" onclick="switchTab('ka')">.ka</button>
     </div>
 
     <section id="panel-chat">
@@ -796,6 +845,17 @@ body {
       <div id="yaml-editor-wrap">
         <div id="yaml-editor-cm"></div>
         <textarea id="yaml-editor" placeholder="Select a YAML file to edit." disabled></textarea>
+      </div>
+    </section>
+
+    <section id="panel-ka">
+      <div id="ka-toolbar">
+        <button id="refresh-ka-btn" onclick="loadKaForCurrentConversation()" disabled>Refresh</button>
+        <button id="save-ka-btn" onclick="saveKaForCurrentConversation()" disabled>Save</button>
+        <div id="ka-path"></div>
+      </div>
+      <div id="ka-editor-wrap">
+        <textarea id="ka-editor" placeholder="Loading .ka ..." disabled></textarea>
       </div>
     </section>
 
@@ -854,6 +914,7 @@ let yamlCmView = null;
 let yamlCmEditableCompartment = null;
 let yamlCmReadOnlyCompartment = null;
 let yamlCmInitStarted = false;
+let kaContentByConversation = {};
 let conversationSummariesById = {};
 let conversationStatusOverrides = {};
 let conversationTaskRuntimeStatus = {};
@@ -1124,33 +1185,116 @@ function switchTab(view) {
   const chatPanel = document.getElementById('panel-chat');
   const taskPanel = document.getElementById('panel-tasks');
   const yamlPanel = document.getElementById('panel-yaml');
+  const kaPanel = document.getElementById('panel-ka');
   const chatTab = document.getElementById('tab-chat');
   const taskTab = document.getElementById('tab-tasks');
   const yamlTab = document.getElementById('tab-yaml');
+  const kaTab = document.getElementById('tab-ka');
   if (view === 'tasks') {
     chatPanel.style.display = 'none';
     taskPanel.style.display = 'flex';
     yamlPanel.style.display = 'none';
+    kaPanel.style.display = 'none';
     chatTab.classList.remove('active');
     taskTab.classList.add('active');
     yamlTab.classList.remove('active');
+    kaTab.classList.remove('active');
     loadTasksForCurrentConversation();
   } else if (view === 'yaml') {
     initYamlCodeEditor();
     chatPanel.style.display = 'none';
     taskPanel.style.display = 'none';
     yamlPanel.style.display = 'flex';
+    kaPanel.style.display = 'none';
     chatTab.classList.remove('active');
     taskTab.classList.remove('active');
     yamlTab.classList.add('active');
+    kaTab.classList.remove('active');
     loadYamlFileListForCurrentConversation(true);
+  } else if (view === 'ka') {
+    chatPanel.style.display = 'none';
+    taskPanel.style.display = 'none';
+    yamlPanel.style.display = 'none';
+    kaPanel.style.display = 'flex';
+    chatTab.classList.remove('active');
+    taskTab.classList.remove('active');
+    yamlTab.classList.remove('active');
+    kaTab.classList.add('active');
+    loadKaForCurrentConversation();
   } else {
     chatPanel.style.display = 'flex';
     taskPanel.style.display = 'none';
     yamlPanel.style.display = 'none';
+    kaPanel.style.display = 'none';
     taskTab.classList.remove('active');
     yamlTab.classList.remove('active');
+    kaTab.classList.remove('active');
     chatTab.classList.add('active');
+  }
+}
+
+function renderKaUnavailable(text) {
+  const refreshBtn = document.getElementById('refresh-ka-btn');
+  const saveBtn = document.getElementById('save-ka-btn');
+  const editor = document.getElementById('ka-editor');
+  const pathEl = document.getElementById('ka-path');
+
+  refreshBtn.disabled = !currentId;
+  saveBtn.disabled = true;
+  editor.disabled = true;
+  editor.value = '';
+  editor.placeholder = text || 'No .ka available';
+  pathEl.textContent = '';
+}
+
+async function loadKaForCurrentConversation() {
+  if (!currentId) {
+    renderKaUnavailable('No conversation selected.');
+    return;
+  }
+  const refreshBtn = document.getElementById('refresh-ka-btn');
+  const saveBtn = document.getElementById('save-ka-btn');
+  const editor = document.getElementById('ka-editor');
+  const pathEl = document.getElementById('ka-path');
+
+  try {
+    setStatus('Loading .ka ...', 'busy');
+    const data = await api(`/api/conversations/${currentId}/ka/file`);
+    const content = String(data.content || '');
+    kaContentByConversation[currentId] = content;
+    editor.value = content;
+    editor.disabled = false;
+    saveBtn.disabled = false;
+    refreshBtn.disabled = false;
+    pathEl.textContent = String(data.relative_path || '.ka');
+    if (data.created) {
+      setStatus('.ka created from template and loaded.', 'success');
+    } else {
+      setStatus('.ka loaded.', 'success');
+    }
+  } catch (err) {
+    renderKaUnavailable('Load .ka failed');
+    setStatus('Load .ka failed: ' + err.message, 'error');
+  }
+}
+
+async function saveKaForCurrentConversation() {
+  if (!currentId) return;
+  const saveBtn = document.getElementById('save-ka-btn');
+  const editor = document.getElementById('ka-editor');
+  if (!editor) return;
+  try {
+    setStatus('Saving .ka ...', 'busy');
+    await api(`/api/conversations/${currentId}/ka/file`, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ content: editor.value || '' })
+    });
+    kaContentByConversation[currentId] = editor.value || '';
+    saveBtn.disabled = false;
+    setStatus('.ka saved.', 'success');
+  } catch (err) {
+    setStatus('Save .ka failed: ' + err.message, 'error');
   }
 }
 
@@ -1564,6 +1708,8 @@ async function openConversation(id, updateList = true) {
   await loadTasksForCurrentConversation(true);
   if (currentView === 'yaml') {
     await loadYamlFileListForCurrentConversation(true);
+  } else if (currentView === 'ka') {
+    await loadKaForCurrentConversation();
   }
   if (updateList) await loadConversations();
 }
@@ -1741,6 +1887,7 @@ function resetConversationView() {
   document.getElementById('run-task-btn').disabled = true;
   document.getElementById('refresh-task-btn').disabled = true;
   renderYamlUnavailable('No conversation selected.');
+  renderKaUnavailable('No conversation selected.');
   renderPendingTaskRefs();
   renderCurrentConversationStatus();
 }
@@ -1765,6 +1912,7 @@ async function deleteCurrentConversation() {
     delete lastStatusByConversation[deletingId];
     delete yamlFilesByConversation[deletingId];
     delete yamlSelectionByConversation[deletingId];
+    delete kaContentByConversation[deletingId];
     resetConversationView();
     await loadConversations();
     setStatus('Session deleted.', 'success');
