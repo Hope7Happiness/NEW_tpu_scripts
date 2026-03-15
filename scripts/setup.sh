@@ -162,7 +162,9 @@ while_check_env(){
             echo "[INFO] Auto-kill is enabled. Attempting to kill the TPU process..."
             yn="y"
         else
-            read -p "Kill the TPU process right now? (y/n) " yn
+            # read -p "Kill the TPU process right now? (y/n) " yn
+            echo -e "TPU is in use. Aborted."
+            yn="n"
         fi
         if [ "$yn" = "y" ]; then
             kill_tpu $VM_NAME $ZONE || true

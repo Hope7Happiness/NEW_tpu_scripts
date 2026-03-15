@@ -369,37 +369,47 @@ while_run(){
             # if grep -q "This TPU is going through a maintenance event, and might be unavailable" $LOG_DIR/output.log; then
             #     echo -e "\033[33m[Info] Found maintenance event in logs, this TPU is no longer usable. Aborted.\033[0m"
             #     return 1
-            if grep -q '\[/usr/bin/ssh\] exited with return code \[255\]' $LOG_DIR/output.log || grep -q "Terminating process because the coordinator detected missing heartbeats." $LOG_DIR/output.log; then
-                echo -e "\033[33m[Info] Found GRPC/heartbeat error in logs, will re-setup env and re-run.\033[0m"
-                # sleep 60
-                # kill_tpu $VM_NAME $ZONE
-                echo "[Debug] Re-running job..."
-                get_and_setup_tpu $VM_NAME $ZONE && \
-                register_tpu && \
-                kill_tpu $VM_NAME $ZONE && \
-                sleep 60 && \
-                kill_tpu $VM_NAME $ZONE && \
-                sleep 30 && \
-                run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
-                && ret=0 || ret=$?
-                echo "[Debug] Re-run returned $ret"
-            elif grep -q "Fatal Python error: Aborted" $LOG_DIR/output.log; then
-                echo -e "\033[33m[Info] Found Segfault in logs, will wait and re-run...\033[0m"
-                echo "[Debug] Re-running job..."
-                kill_tpu $VM_NAME $ZONE && \
-                echo "[Debug] Sleep for a while before re-running..." && \
-                sleep 300 && \
-                run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
-                && ret=0 || ret=$?
-                echo "[Debug] Re-run returned $ret"
-            elif grep -q "(core dumped)" $LOG_DIR/output.log || grep -q "Command execution on worker 0 failed with exit status 134" $LOG_DIR/output.log || grep -q "UNKNOWN: TPU initialization failed:" $LOG_DIR/output.log; then
-                echo -e "\033[33m[Info] Our job is killed by others. Will change card and re-run...\033[0m"
+            
+            # case 1: exist output.log
+            if [ -f "$LOG_DIR/output.log" ]; then
+                if grep -q '\[/usr/bin/ssh\] exited with return code \[255\]' $LOG_DIR/output.log || grep -q "Terminating process because the coordinator detected missing heartbeats." $LOG_DIR/output.log; then
+                    echo -e "\033[33m[Info] Found GRPC/heartbeat error in logs, will re-setup env and re-run.\033[0m"
+                    # sleep 60
+                    # kill_tpu $VM_NAME $ZONE
+                    echo "[Debug] Re-running job..."
+                    get_and_setup_tpu $VM_NAME $ZONE && \
+                    register_tpu && \
+                    kill_tpu $VM_NAME $ZONE && \
+                    sleep 60 && \
+                    kill_tpu $VM_NAME $ZONE && \
+                    sleep 30 && \
+                    run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
+                    && ret=0 || ret=$?
+                    echo "[Debug] Re-run returned $ret"
+                elif grep -q "Fatal Python error: Aborted" $LOG_DIR/output.log; then
+                    echo -e "\033[33m[Info] Found Segfault in logs, will wait and re-run...\033[0m"
+                    echo "[Debug] Re-running job..."
+                    kill_tpu $VM_NAME $ZONE && \
+                    echo "[Debug] Sleep for a while before re-running..." && \
+                    sleep 300 && \
+                    run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
+                    && ret=0 || ret=$?
+                    echo "[Debug] Re-run returned $ret"
+                elif grep -q "(core dumped)" $LOG_DIR/output.log || grep -q "Command execution on worker 0 failed with exit status 134" $LOG_DIR/output.log || grep -q "UNKNOWN: TPU initialization failed:" $LOG_DIR/output.log; then
+                    echo -e "\033[33m[Info] Our job is killed by others. Will change card and re-run...\033[0m"
+                    deregister_tpu $VM_NAME $ZONE
+                    ret=42
+                else
+                    echo -e "\033[32m[Info] Card status looks good, then it is probably a code bug. Please fix it and re-run.\033[0m"
+                    return 1
+                fi
+            else
+                echo -e "Log file not found. This means the environment setup failed."
+                echo -e "\033[33m[Info] Will change card and re-run...\033[0m"
                 deregister_tpu $VM_NAME $ZONE
                 ret=42
-            else
-                echo -e "\033[32m[Info] Card status looks good, then it is probably a code bug. Please fix it and re-run.\033[0m"
-                return 1
             fi
+            
         else
             echo -e "\033[33m[Info] Card $VM_NAME in $ZONE is PREEMPTED, will re-apply and re-run.\033[0m"
             # zhh: resumes with an auto card
