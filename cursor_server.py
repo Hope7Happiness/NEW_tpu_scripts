@@ -20,7 +20,7 @@ import time
 import uuid
 from pathlib import Path
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
 
 from acp_runtime import acp_prompt_session
 from conversation_store import (
@@ -1406,6 +1406,36 @@ def index():
       "Pragma": "no-cache",
       "Expires": "0",
   }
+
+
+@app.route("/assets/<path:filename>")
+def serve_ui_asset(filename: str):
+  allowed_suffixes = {".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".ico"}
+  requested = Path(filename)
+  if requested.suffix.lower() not in allowed_suffixes:
+    return jsonify({"error": "unsupported asset type"}), 404
+  asset_path = (APP_ROOT / requested).resolve()
+  try:
+    asset_path.relative_to(APP_ROOT)
+  except ValueError:
+    return jsonify({"error": "invalid asset path"}), 404
+  if not asset_path.exists() or not asset_path.is_file():
+    return jsonify({"error": "asset not found"}), 404
+  return send_from_directory(APP_ROOT, str(requested))
+
+
+@app.route("/favicon.ico")
+def favicon_alias():
+  favicon_path = APP_ROOT / "favicon.ico"
+  if favicon_path.exists() and favicon_path.is_file():
+    return send_from_directory(APP_ROOT, "favicon.ico")
+  icon_path = APP_ROOT / "curchat-64.png"
+  if icon_path.exists() and icon_path.is_file():
+    return send_from_directory(APP_ROOT, "curchat-64.png")
+  icon_path = APP_ROOT / "curchat.png"
+  if icon_path.exists() and icon_path.is_file():
+    return send_from_directory(APP_ROOT, "curchat.png")
+  return jsonify({"error": "favicon not found"}), 404
 
 
 register_yaml_editor_routes(app, get_conversation)
