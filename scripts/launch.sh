@@ -315,11 +315,16 @@ run_job(){
         echo "[INFO] Releasing a queue slot..."
         release_queue
 
-        # if the card is not *kangyang*, release it
-        if [[ ! "$VM_NAME" =~ kangyang ]]; then
-            echo "[INFO] Releasing TPU $VM_NAME in $ZONE..."
-            deregister_tpu $VM_NAME
-        fi
+        # # if the card is not *kangyang*, release it
+        # if [[ ! "$VM_NAME" =~ kangyang ]]; then
+        #     echo "[INFO] Releasing TPU $VM_NAME in $ZONE..."
+        #     deregister_tpu $VM_NAME
+        # fi
+
+
+        # now, in anyway, we deregister it
+        echo -e "\033[33m[Info] Releasing TPU $VM_NAME in $ZONE...\033[0m"
+        deregister_tpu $VM_NAME
     )
 }
 
