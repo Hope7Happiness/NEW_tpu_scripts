@@ -379,7 +379,11 @@ def _local_task_log_payload(conv: dict, job_id: str, lines: int = 500, prefer_pa
   if not isinstance(entry, dict):
     return None
 
-  key_order = ("pane_log_file", "final_log_file") if prefer_pane else ("final_log_file", "pane_log_file")
+  key_order = (
+    ("pane_log_file", "final_log_file", "cancel_log_file")
+    if prefer_pane
+    else ("cancel_log_file", "final_log_file", "pane_log_file")
+  )
   for key in key_order:
     candidate = str(entry.get(key) or "").strip()
     if not candidate:
@@ -399,6 +403,42 @@ def _local_task_log_payload(conv: dict, job_id: str, lines: int = 500, prefer_pa
     }
 
   return None
+
+
+def snapshot_task_log_before_cancel(conversation_id: str, job_id: str, *, lines: int = 2000) -> str | None:
+  try:
+    status_code, payload = fetch_task_log_payload(ZHH_SERVER_URL, job_id, lines=lines)
+  except Exception:
+    return None
+
+  if status_code != 200 or not isinstance(payload, dict):
+    return None
+
+  text = str(payload.get("log") or "")
+  if not text.strip():
+    return None
+
+  try:
+    logs_dir = APP_ROOT / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    snapshot_path = logs_dir / f"{job_id}.cancel.log"
+    snapshot_path.write_text(text, encoding="utf-8")
+  except Exception:
+    return None
+
+  def updater(c: dict):
+    task_meta = c.setdefault("task_meta", {})
+    entry = task_meta.get(job_id)
+    if not isinstance(entry, dict):
+      entry = {}
+    else:
+      entry = dict(entry)
+    entry["cancel_log_file"] = str(snapshot_path)
+    entry["updated_at"] = utc_now()
+    task_meta[job_id] = entry
+
+  update_conversation(conversation_id, updater)
+  return str(snapshot_path)
 
 
 def _resolve_job_status(conv: dict, job_id: str) -> str:
@@ -527,6 +567,7 @@ def request_stop_auto_iterate(conversation_id: str) -> dict:
     action = "cursor"
   elif phase == "task":
     if job_id:
+      snapshot_task_log_before_cancel(conversation_id, job_id)
       mark_task_status(conversation_id, job_id, "canceled")
       status_code, _ = zhh_request(ZHH_SERVER_URL, "POST", f"/cancel/{job_id}")
       if status_code not in {200, 404}:
@@ -555,6 +596,7 @@ def cancel_latest_running_job_best_effort(conversation_id: str) -> str | None:
     status = normalize_task_status(job.get("status"))
     if not job_id or not is_running_like_task_status(status):
       continue
+    snapshot_task_log_before_cancel(conversation_id, job_id)
     mark_task_status(conversation_id, job_id, "canceled")
     zhh_request(ZHH_SERVER_URL, "POST", f"/cancel/{job_id}")
     return job_id
@@ -808,6 +850,7 @@ def run_auto_iterate_worker(conversation_id: str, first_text: str, max_rounds: i
       deadline = (utc_now() + AUTO_ITERATE_TASK_TIMEOUT_SECONDS) if AUTO_ITERATE_TASK_TIMEOUT_SECONDS > 0 else None
       while True:
         if stop_event is not None and stop_event.is_set():
+          snapshot_task_log_before_cancel(conversation_id, job_id)
           mark_task_status(conversation_id, job_id, "canceled")
           status_code, _ = zhh_request(ZHH_SERVER_URL, "POST", f"/cancel/{job_id}")
           if status_code not in {200, 404}:
@@ -1141,6 +1184,7 @@ def api_cancel_task(conversation_id: str, job_id: str):
   if job_id not in job_ids:
     return jsonify({"error": "job does not belong to this conversation"}), 404
 
+  snapshot_task_log_before_cancel(conversation_id, job_id)
   status_code, payload = zhh_request(ZHH_SERVER_URL, "POST", f"/cancel/{job_id}")
   if status_code == 200:
     mark_task_status(conversation_id, job_id, "canceled")
@@ -1162,12 +1206,12 @@ def api_remove_task(conversation_id: str, job_id: str):
     jobs = get_conversation_jobs(ZHH_SERVER_URL, conv)
     for job in jobs:
       if isinstance(job, dict) and job.get("job_id") == job_id:
-        status = str(job.get("status") or "unknown").lower()
+        status = normalize_task_status(job.get("status"))
         break
   except Exception:
     pass
 
-  if status not in {"completed", "unknown"}:
+  if not is_terminal_task_status(status):
     return jsonify({"error": f"task status is {status}, only terminal tasks can be removed"}), 409
 
   def remove_job(c: dict):
@@ -1256,7 +1300,7 @@ def api_task_log(conversation_id: str, job_id: str):
       return jsonify({
         "job_id": job_id,
         "lines": lines,
-        "log": f"[{job_id}] is canceled or removed; upstream log is no longer available.",
+        "log": f"[{job_id}] upstream no longer provides this log, and no local log file snapshot was found.",
         "source": "synthetic",
       }), 200
     detail = payload.get("error") if isinstance(payload, dict) else str(payload)
