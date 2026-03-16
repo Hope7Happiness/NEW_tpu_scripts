@@ -47,6 +47,7 @@ from yaml_editor_api import register_ka_editor_routes, register_yaml_editor_rout
 
 APP_ROOT = Path(__file__).parent.absolute()
 CONFIG_PATH = APP_ROOT / "config.json"
+WANDB_URL_PATTERN = re.compile(r"https?://(?:[A-Za-z0-9-]+\.)*wandb\.(?:ai|me)/[^\s\"'<>())]+")
 
 
 def load_ui_config() -> dict:
@@ -484,6 +485,99 @@ def _tail_text_file(path: Path, lines: int = 500, max_chars: int = 120_000) -> s
   return tail[-max_chars:]
 
 
+def _read_text_file(path: Path, max_chars: int = 2_000_000) -> str:
+  try:
+    raw = path.read_text(encoding="utf-8", errors="replace")
+  except Exception:
+    return ""
+  if len(raw) <= max_chars:
+    return raw
+  return raw[:max_chars]
+
+
+def _extract_wandb_url_from_text(text: str) -> str | None:
+  content = str(text or "")
+  if not content.strip():
+    return None
+
+  repaired = content
+  while True:
+    updated = re.sub(
+      r"(https?://[^\s\"'<>]+)\n([A-Za-z0-9/_?&=%#@:+.-]+)",
+      r"\1\2",
+      repaired,
+    )
+    if updated == repaired:
+      break
+    repaired = updated
+
+  candidates = []
+  for match in WANDB_URL_PATTERN.finditer(repaired):
+    raw_url = match.group(0).rstrip(".,;)")
+    run_url = re.search(
+      r"(https?://(?:[A-Za-z0-9-]+\.)*wandb\.(?:ai|me)/[^\s\"'<>]*/runs/[A-Za-z0-9]{8})",
+      raw_url,
+    )
+    if run_url:
+      candidates.append(run_url.group(1))
+    else:
+      candidates.append(raw_url)
+  if not candidates:
+    return None
+
+  def score(url: str) -> tuple[int, int]:
+    lower = url.lower()
+    return (
+      3 if "/runs/" in lower else (2 if "wandb.ai" in lower else 1),
+      len(url),
+    )
+
+  return max(candidates, key=score)
+
+
+def _extract_wandb_url_from_file(path_text: str) -> str | None:
+  path = Path(str(path_text or "").strip())
+  if not path_text or not path.exists() or not path.is_file():
+    return None
+  return _extract_wandb_url_from_text(_read_text_file(path))
+
+
+def resolve_task_wandb_url(conv: dict, job_id: str) -> tuple[str | None, str]:
+  status_code, payload = fetch_task_reference_payload(ZHH_SERVER_URL, job_id, lines=12000)
+  if status_code == 200 and isinstance(payload, dict):
+    full_log_path = str(payload.get("full_log_path") or "").strip()
+    if full_log_path:
+      from_output = _extract_wandb_url_from_file(full_log_path)
+      if from_output:
+        return from_output, full_log_path
+
+    for key in ("stdout", "log"):
+      candidate = _extract_wandb_url_from_text(str(payload.get(key) or ""))
+      if candidate:
+        return candidate, key
+
+  task_meta = conv.get("task_meta")
+  if isinstance(task_meta, dict):
+    entry = task_meta.get(job_id)
+    if isinstance(entry, dict):
+      for key in ("pane_log_file", "final_log_file", "cancel_log_file"):
+        candidate_path = str(entry.get(key) or "").strip()
+        if not candidate_path:
+          continue
+        candidate = _extract_wandb_url_from_file(candidate_path)
+        if candidate:
+          return candidate, candidate_path
+
+  local_payload = _local_task_log_payload(conv, job_id, lines=20000, prefer_pane=True)
+  if isinstance(local_payload, dict):
+    candidate = _extract_wandb_url_from_text(str(local_payload.get("log") or ""))
+    if candidate:
+      source = str(local_payload.get("log_path") or local_payload.get("source") or "local")
+      return candidate, source
+
+  return None, ""
+
+
 def _local_task_log_payload(conv: dict, job_id: str, lines: int = 500, prefer_pane: bool = False) -> dict | None:
   task_meta = conv.get("task_meta")
   if not isinstance(task_meta, dict):
@@ -850,6 +944,7 @@ def auto_iterate_agent_turn(
 
   refs_payload: list[dict] = []
   ref_sources: dict[str, str] = {}
+  consumed_ref_ids: list[str] = []
   for job_id in normalized_refs:
     status_code, payload = fetch_task_reference_payload(ZHH_SERVER_URL, job_id, lines=400)
     if status_code == 200 and isinstance(payload, dict) and "stdout" in payload:
@@ -865,6 +960,8 @@ def auto_iterate_agent_turn(
           f"{stdout_text}\n\n"
           f"[Full log path]\n{full_log_path}"
         )
+      if stdout_text.strip():
+        consumed_ref_ids.append(job_id)
       refs_payload.append({"stdout": stdout_text})
     else:
       ref_sources[job_id] = "tmux out"
@@ -910,6 +1007,9 @@ def auto_iterate_agent_turn(
 
     if not latest.get("cursor_session_id"):
       update_conversation(conversation_id, lambda c: c.update({"cursor_session_id": result["cursor_session_id"]}))
+
+    for job_id in consumed_ref_ids:
+      clear_task_unread_alert(conversation_id, job_id)
 
   assistant_text = result["text"] or f"[No text returned; stopReason={result['stop_reason']}]"
   append_message(conversation_id, "assistant", assistant_text, {"auto_iterate": True})
@@ -1495,6 +1595,27 @@ def api_task_log(conversation_id: str, job_id: str):
   clear_task_unread_alert(conversation_id, job_id)
 
   return jsonify(payload), status_code
+
+
+@app.route("/api/conversations/<conversation_id>/tasks/<job_id>/wandb", methods=["GET"])
+def api_task_wandb(conversation_id: str, job_id: str):
+  conv = get_conversation(conversation_id)
+  if not conv:
+    return jsonify({"error": "not found"}), 404
+
+  job_ids = conv.get("job_ids", []) or []
+  if job_id not in job_ids:
+    return jsonify({"error": "job does not belong to this conversation"}), 404
+
+  url, source = resolve_task_wandb_url(conv, job_id)
+  if not url:
+    return jsonify({"error": "wandb link not found in task logs"}), 404
+
+  return jsonify({
+    "job_id": job_id,
+    "wandb_url": url,
+    "source": source,
+  }), 200
 
 
 @app.route("/api/conversations/<conversation_id>/messages", methods=["POST"])

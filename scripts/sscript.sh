@@ -342,11 +342,14 @@ tpu_info_available(){
     #     return 1
     # fi
 
-    if [ "$status" = "STARTED" ]; then
-        return 1
-    else
-        return 0
-    fi
+    # if [ "$status" = "STARTED" ]; then
+    #     return 1
+    # else
+    #     return 0
+    # fi
+
+    # since we have tpu lock, we can believe this
+    return 0
 }
 
 get_available_tpu_infos(){

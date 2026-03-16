@@ -115,7 +115,19 @@ LOG_DIR_ID_PATTERN = re.compile(r"^log(\d+)_")
 
 
 def _extract_launch_dirs(text: str) -> list[Path]:
-    matches = [m.group(0) for m in LAUNCH_DIR_PATTERN.finditer(str(text or ""))]
+    raw = str(text or "")
+    repaired = raw
+    while True:
+        updated = re.sub(
+            r"(/kmh-nfs-ssd-us-mount/staging/[^\s\"'`]+/launch_[^\s\"'`]+)\n([A-Za-z0-9._/-]+)",
+            r"\1\2",
+            repaired,
+        )
+        if updated == repaired:
+            break
+        repaired = updated
+
+    matches = [m.group(0) for m in LAUNCH_DIR_PATTERN.finditer(repaired)]
     if not matches:
         return []
     unique_in_order = list(dict.fromkeys(matches))

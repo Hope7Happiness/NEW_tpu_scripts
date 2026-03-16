@@ -2724,7 +2724,7 @@ function isCanceledTaskStatus(status) {
 }
 
 function taskDisplayStatus(status) {
-  return isCanceledTaskStatus(status) ? '[removed]' : String(status || 'unknown');
+  return String(status || 'unknown');
 }
 
 function taskStatusClass(status) {
@@ -2750,26 +2750,26 @@ function conversationHasJob(jobId) {
   return currentConversation.job_ids.includes(String(jobId || ''));
 }
 
-function renderSystemTaskCard(job, forceCanceled = false) {
+function renderSystemTaskCard(job, removedFromConversation = false) {
   const jobId = String((job && job.job_id) || 'unknown');
   const statusRaw = String((job && job.status) || 'unknown');
-  const effectiveStatusRaw = forceCanceled ? 'canceled' : statusRaw;
-  const status = taskDisplayStatus(effectiveStatusRaw);
+  const effectiveStatusRaw = removedFromConversation ? 'removed' : statusRaw;
+  const status = removedFromConversation ? '[removed]' : taskDisplayStatus(effectiveStatusRaw);
   const args = String((job && job.zhh_args) || '');
   const nickname = String((job && job.nickname) || '').trim();
   const createdAt = String((job && job.created_at) || '-');
-  const runBtnDisabled = !currentId ? 'disabled' : '';
+  const runBtnDisabled = (!currentId || removedFromConversation) ? 'disabled' : '';
   const statusLower = String(effectiveStatusRaw || '').toLowerCase();
-  const canCancel = statusLower === 'running' || statusLower === 'starting';
-  const canRemove = !['running', 'starting', 'queued', 'pending'].includes(statusLower);
-  const canceled = forceCanceled || isCanceledTaskStatus(effectiveStatusRaw);
+  const canCancel = !removedFromConversation && (statusLower === 'running' || statusLower === 'starting');
+  const canRemove = !removedFromConversation && !['running', 'starting', 'queued', 'pending'].includes(statusLower);
 
-  const actionsHtml = canceled
+  const actionsHtml = removedFromConversation
     ? `<div class="task-meta" style="margin-top:8px;">${escapeHtml(jobId)} is removed</div>`
     : `
       <div class="task-actions">
         <button ${runBtnDisabled} onclick="addTaskReference('${escapeHtml(jobId)}')">Reference</button>
         <button ${runBtnDisabled} onclick="viewTaskLog('${escapeHtml(jobId)}')">Log</button>
+        <button ${runBtnDisabled} onclick="openTaskWandb('${escapeHtml(jobId)}')">Wandb</button>
         ${canCancel ? `<button ${runBtnDisabled} onclick="cancelTask('${escapeHtml(jobId)}')">Cancel</button>` : ''}
         ${canRemove ? `<button ${runBtnDisabled} onclick="removeTask('${escapeHtml(jobId)}')">Remove</button>` : ''}
       </div>
@@ -3084,6 +3084,7 @@ function renderTasks(items, conversationId = currentId) {
         <button type="button" class="task-nickname-btn" data-task-index="${jobIndex}">Nickname</button>
         <button ${runBtnDisabled} onclick="addTaskReference('${escapeHtml(jobId)}')">Reference</button>
         <button ${runBtnDisabled} onclick="viewTaskLog('${escapeHtml(jobId)}')">Log</button>
+        <button ${runBtnDisabled} onclick="openTaskWandb('${escapeHtml(jobId)}')">Wandb</button>
         ${canCancel ? `<button ${runBtnDisabled} onclick="cancelTask('${escapeHtml(jobId)}')">Cancel</button>` : ''}
         ${canRemove ? `<button ${runBtnDisabled} onclick="removeTask('${escapeHtml(jobId)}')">Remove</button>` : ''}
       </div>
@@ -3369,6 +3370,22 @@ async function viewTaskLog(jobId) {
     setStatus('Log fetched.', 'success');
   } catch (err) {
     setStatus('Fetch log failed: ' + err.message, 'error');
+  }
+}
+
+async function openTaskWandb(jobId) {
+  if (!currentId || !jobId) return;
+  try {
+    setStatus('Resolving wandb link...', 'busy');
+    const data = await api(`/api/conversations/${currentId}/tasks/${jobId}/wandb`);
+    const url = String((data && data.wandb_url) || '').trim();
+    if (!url) {
+      throw new Error('wandb link not found');
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+    setStatus('Opened wandb link.', 'success');
+  } catch (err) {
+    setStatus('Open wandb failed: ' + err.message, 'error');
   }
 }
 
