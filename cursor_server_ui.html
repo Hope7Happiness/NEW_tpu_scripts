@@ -29,15 +29,27 @@
 }
 
 * { box-sizing: border-box; }
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+}
 body {
   margin: 0;
   background: radial-gradient(1200px 600px at 22% -20%, #1a2a44 0%, transparent 58%), var(--bg);
   color: var(--text);
   font-family: Inter, system-ui, -apple-system, sans-serif;
-  height: 100vh;
+  min-height: 100svh;
+  height: 100svh;
   display: grid;
   grid-template-columns: 280px 1fr;
   color-scheme: dark;
+}
+@supports (height: 100dvh) {
+  body {
+    min-height: 100dvh;
+    height: 100dvh;
+  }
 }
 #sidebar {
   border-right: 1px solid var(--line);
@@ -158,6 +170,9 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
+  height: 100%;
+  overflow: hidden;
 }
 #view-tabs {
   display: flex;
@@ -215,17 +230,44 @@ body {
   justify-content: space-between;
   gap: 16px;
 }
+#topbar > div:first-child {
+  min-width: 0;
+  flex: 1;
+}
+#sidebar-toggle-btn {
+  display: none;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-soft);
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+#topbar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
 #title {
   font-size: 15px;
   font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 #meta {
   margin-top: 4px;
   font-size: 12px;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 #messages {
-  flex: 1;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
   padding: 20px;
   background:
@@ -738,6 +780,42 @@ body {
   padding: 16px 18px;
   overflow: auto;
 }
+#create-type-row {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+#create-type-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+#create-type-select,
+.create-input {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #101723;
+  color: var(--text);
+  font-size: 13px;
+  box-sizing: border-box;
+}
+#create-extra-fields {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.create-field {
+  display: grid;
+  gap: 6px;
+}
+.create-field > label {
+  font-size: 12px;
+  color: var(--muted);
+}
+#picker-section {
+  display: block;
+}
 #picker-toolbar {
   display: flex;
   gap: 10px;
@@ -805,6 +883,7 @@ body {
   flex-direction: column;
   min-height: 0;
   flex: 1;
+  overflow: hidden;
 }
 #panel-tasks {
   display: none;
@@ -1214,35 +1293,136 @@ button:disabled {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;
   }
+  body.mobile-sidebar-hidden {
+    grid-template-rows: 1fr;
+  }
+  body.mobile-no-conversation {
+    grid-template-rows: 1fr;
+  }
   #sidebar {
     border-right: 0;
     border-bottom: 1px solid var(--line);
-    max-height: 38vh;
+    max-height: min(32svh, 220px);
+  }
+  body.mobile-no-conversation #sidebar {
+    max-height: none;
+    height: 100%;
+    border-bottom: 0;
+  }
+  body.mobile-no-conversation #main {
+    display: none;
+  }
+  body.mobile-sidebar-hidden #sidebar {
+    display: none;
   }
   #conv-list {
-    display: flex;
-    overflow-x: auto;
-    overflow-y: hidden;
-    padding: 10px;
-    gap: 8px;
+    display: block;
+    overflow-x: hidden;
+    overflow-y: auto;
+    padding: 10px 12px;
   }
   #conv-list li {
-    min-width: 220px;
-    margin-bottom: 0;
+    min-width: 0;
+    width: 100%;
+    margin-bottom: 10px;
+  }
+  #sidebar-toggle-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+  #topbar {
+    padding: 8px 10px;
+    gap: 8px;
+  }
+  #topbar-actions {
+    flex-shrink: 0;
+    min-width: 0;
+    gap: 6px;
+  }
+  #title {
+    font-size: 14px;
+  }
+  #meta {
+    font-size: 11px;
+    margin-top: 2px;
+  }
+  #delete-btn {
+    padding: 8px 10px;
+    font-size: 12px;
+    max-width: 120px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #messages {
+    padding: 12px 10px;
+  }
+  .msg {
+    margin-bottom: 10px;
+  }
+  .bubble {
+    max-width: 92%;
+    padding: 12px 13px;
+  }
+  .bubble .md-content {
+    font-size: 15px;
+    line-height: 1.68;
+  }
+  #view-tabs,
+  #composer-wrap,
+  #tasks-toolbar,
+  #yaml-toolbar,
+  #ka-toolbar,
+  #tasks-list,
+  #yaml-editor-wrap,
+  #ka-editor-wrap,
+  #status-bar {
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  #view-tabs {
+    display: flex;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    gap: 6px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+  }
+  .tab-btn {
+    flex: 0 0 auto;
+    min-width: 86px;
+    text-align: center;
+    font-size: 11px;
+    padding: 6px 10px;
   }
   #composer {
-    flex-direction: column;
+    flex-direction: row;
+    gap: 8px;
+    align-items: stretch;
+  }
+  #input {
+    min-height: 64px;
   }
   #quick-actions {
-    width: 100%;
-    flex-direction: row;
+    width: 88px;
+    flex-direction: column;
+    gap: 6px;
   }
   #quick-actions > button {
-    flex: 1;
+    width: 100%;
   }
   #send-btn {
-    width: 100%;
-    min-height: 44px;
+    width: 96px;
+    min-height: 40px;
+  }
+  #run-quick-btn {
+    min-height: 34px;
+    font-size: 12px;
+  }
+  #auto-iterate-btn {
+    min-height: 28px;
+    font-size: 10px;
   }
   #tasks-toolbar,
   #yaml-toolbar,
@@ -1250,6 +1430,8 @@ button:disabled {
     flex-wrap: wrap;
   }
   #yaml-file-select,
+  #create-type-select,
+  .create-input,
   #task-args {
     width: 100%;
     min-width: 0;
@@ -1264,25 +1446,15 @@ button:disabled {
 }
 
 @media (max-width: 640px) {
-  #topbar,
-  #view-tabs,
-  #composer-wrap,
-  #tasks-toolbar,
-  #yaml-toolbar,
-  #ka-toolbar,
-  #tasks-list,
-  #yaml-editor-wrap,
-  #ka-editor-wrap,
-  #status-bar {
-    padding-left: 12px;
-    padding-right: 12px;
+  #messages {
+    padding: 10px 8px;
   }
-  #topbar {
-    flex-direction: column;
-    align-items: flex-start;
+  .bubble {
+    max-width: 95%;
   }
-  #delete-btn {
-    width: 100%;
+  .bubble .md-content {
+    font-size: 16px;
+    line-height: 1.72;
   }
   .task-top {
     flex-direction: column;
@@ -1290,6 +1462,12 @@ button:disabled {
   }
   .task-actions {
     flex-wrap: wrap;
+  }
+  #send-btn {
+    width: 84px;
+  }
+  #quick-actions {
+    width: 78px;
   }
 }
 </style>
@@ -1312,7 +1490,10 @@ button:disabled {
         <div id="title">No conversation selected</div>
         <div id="meta">Create a new session first.</div>
       </div>
-      <button id="delete-btn" onclick="deleteCurrentConversation()" disabled>Delete session</button>
+      <div id="topbar-actions">
+        <button id="sidebar-toggle-btn" onclick="toggleSidebarMobile()">Sessions</button>
+        <button id="delete-btn" onclick="deleteCurrentConversation()" disabled>Delete session</button>
+      </div>
     </div>
     <div id="view-tabs">
       <button id="tab-chat" class="tab-btn active" onclick="switchTab('chat')">Chat</button>
@@ -1380,15 +1561,48 @@ button:disabled {
   <div id="modal-backdrop" onclick="handleModalBackdrop(event)">
     <div id="modal">
       <div id="modal-head">
-        <h2>Choose workdir</h2>
+        <h2>New conversation</h2>
         <div id="modal-sub">Root: __WORKDIR_ROOT__</div>
       </div>
       <div id="modal-body">
-        <div id="picker-toolbar">
-          <button class="secondary-btn" onclick="goParentDir()">Up</button>
-          <div id="picker-current">Loading...</div>
+        <div id="create-type-row">
+          <label id="create-type-label" for="create-type-select">Create mode</label>
+          <select id="create-type-select" onchange="onCreateTypeChange()">
+            <option value="directory">Select a directory</option>
+            <option value="clone">Clone from GitHub</option>
+            <option value="worktree">Create branch from a directory</option>
+            <option value="copy">Copy from a directory</option>
+          </select>
         </div>
-        <div id="dir-list"></div>
+        <div id="create-extra-fields">
+          <div class="create-field" id="clone-parent-field" style="display:none;">
+            <label for="clone-parent-input">Parent directory</label>
+            <input id="clone-parent-input" class="create-input" type="text" placeholder="/path/to/parent" />
+          </div>
+          <div class="create-field" id="clone-url-field" style="display:none;">
+            <label for="clone-url-input">GitHub repository URL</label>
+            <input id="clone-url-input" class="create-input" type="text" placeholder="https://github.com/org/repo" />
+          </div>
+          <div class="create-field" id="worktree-source-field" style="display:none;">
+            <label for="worktree-source-input">Source git directory</label>
+            <input id="worktree-source-input" class="create-input" type="text" placeholder="/path/to/existing/repo" />
+          </div>
+          <div class="create-field" id="worktree-branch-field" style="display:none;">
+            <label for="worktree-branch-input">Branch name</label>
+            <input id="worktree-branch-input" class="create-input" type="text" placeholder="feature/my-branch" />
+          </div>
+          <div class="create-field" id="new-dir-name-field" style="display:none;">
+            <label for="new-dir-name-input">New directory name</label>
+            <input id="new-dir-name-input" class="create-input" type="text" placeholder="my-new-dir" />
+          </div>
+        </div>
+        <div id="picker-section">
+          <div id="picker-toolbar">
+            <button class="secondary-btn" onclick="goParentDir()">Up</button>
+            <div id="picker-current">Loading...</div>
+          </div>
+          <div id="dir-list"></div>
+        </div>
       </div>
       <div id="modal-foot">
         <div id="selected-workdir">Selected: —</div>
@@ -1444,8 +1658,50 @@ let conversationTaskRuntimeStatus = {};
 let taskPollTimer = null;
 let taskPollInFlight = false;
 const WORKDIR_ROOT = '__WORKDIR_ROOT__';
+const FILESYSTEM_ROOT = '/';
 let pickerCurrentPath = WORKDIR_ROOT;
 let pickerSelectedPath = WORKDIR_ROOT;
+let createModalMode = 'directory';
+const MOBILE_BREAKPOINT = 860;
+
+function isNarrowScreen() {
+  return window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`).matches;
+}
+
+function setSidebarHiddenMobile(hidden) {
+  const shouldHide = !!hidden && isNarrowScreen();
+  document.body.classList.toggle('mobile-sidebar-hidden', shouldHide);
+  const btn = document.getElementById('sidebar-toggle-btn');
+  if (btn) {
+    btn.textContent = shouldHide ? 'Sessions' : 'Hide';
+  }
+}
+
+function toggleSidebarMobile() {
+  if (!isNarrowScreen()) return;
+  const hidden = document.body.classList.contains('mobile-sidebar-hidden');
+  setSidebarHiddenMobile(!hidden);
+}
+
+function syncMobileLayoutState() {
+  if (isNarrowScreen()) {
+    const hidden = document.body.classList.contains('mobile-sidebar-hidden');
+    const hasConversation = !!currentId;
+    document.body.classList.toggle('mobile-no-conversation', !hasConversation);
+    if (!hasConversation && hidden) {
+      setSidebarHiddenMobile(false);
+    } else {
+      setSidebarHiddenMobile(hidden);
+    }
+    return;
+  }
+  document.body.classList.remove('mobile-sidebar-hidden');
+  document.body.classList.remove('mobile-no-conversation');
+  const btn = document.getElementById('sidebar-toggle-btn');
+  if (btn) {
+    btn.textContent = 'Sessions';
+  }
+}
 
 function applyStatusToUI(text, kind = 'normal') {
   const el = document.getElementById('status');
@@ -1718,6 +1974,7 @@ async function bootstrapConversations() {
     await loadConversations();
   }
   startTaskNotificationPolling();
+  syncMobileLayoutState();
 }
 
 function switchTab(view) {
@@ -2216,31 +2473,83 @@ function renderConversationList(items) {
 }
 
 async function createConversation() {
+  createModalMode = 'directory';
+  document.getElementById('create-type-select').value = 'directory';
+  document.getElementById('clone-parent-input').value = WORKDIR_ROOT;
+  document.getElementById('clone-url-input').value = '';
+  document.getElementById('worktree-source-input').value = currentConversation && currentConversation.cwd ? currentConversation.cwd : '';
+  document.getElementById('worktree-branch-input').value = '';
+  document.getElementById('new-dir-name-input').value = '';
   pickerSelectedPath = WORKDIR_ROOT;
   document.getElementById('selected-workdir').textContent = 'Selected: ' + pickerSelectedPath;
   document.getElementById('modal-backdrop').classList.add('show');
+  onCreateTypeChange(true);
   await browseDir(WORKDIR_ROOT);
+}
+
+function onCreateTypeChange(skipBrowse = false) {
+  const mode = String(document.getElementById('create-type-select').value || 'directory');
+  createModalMode = mode;
+  const modalSub = document.getElementById('modal-sub');
+
+  const pickerSection = document.getElementById('picker-section');
+  const cloneParentField = document.getElementById('clone-parent-field');
+  const cloneUrlField = document.getElementById('clone-url-field');
+  const worktreeSourceField = document.getElementById('worktree-source-field');
+  const worktreeBranchField = document.getElementById('worktree-branch-field');
+  const newDirNameField = document.getElementById('new-dir-name-field');
+  const selectedEl = document.getElementById('selected-workdir');
+
+  const needsPicker = mode === 'directory' || mode === 'copy';
+  pickerSection.style.display = needsPicker ? 'block' : 'none';
+
+  cloneParentField.style.display = mode === 'clone' ? 'grid' : 'none';
+  cloneUrlField.style.display = mode === 'clone' ? 'grid' : 'none';
+  worktreeSourceField.style.display = mode === 'worktree' ? 'grid' : 'none';
+  worktreeBranchField.style.display = mode === 'worktree' ? 'grid' : 'none';
+  newDirNameField.style.display = (mode === 'clone' || mode === 'worktree') ? 'grid' : 'none';
+
+  if (needsPicker) {
+    if (mode === 'copy') {
+      modalSub.textContent = 'Root: / (filesystem)';
+      pickerCurrentPath = FILESYSTEM_ROOT;
+      pickerSelectedPath = FILESYSTEM_ROOT;
+    } else {
+      modalSub.textContent = 'Root: ' + WORKDIR_ROOT;
+    }
+    selectedEl.textContent = 'Selected: ' + pickerCurrentPath;
+    if (!skipBrowse) {
+      const browseStartPath = mode === 'copy' ? FILESYSTEM_ROOT : pickerCurrentPath;
+      browseDir(browseStartPath).catch(err => {
+        setStatus('Browse failed: ' + err.message, 'error');
+      });
+    }
+    return;
+  }
+
+  if (mode === 'clone') {
+    selectedEl.textContent = 'Clone target parent: use the field above';
+  } else if (mode === 'worktree') {
+    selectedEl.textContent = 'Worktree source: use the field above';
+  } else {
+    selectedEl.textContent = 'Selected: —';
+  }
+  document.getElementById('confirm-create-btn').disabled = false;
 }
 
 async function browseDir(path) {
   setStatus('Loading directories...', 'busy');
-  const data = await api('/api/workdirs?path=' + encodeURIComponent(path));
+  const allowOutsideRoot = createModalMode === 'copy' ? '&allow_outside_root=1' : '';
+  const data = await api('/api/workdirs?path=' + encodeURIComponent(path) + allowOutsideRoot);
   pickerCurrentPath = data.current;
-  if (!pickerSelectedPath) pickerSelectedPath = data.current;
+  pickerSelectedPath = data.current;
   document.getElementById('picker-current').textContent = data.current;
-  document.getElementById('selected-workdir').textContent = 'Selected: ' + pickerSelectedPath;
+  if (createModalMode === 'directory' || createModalMode === 'copy') {
+    document.getElementById('selected-workdir').textContent = 'Selected: ' + pickerSelectedPath;
+  }
 
   const list = document.getElementById('dir-list');
   list.innerHTML = '';
-
-  const currentItem = document.createElement('div');
-  currentItem.className = 'dir-item';
-  currentItem.onclick = () => selectWorkdir(data.current);
-  currentItem.innerHTML = `
-    <div class="dir-name">📁 Select this directory</div>
-    <div class="dir-path">${escapeHtml(data.current_relative)} </div>
-  `;
-  list.appendChild(currentItem);
 
   for (const dir of data.children) {
     const item = document.createElement('div');
@@ -2312,10 +2621,48 @@ function handleLogModalBackdrop(event) {
 }
 
 async function createConversationConfirmed() {
-  if (!pickerSelectedPath) {
-    setStatus('Please choose a workdir.', 'error');
+  const mode = createModalMode || 'directory';
+  let payload = { title: 'New chat', create_type: mode };
+
+  if (mode === 'directory') {
+    if (!pickerCurrentPath) {
+      setStatus('Please choose a workdir.', 'error');
+      return;
+    }
+    payload.workdir = pickerCurrentPath;
+  } else if (mode === 'clone') {
+    const parentDir = String(document.getElementById('clone-parent-input').value || '').trim();
+    const repoUrl = String(document.getElementById('clone-url-input').value || '').trim();
+    const newDirName = String(document.getElementById('new-dir-name-input').value || '').trim();
+    if (!parentDir || !repoUrl || !newDirName) {
+      setStatus('Clone requires parent directory, repo URL, and new directory name.', 'error');
+      return;
+    }
+    payload.parent_dir = parentDir;
+    payload.repo_url = repoUrl;
+    payload.new_dir_name = newDirName;
+  } else if (mode === 'worktree') {
+    const sourceDir = String(document.getElementById('worktree-source-input').value || '').trim();
+    const branchName = String(document.getElementById('worktree-branch-input').value || '').trim();
+    const newDirName = String(document.getElementById('new-dir-name-input').value || '').trim();
+    if (!sourceDir || !branchName || !newDirName) {
+      setStatus('Worktree requires source directory, branch name, and new directory name.', 'error');
+      return;
+    }
+    payload.source_dir = sourceDir;
+    payload.branch_name = branchName;
+    payload.new_dir_name = newDirName;
+  } else if (mode === 'copy') {
+    if (!pickerCurrentPath) {
+      setStatus('Please choose a source directory to copy.', 'error');
+      return;
+    }
+    payload.source_dir = pickerCurrentPath;
+  } else {
+    setStatus('Unknown create mode.', 'error');
     return;
   }
+
   try {
     document.getElementById('new-btn').disabled = true;
     document.getElementById('confirm-create-btn').disabled = true;
@@ -2323,7 +2670,7 @@ async function createConversationConfirmed() {
     const data = await api('/api/conversations', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ title: 'New chat', workdir: pickerSelectedPath })
+      body: JSON.stringify(payload)
     });
     currentId = data.conversation.id;
     closeCreateModal();
@@ -2358,6 +2705,10 @@ async function openConversation(id, updateList = true) {
   document.getElementById('delete-btn').disabled = currentConversation.status === 'running';
   document.getElementById('run-task-btn').disabled = false;
   document.getElementById('refresh-task-btn').disabled = false;
+  if (isNarrowScreen()) {
+    setSidebarHiddenMobile(true);
+  }
+  syncMobileLayoutState();
   await loadTasksForCurrentConversation(true);
   if (currentView === 'yaml') {
     await loadYamlFileListForCurrentConversation(true);
@@ -2561,6 +2912,7 @@ function resetConversationView() {
   renderKaUnavailable('No conversation selected.');
   renderPendingTaskRefs();
   renderCurrentConversationStatus();
+  syncMobileLayoutState();
 }
 
 async function deleteCurrentConversation() {
@@ -3073,6 +3425,7 @@ function shortJobId(jobId) {
 }
 
 bootstrapConversations();
+window.addEventListener('resize', syncMobileLayoutState);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
     pollTaskNotifications();

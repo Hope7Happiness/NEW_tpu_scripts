@@ -15,6 +15,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shutil
+import subprocess
 import threading
 import time
 import uuid
@@ -142,6 +145,116 @@ def normalize_workdir(workdir: str) -> Path:
     raise ValueError(f"workdir is not a directory: {candidate}")
 
   return candidate
+
+
+def normalize_new_dir_name(name: str) -> str:
+  value = str(name or "").strip()
+  if not value:
+    raise ValueError("new_dir_name is required")
+  if not re.match(r"^[A-Za-z0-9._-]+$", value):
+    raise ValueError("new_dir_name must match [A-Za-z0-9._-]+")
+  if value in {".", ".."}:
+    raise ValueError("invalid new_dir_name")
+  return value
+
+
+def destination_from_parent(parent_dir: str, new_dir_name: str) -> Path:
+  parent = normalize_workdir(parent_dir)
+  name = normalize_new_dir_name(new_dir_name)
+  target = (parent / name).resolve()
+  try:
+    target.relative_to(WORKDIR_ROOT)
+  except ValueError as exc:
+    raise ValueError(f"target must be inside {WORKDIR_ROOT}") from exc
+  if target.exists():
+    raise ValueError(f"target directory already exists: {target}")
+  return target
+
+
+def ensure_github_repo_url(url: str) -> str:
+  value = str(url or "").strip()
+  if not value:
+    raise ValueError("repo_url is required")
+  if "github.com" not in value:
+    raise ValueError("repo_url must be a GitHub repository URL")
+  return value
+
+
+def create_workdir_by_clone(parent_dir: str, repo_url: str, new_dir_name: str) -> Path:
+  destination = destination_from_parent(parent_dir, new_dir_name)
+  safe_url = ensure_github_repo_url(repo_url)
+  result = subprocess.run(
+    ["git", "clone", safe_url, str(destination)],
+    capture_output=True,
+    text=True,
+    timeout=600,
+  )
+  if result.returncode != 0:
+    detail = (result.stderr or result.stdout or "git clone failed").strip()
+    raise RuntimeError(detail)
+  return destination
+
+
+def create_workdir_by_worktree(source_dir: str, branch_name: str, new_dir_name: str) -> Path:
+  source = normalize_workdir(source_dir)
+  branch = str(branch_name or "").strip()
+  if not branch:
+    raise ValueError("branch_name is required")
+  destination = destination_from_parent(str(source.parent), new_dir_name)
+
+  check = subprocess.run(
+    ["git", "-C", str(source), "rev-parse", "--is-inside-work-tree"],
+    capture_output=True,
+    text=True,
+    timeout=30,
+  )
+  if check.returncode != 0:
+    raise ValueError(f"source directory is not a git repository: {source}")
+
+  result = subprocess.run(
+    ["git", "-C", str(source), "worktree", "add", "-b", branch, str(destination)],
+    capture_output=True,
+    text=True,
+    timeout=600,
+  )
+  if result.returncode != 0:
+    detail = (result.stderr or result.stdout or "git worktree add failed").strip()
+    raise RuntimeError(detail)
+  return destination
+
+
+def _sanitize_auto_dir_name(name: str) -> str:
+  value = re.sub(r"[^A-Za-z0-9._-]+", "-", str(name or "").strip()).strip("-._")
+  return value or "copy"
+
+
+def create_workdir_by_copy(source_dir: str, new_dir_name: str | None = None) -> Path:
+  source = normalize_workdir(source_dir)
+  raw_name = str(new_dir_name or "").strip()
+  if raw_name:
+    destination = destination_from_parent(str(source.parent), raw_name)
+  else:
+    base = _sanitize_auto_dir_name(source.name)
+    candidate_name = f"{base}-copy"
+    destination = (source.parent / candidate_name).resolve()
+    index = 2
+    while destination.exists():
+      destination = (source.parent / f"{candidate_name}-{index}").resolve()
+      index += 1
+
+  try:
+    destination.relative_to(WORKDIR_ROOT)
+  except ValueError as exc:
+    raise ValueError(f"target must be inside {WORKDIR_ROOT}") from exc
+
+  if destination.exists():
+    raise ValueError(f"target directory already exists: {destination}")
+
+  try:
+    shutil.copytree(source, destination, symlinks=True)
+  except Exception as exc:
+    raise RuntimeError(f"copy directory failed: {exc}") from exc
+  return destination
 
 
 def relative_workdir(path: Path) -> str:
@@ -458,8 +571,16 @@ def _resolve_job_status(conv: dict, job_id: str) -> str:
   return "unknown"
 
 
-def list_workdir_children(workdir: str | None) -> dict:
-  current = normalize_workdir(workdir or str(WORKDIR_ROOT))
+def list_workdir_children(workdir: str | None, allow_outside_root: bool = False) -> dict:
+  if allow_outside_root:
+    base_value = str(workdir or "/")
+    current = Path(base_value).expanduser().resolve()
+    if not current.exists():
+      raise ValueError(f"workdir does not exist: {current}")
+    if not current.is_dir():
+      raise ValueError(f"workdir is not a directory: {current}")
+  else:
+    current = normalize_workdir(workdir or str(WORKDIR_ROOT))
   children = []
   for child in sorted(current.iterdir(), key=lambda p: (not p.is_dir(), p.name.lower())):
     if not child.is_dir() or child.name.startswith('.'):
@@ -470,14 +591,25 @@ def list_workdir_children(workdir: str | None) -> dict:
       "relative_path": relative_workdir(child),
     })
 
-  is_root = current == WORKDIR_ROOT
+  if allow_outside_root:
+    is_root = current.parent == current
+  else:
+    is_root = current == WORKDIR_ROOT
   parent_path = None if is_root else str(current.parent)
-  parent_relative_path = None if is_root else relative_workdir(current.parent)
+  if is_root:
+    parent_relative_path = None
+  elif allow_outside_root:
+    parent_relative_path = str(current.parent)
+  else:
+    parent_relative_path = relative_workdir(current.parent)
+
+  root_value = "/" if allow_outside_root else str(WORKDIR_ROOT)
+  current_relative = str(current) if allow_outside_root else relative_workdir(current)
 
   return {
-    "root": str(WORKDIR_ROOT),
+    "root": root_value,
     "current": str(current),
-    "current_relative": relative_workdir(current),
+    "current_relative": current_relative,
     "parent": parent_path,
     "parent_relative": parent_relative_path,
     "children": children,
@@ -966,6 +1098,7 @@ def api_list_conversations():
 @app.route("/api/conversations", methods=["POST"])
 def api_create_conversation():
     data = request.get_json(force=True, silent=True) or {}
+    create_type = str(data.get("create_type") or "directory").strip().lower()
     workdir = data.get("workdir")
     mode = data.get("mode") or "agent"
 
@@ -973,9 +1106,31 @@ def api_create_conversation():
         return jsonify({"error": "invalid mode"}), 400
 
     try:
-        cwd = str(normalize_workdir(workdir))
+        if create_type == "directory":
+          cwd = str(normalize_workdir(str(workdir or "")))
+        elif create_type == "clone":
+          cwd = str(create_workdir_by_clone(
+            str(data.get("parent_dir") or ""),
+            str(data.get("repo_url") or ""),
+            str(data.get("new_dir_name") or ""),
+          ))
+        elif create_type == "worktree":
+          cwd = str(create_workdir_by_worktree(
+            str(data.get("source_dir") or ""),
+            str(data.get("branch_name") or ""),
+            str(data.get("new_dir_name") or ""),
+          ))
+        elif create_type == "copy":
+          cwd = str(create_workdir_by_copy(
+            str(data.get("source_dir") or ""),
+            str(data.get("new_dir_name") or ""),
+          ))
+        else:
+          return jsonify({"error": "invalid create_type"}), 400
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({"error": str(e)}), 502
 
     existing = find_conversation_by_cwd(cwd)
     if existing is not None:
@@ -989,7 +1144,8 @@ def api_create_conversation():
 @app.route("/api/workdirs", methods=["GET"])
 def api_workdirs():
     try:
-        data = list_workdir_children(request.args.get("path"))
+        allow_outside_root = str(request.args.get("allow_outside_root") or "").strip().lower() in {"1", "true", "yes", "on"}
+        data = list_workdir_children(request.args.get("path"), allow_outside_root=allow_outside_root)
         return jsonify(data)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
@@ -1186,7 +1342,7 @@ def api_cancel_task(conversation_id: str, job_id: str):
 
   snapshot_task_log_before_cancel(conversation_id, job_id)
   status_code, payload = zhh_request(ZHH_SERVER_URL, "POST", f"/cancel/{job_id}")
-  if status_code == 200:
+  if status_code in {200, 404}:
     mark_task_status(conversation_id, job_id, "canceled")
   return jsonify(payload), status_code
 

@@ -7,4 +7,6 @@ secret.json
 logs/
 
 *.json
+*.log
+
 !config.json
