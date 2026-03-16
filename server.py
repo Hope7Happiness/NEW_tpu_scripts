@@ -283,7 +283,7 @@ def get_job_log(job_id):
 
 @app.route('/cancel/<job_id>', methods=['POST'])
 def cancel_job(job_id):
-    """Cancel a running job by killing its tmux session."""
+    """Cancel a running job by sending Ctrl+C then closing tmux window."""
     jobs = load_jobs()
     
     if job_id not in jobs:
@@ -291,16 +291,32 @@ def cancel_job(job_id):
     
     job = jobs[job_id]
     
-    # Kill tmux session if it exists
+    # Stop job gracefully first, then close tmux window
     tmux_session = job.get('tmux_session')
     if tmux_session:
+        pane_target = f"{tmux_session}:0.0"
+        window_target = f"{tmux_session}:0"
+
         try:
             subprocess.run([
-                "tmux", "kill-session",
-                "-t", tmux_session
+                "tmux", "send-keys",
+                "-t", pane_target,
+                "C-c"
             ], check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError as e:
-            # Session might already be dead, that's ok
+        except subprocess.CalledProcessError:
+            # Session/pane might already be gone, that's ok
+            pass
+
+        # Give the wrapped shell a moment to run EXIT trap and ack
+        time.sleep(0.5)
+
+        try:
+            subprocess.run([
+                "tmux", "kill-window",
+                "-t", window_target
+            ], check=True, capture_output=True, text=True)
+        except subprocess.CalledProcessError:
+            # Window/session might already be gone, that's ok
             pass
     
     # Remove job from list

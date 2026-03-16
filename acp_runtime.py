@@ -168,7 +168,7 @@ def acp_prompt_session(
     mode: str,
     text: str,
     cursor_session_id: str | None = None,
-    timeout: float = 300.0,
+    timeout: float = 900.0,
     cancel_event: threading.Event | None = None,
     on_client_ready: Callable[[ACPClient], None] | None = None,
 ) -> dict:

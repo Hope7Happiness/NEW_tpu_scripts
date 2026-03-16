@@ -958,7 +958,9 @@ def auto_iterate_agent_turn(
       if full_log_path:
         stdout_text = (
           f"{stdout_text}\n\n"
-          f"[Full log path]\n{full_log_path}"
+          "[Full log path]\n"
+          f"{full_log_path}\n"
+          "Use the path above to inspect the full output log; do not inline the whole file."
         )
       if stdout_text.strip():
         consumed_ref_ids.append(job_id)
@@ -1671,7 +1673,9 @@ def api_send_message(conversation_id: str):
         if full_log_path:
           stdout_text = (
             f"{stdout_text}\n\n"
-            f"[Full log path]\n{full_log_path}"
+            "[Full log path]\n"
+            f"{full_log_path}\n"
+            "Use the path above to inspect the full output log; do not inline the whole file."
           )
         refs_payload.append({
           "stdout": stdout_text,
