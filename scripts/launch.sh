@@ -372,6 +372,8 @@ while_run(){
             
             # case 1: exist output.log
             if [ -f "$LOG_DIR/output.log" ]; then
+                echo "[DEBUG] log found at $LOG_DIR/output.log, checking logs for errors..."
+
                 if grep -q '\[/usr/bin/ssh\] exited with return code \[255\]' $LOG_DIR/output.log || grep -q "Terminating process because the coordinator detected missing heartbeats." $LOG_DIR/output.log; then
                     echo -e "\033[33m[Info] Found GRPC/heartbeat error in logs, will re-setup env and re-run.\033[0m"
                     # sleep 60

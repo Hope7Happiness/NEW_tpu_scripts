@@ -2761,6 +2761,7 @@ function renderSystemTaskCard(job, removedFromConversation = false) {
   const runBtnDisabled = (!currentId || removedFromConversation) ? 'disabled' : '';
   const statusLower = String(effectiveStatusRaw || '').toLowerCase();
   const canCancel = !removedFromConversation && (statusLower === 'running' || statusLower === 'starting');
+  const canResume = !removedFromConversation && ['failed', 'error', 'timeout', 'aborted'].includes(statusLower);
   const canRemove = !removedFromConversation && !['running', 'starting', 'queued', 'pending'].includes(statusLower);
 
   const actionsHtml = removedFromConversation
@@ -2770,6 +2771,7 @@ function renderSystemTaskCard(job, removedFromConversation = false) {
         <button ${runBtnDisabled} onclick="addTaskReference('${escapeHtml(jobId)}')">Reference</button>
         <button ${runBtnDisabled} onclick="viewTaskLog('${escapeHtml(jobId)}')">Log</button>
         <button ${runBtnDisabled} onclick="openTaskWandb('${escapeHtml(jobId)}')">Wandb</button>
+        ${canResume ? `<button ${runBtnDisabled} onclick="resumeTask('${escapeHtml(jobId)}')">Resume</button>` : ''}
         ${canCancel ? `<button ${runBtnDisabled} onclick="cancelTask('${escapeHtml(jobId)}')">Cancel</button>` : ''}
         ${canRemove ? `<button ${runBtnDisabled} onclick="removeTask('${escapeHtml(jobId)}')">Remove</button>` : ''}
       </div>
@@ -2814,7 +2816,10 @@ function renderConversation(conv) {
           </div>
         `;
       }).join(' ');
-      const systemTaskRun = m && m.role === 'system' && m.system_event === 'task_run' && m.job_id;
+      const systemTaskRun = m
+        && m.role === 'system'
+        && (m.system_event === 'task_run' || m.system_event === 'task_resume')
+        && m.job_id;
       let systemTaskCardHtml = '';
       if (systemTaskRun) {
         const synced = getCurrentTaskById(m.job_id);
@@ -3062,6 +3067,7 @@ function renderTasks(items, conversationId = currentId) {
     const runBtnDisabled = !currentId ? 'disabled' : '';
     const canCancel = status === 'running' || status === 'starting';
     const statusLower = String(status).toLowerCase();
+    const canResume = ['failed', 'error', 'timeout', 'aborted'].includes(statusLower);
     const canRemove = !['running', 'starting', 'queued', 'pending'].includes(statusLower);
     const unread = !!job.unread;
     const alertKind = String(job.alert_kind || '').toLowerCase();
@@ -3085,6 +3091,7 @@ function renderTasks(items, conversationId = currentId) {
         <button ${runBtnDisabled} onclick="addTaskReference('${escapeHtml(jobId)}')">Reference</button>
         <button ${runBtnDisabled} onclick="viewTaskLog('${escapeHtml(jobId)}')">Log</button>
         <button ${runBtnDisabled} onclick="openTaskWandb('${escapeHtml(jobId)}')">Wandb</button>
+        ${canResume ? `<button ${runBtnDisabled} onclick="resumeTask('${escapeHtml(jobId)}')">Resume</button>` : ''}
         ${canCancel ? `<button ${runBtnDisabled} onclick="cancelTask('${escapeHtml(jobId)}')">Cancel</button>` : ''}
         ${canRemove ? `<button ${runBtnDisabled} onclick="removeTask('${escapeHtml(jobId)}')">Remove</button>` : ''}
       </div>
@@ -3335,6 +3342,20 @@ async function cancelTask(jobId) {
     setStatus('Task cancelled.', 'success');
   } catch (err) {
     setStatus('Cancel failed: ' + err.message, 'error');
+  }
+}
+
+async function resumeTask(jobId) {
+  if (!currentId || !jobId) return;
+  try {
+    setStatus('Resuming task...', 'busy');
+    await api(`/api/conversations/${currentId}/tasks/${jobId}/resume`, { method: 'POST' });
+    await loadConversations(currentId);
+    await loadTasksForCurrentConversation();
+    pollTaskNotifications();
+    setStatus('Task resumed as a new job.', 'success');
+  } catch (err) {
+    setStatus('Resume failed: ' + err.message, 'error');
   }
 }
 

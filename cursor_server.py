@@ -578,6 +578,21 @@ def resolve_task_wandb_url(conv: dict, job_id: str) -> tuple[str | None, str]:
   return None, ""
 
 
+def resolve_task_output_log_path(job_id: str) -> str | None:
+  status_code, payload = fetch_task_reference_payload(ZHH_SERVER_URL, job_id, lines=12000)
+  if status_code != 200 or not isinstance(payload, dict):
+    return None
+
+  for key in ("full_log_path", "stdout_source"):
+    value = str(payload.get(key) or "").strip()
+    if not value:
+      continue
+    path = Path(value)
+    if path.exists() and path.is_file():
+      return str(path)
+  return None
+
+
 def _local_task_log_payload(conv: dict, job_id: str, lines: int = 500, prefer_pane: bool = False) -> dict | None:
   task_meta = conv.get("task_meta")
   if not isinstance(task_meta, dict):
@@ -792,13 +807,7 @@ def request_stop_auto_iterate(conversation_id: str) -> dict:
         pass
     action = "cursor"
   elif phase == "task":
-    if job_id:
-      snapshot_task_log_before_cancel(conversation_id, job_id)
-      mark_task_status(conversation_id, job_id, "canceled")
-      status_code, _ = zhh_request(ZHH_SERVER_URL, "POST", f"/cancel/{job_id}")
-      if status_code not in {200, 404}:
-        pass
-    action = "task"
+    action = "task_no_cancel"
 
   return {
     "phase": phase,
@@ -1084,11 +1093,6 @@ def run_auto_iterate_worker(conversation_id: str, first_text: str, max_rounds: i
       deadline = (utc_now() + AUTO_ITERATE_TASK_TIMEOUT_SECONDS) if AUTO_ITERATE_TASK_TIMEOUT_SECONDS > 0 else None
       while True:
         if stop_event is not None and stop_event.is_set():
-          snapshot_task_log_before_cancel(conversation_id, job_id)
-          mark_task_status(conversation_id, job_id, "canceled")
-          status_code, _ = zhh_request(ZHH_SERVER_URL, "POST", f"/cancel/{job_id}")
-          if status_code not in {200, 404}:
-            pass
           raise AutoIterateStopRequested("auto iterate stopped by user")
         if deadline is not None and utc_now() >= deadline:
           break
@@ -1400,7 +1404,6 @@ def api_stop_auto_iterate(conversation_id: str):
     return jsonify({"error": "auto iterate is not running"}), 409
 
   if not is_auto_iterate_worker_alive(conversation_id):
-    canceled_job_id = cancel_latest_running_job_best_effort(conversation_id)
     update_auto_iterate_state(conversation_id, enabled=False, status="idle", error="stopped without live worker")
     append_message(conversation_id, "system", "Auto iterate stopped by user.", {
       "system_event": "auto_iterate_stopped",
@@ -1408,8 +1411,8 @@ def api_stop_auto_iterate(conversation_id: str):
     })
     detail = {
       "phase": "stale",
-      "action": "cleanup",
-      "job_id": canceled_job_id,
+      "action": "cleanup_no_cancel",
+      "job_id": None,
     }
     latest = get_conversation(conversation_id) or conv
     return jsonify({
@@ -1447,6 +1450,80 @@ def api_cancel_task(conversation_id: str, job_id: str):
   if status_code in {200, 404}:
     mark_task_status(conversation_id, job_id, "canceled")
   return jsonify(payload), status_code
+
+
+@app.route("/api/conversations/<conversation_id>/tasks/<job_id>/resume", methods=["POST"])
+def api_resume_task(conversation_id: str, job_id: str):
+  conv = get_conversation(conversation_id)
+  if not conv:
+    return jsonify({"error": "not found"}), 404
+
+  job_ids = conv.get("job_ids", []) or []
+  if job_id not in job_ids:
+    return jsonify({"error": "job does not belong to this conversation"}), 404
+
+  status = "unknown"
+  try:
+    jobs = get_conversation_jobs(ZHH_SERVER_URL, conv)
+    conv, jobs = diagnose_completed_jobs_once(conversation_id, conv, jobs)
+    conv, jobs = update_task_alert_state(conversation_id, conv, jobs)
+    for job in jobs:
+      if isinstance(job, dict) and str(job.get("job_id") or "") == job_id:
+        status = normalize_task_status(job.get("status"))
+        break
+  except Exception:
+    status = _resolve_job_status(conv, job_id)
+
+  if not is_failed_task_status(status):
+    return jsonify({"error": f"task status is {status}, only failed/error-like tasks can be resumed"}), 409
+
+  output_log_path = resolve_task_output_log_path(job_id)
+  if not output_log_path:
+    return jsonify({"error": "output.log path not found for this task"}), 404
+
+  status_code, run_data = zhh_request(ZHH_SERVER_URL, "POST", "/resume", {"log_path": output_log_path})
+  if status_code != 200:
+    return jsonify({"error": run_data.get("error", f"/resume failed with {status_code}"), "detail": run_data}), status_code
+
+  resumed_job_id = str(run_data.get("job_id") or "").strip()
+  if resumed_job_id:
+    def add_job(c: dict):
+      ids = c.setdefault("job_ids", [])
+      if resumed_job_id not in ids:
+        ids.append(resumed_job_id)
+
+      task_meta = c.setdefault("task_meta", {})
+      entry = task_meta.get(resumed_job_id)
+      if not isinstance(entry, dict):
+        entry = {}
+      else:
+        entry = dict(entry)
+
+      entry["last_status"] = normalize_task_status(run_data.get("status") or "starting")
+      entry["updated_at"] = utc_now()
+      entry["resume_from_job_id"] = job_id
+      entry["resume_log_path"] = output_log_path
+      for key in ("zhh_args", "created_at", "final_log_file", "pane_log_file", "command", "cwd", "mode"):
+        value = run_data.get(key)
+        if value is not None and value != "":
+          entry[key] = value
+      task_meta[resumed_job_id] = entry
+
+    update_conversation(conversation_id, add_job)
+    append_message(conversation_id, "system", f"Resumed job {job_id} as {resumed_job_id}", {
+      "system_event": "task_resume",
+      "job_id": resumed_job_id,
+      "job_status": str(run_data.get("status") or "starting"),
+      "resume_from_job_id": job_id,
+      "resume_log_path": output_log_path,
+    })
+
+  return jsonify({
+    "conversation_id": conversation_id,
+    "source_job_id": job_id,
+    "log_path": output_log_path,
+    "job": run_data,
+  }), 200
 
 
 @app.route("/api/conversations/<conversation_id>/tasks/<job_id>", methods=["DELETE"])

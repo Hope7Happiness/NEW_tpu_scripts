@@ -124,7 +124,7 @@ curl http://localhost:8080/status/4f771738-a452-4bab-98c3-39be046c7215
 
 ### 4. 取消任务 (POST /cancel/<job_id>)
 
-杀死 tmux session 并从任务列表中删除。
+先向任务对应的 tmux pane 发送 `Ctrl+C`，再关闭 tmux window，并从任务列表中删除。
 
 **请求：**
 ```bash
@@ -183,7 +183,50 @@ curl "http://localhost:8080/log/4f771738-a452-4bab-98c3-39be046c7215?lines=2000"
 
 ---
 
-### 6. 健康检查 (GET /health)
+### 6. 恢复任务 (POST /resume)
+
+根据历史日志路径恢复任务，执行逻辑为：
+- 从 `log_path`（如 `.../output.log`）取父目录
+- 再 `cd ../..` 到 `logs` 的父目录
+- 在该目录执行 `source .ka` 后运行 `${SCRIPT_ROOT}/main.sh rr`
+
+**请求：**
+```bash
+curl -X POST http://localhost:8080/resume \
+  -H "Content-Type: application/json" \
+  -d '{
+    "log_path": "/kmh-nfs-ssd-us-mount/staging/.../logs/log1_xxx/output.log"
+  }'
+```
+
+也支持直接传日志目录：
+```bash
+curl -X POST http://localhost:8080/resume \
+  -H "Content-Type: application/json" \
+  -d '{
+    "log_dir": "/kmh-nfs-ssd-us-mount/staging/.../logs/log1_xxx"
+  }'
+```
+
+**参数：**
+- `log_path` (可选): 历史输出日志文件路径（例如 `output.log`）
+- `log_dir` (可选): 历史日志目录路径（与 `log_path` 二选一）
+
+**响应示例：**
+```json
+{
+  "job_id": "9f6ac5e3-4ac3-4f95-a5c2-7bb16d2f8484",
+  "status": "running",
+  "mode": "resume",
+  "command": "/kmh-nfs-ssd-us-mount/code/siri/scripts/main.sh rr",
+  "cwd": "/kmh-nfs-ssd-us-mount/staging/chris_t2i/t2i/launch_xxx",
+  "tmux_session": "zhh_9f6ac5e3"
+}
+```
+
+---
+
+### 7. 健康检查 (GET /health)
 
 **请求：**
 ```bash
@@ -267,8 +310,15 @@ tmux capture-pane -t zhh_4f771738 -p | tail -50
    ```
 
 5. **取消任务（可选）**
+    ```bash
+    curl -X POST http://localhost:8080/cancel/<job_id>
+    ```
+
+6. **恢复任务（可选）**
    ```bash
-   curl -X POST http://localhost:8080/cancel/<job_id>
+   curl -X POST http://localhost:8080/resume \
+     -H "Content-Type: application/json" \
+     -d '{"log_path": "/path/to/logs/log1_xxx/output.log"}'
    ```
 
 ---
@@ -290,8 +340,9 @@ tmux capture-pane -t zhh_4f771738 -p | tail -50
 1. **目录必须存在**: `cwd` 参数指定的目录必须存在，否则返回 400 错误
 2. **需要 tmux**: 系统必须安装 tmux
 3. **.ka 必须存在**: `cwd` 目录下必须有 `.ka` 文件
-4. **任务完成后 session 会退出**: 查看输出请使用 `/log/<job_id>`
-5. **自动 ack**: 任务完成时会自动更新状态，无需手动操作
+4. **resume 路径规则**: `/resume` 会基于 `log_path/log_dir` 推导到 `../..` 目录执行 `main.sh rr`
+5. **任务完成后 session 会退出**: 查看输出请使用 `/log/<job_id>`
+6. **自动 ack**: 任务完成时会自动更新状态，无需手动操作
 
 ---
 

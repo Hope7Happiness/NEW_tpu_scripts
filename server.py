@@ -25,6 +25,10 @@ API:
     
     POST /cancel/<job_id> - Cancel a running job
         Response: {"job_id": "...", "status": "cancelled"}
+
+    POST /resume - Resume from a previous output log path
+        Body: {"log_path": "/path/to/.../output.log"} or {"log_dir": "/path/to/.../log_dir"}
+        Response: {"job_id": "...", "status": "running"}
 """
 
 import os
@@ -77,7 +81,7 @@ def save_jobs(jobs):
     with open(jobs_file, 'w') as f:
         json.dump(jobs, f, indent=2)
 
-def create_tmux_window_and_run(job_id, zhh_args='', cwd=None):
+def create_tmux_window_and_run(job_id, zhh_args='', cwd=None, command_override=None):
     """Create a tmux session and run zhh command."""
     session_name = f"zhh_{job_id[:8]}"
 
@@ -91,7 +95,7 @@ def create_tmux_window_and_run(job_id, zhh_args='', cwd=None):
     final_log_file = logs_dir / f"{job_id}.log"
     quoted_final_log_file = shlex.quote(str(final_log_file))
 
-    zhh_command = f"{quoted_main} {zhh_args}" if zhh_args else quoted_main
+    zhh_command = command_override if command_override else (f"{quoted_main} {zhh_args}" if zhh_args else quoted_main)
     ack_url = f"http://localhost:{ACTIVE_SERVER_PORT}/ack/{job_id}"
 
     # Self-contained bash script. The trap lives in the OUTER shell wrapper,
@@ -135,6 +139,23 @@ def create_tmux_window_and_run(job_id, zhh_args='', cwd=None):
     except subprocess.CalledProcessError as e:
         return False, str(e), None
 
+
+def resolve_resume_cwd(log_path_or_dir):
+    """Resolve resume working dir by: cd parent; cd ../..."""
+    p = Path(log_path_or_dir).expanduser()
+    if not p.exists():
+        return None, f"Path not found: {log_path_or_dir}"
+
+    log_dir = p.parent if p.is_file() else p
+    resume_cwd = (log_dir / "../..").resolve()
+
+    if not resume_cwd.is_dir():
+        return None, f"Resume directory not found: {resume_cwd}"
+    if not (resume_cwd / ".ka").exists():
+        return None, f".ka not found in resume directory: {resume_cwd}"
+
+    return str(resume_cwd), None
+
 @app.route('/run', methods=['POST'])
 def run_job():
     """Start a new zhh job in a tmux window."""
@@ -166,6 +187,60 @@ def run_job():
     # Create tmux window and run
     success, session_name, final_log_file = create_tmux_window_and_run(job_id, zhh_args, cwd)
     
+    if success:
+        job['status'] = 'running'
+        job['tmux_session'] = session_name
+        job['final_log_file'] = final_log_file
+        job['pane_log_file'] = final_log_file
+        jobs[job_id] = job
+        save_jobs(jobs)
+        return jsonify(job), 200
+    else:
+        job['status'] = 'failed'
+        job['error'] = session_name
+        jobs[job_id] = job
+        save_jobs(jobs)
+        return jsonify(job), 500
+
+
+@app.route('/resume', methods=['POST'])
+def resume_job():
+    """Resume from a previous output log path by running `main.sh rr`."""
+    data = request.get_json() or {}
+    log_input = data.get('log_path') or data.get('log_dir')
+
+    if not log_input:
+        return jsonify({'error': 'Missing log_path or log_dir'}), 400
+
+    cwd, err = resolve_resume_cwd(log_input)
+    if err:
+        return jsonify({'error': err}), 400
+
+    # Generate job ID
+    job_id = str(uuid.uuid4())
+
+    # Load existing jobs
+    jobs = load_jobs()
+
+    # Create job record
+    job = {
+        'job_id': job_id,
+        'status': 'starting',
+        'mode': 'resume',
+        'resume_input': str(log_input),
+        'cwd': cwd,
+        'command': f"{SCRIPT_ROOT}/main.sh rr",
+        'created_at': datetime.now().isoformat(),
+        'updated_at': datetime.now().isoformat()
+    }
+
+    # Create tmux window and run resume command
+    success, session_name, final_log_file = create_tmux_window_and_run(
+        job_id,
+        cwd=cwd,
+        zhh_args='rr'
+    )
+
     if success:
         job['status'] = 'running'
         job['tmux_session'] = session_name
