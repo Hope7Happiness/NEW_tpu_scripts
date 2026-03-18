@@ -1657,6 +1657,13 @@ let conversationStatusOverrides = {};
 let conversationTaskRuntimeStatus = {};
 let taskPollTimer = null;
 let taskPollInFlight = false;
+let conversationSnapshotsById = {};
+let conversationMessageUnread = {};
+let lastSeenMessageCountByConversation = {};
+let notificationPendingByConversation = {};
+let notificationAudioCtx = null;
+let lastNotificationSoundAt = 0;
+const BASE_DOCUMENT_TITLE = document.title || 'Cursor Server';
 const WORKDIR_ROOT = '__WORKDIR_ROOT__';
 const FILESYSTEM_ROOT = '/';
 let pickerCurrentPath = WORKDIR_ROOT;
@@ -1874,6 +1881,226 @@ function isFailedTaskStatus(status) {
   return ['failed', 'error', 'timeout', 'aborted'].includes(normalizeTaskStatus(status));
 }
 
+function normalizeMessageCount(value) {
+  const num = Number(value || 0);
+  if (!Number.isFinite(num) || num < 0) return 0;
+  return Math.floor(num);
+}
+
+function anyAutoIterating(conversations) {
+  const list = Array.isArray(conversations) ? conversations : [];
+  return list.some(item => !!(item && item.auto_iterating));
+}
+
+function unlockNotificationAudio() {
+  try {
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!Ctx) return;
+    if (!notificationAudioCtx) {
+      notificationAudioCtx = new Ctx();
+    }
+    if (notificationAudioCtx.state === 'suspended') {
+      notificationAudioCtx.resume().catch(() => {});
+    }
+  } catch (_) {
+    // ignore
+  }
+}
+
+function playNotificationSound() {
+  const now = Date.now();
+  if ((now - lastNotificationSoundAt) < 1200) return;
+  lastNotificationSoundAt = now;
+
+  unlockNotificationAudio();
+  if (!notificationAudioCtx) return;
+
+  try {
+    const ctx = notificationAudioCtx;
+    const start = ctx.currentTime + 0.01;
+    const tone = (offset, freq, dur) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.0001, start + offset);
+      gain.gain.exponentialRampToValueAtTime(0.08, start + offset + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + dur);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(start + offset);
+      osc.stop(start + offset + dur + 0.02);
+    };
+    tone(0, 880, 0.12);
+    tone(0.16, 1174, 0.14);
+  } catch (_) {
+    // ignore
+  }
+}
+
+function getPendingNotificationCount() {
+  let total = 0;
+  for (const value of Object.values(notificationPendingByConversation)) {
+    const num = Number(value || 0);
+    if (Number.isFinite(num) && num > 0) total += Math.floor(num);
+  }
+  return total;
+}
+
+function refreshDocumentTitle() {
+  const count = getPendingNotificationCount();
+  if (count > 0) {
+    document.title = `${count} notifications · ${BASE_DOCUMENT_TITLE}`;
+    return;
+  }
+  document.title = BASE_DOCUMENT_TITLE;
+}
+
+function clearPendingNotificationsForConversation(conversationId) {
+  const id = String(conversationId || '').trim();
+  if (!id) return;
+  if (notificationPendingByConversation[id]) {
+    delete notificationPendingByConversation[id];
+    refreshDocumentTitle();
+  }
+}
+
+function clearAllPendingNotifications() {
+  if (!Object.keys(notificationPendingByConversation).length) return;
+  notificationPendingByConversation = {};
+  refreshDocumentTitle();
+}
+
+function maybeDesktopNotify(title, body, tag) {
+  return;
+}
+
+function ensureNotificationPermissions() {
+  unlockNotificationAudio();
+}
+
+function setupNotificationCapabilities() {
+  const unlock = () => ensureNotificationPermissions();
+  window.addEventListener('pointerdown', unlock, { passive: true });
+  window.addEventListener('keydown', unlock, { passive: true });
+  const clearOnForeground = () => {
+    const pageInForeground = document.visibilityState === 'visible' && document.hasFocus();
+    if (!pageInForeground) return;
+    clearAllPendingNotifications();
+  };
+  document.addEventListener('visibilitychange', clearOnForeground);
+  window.addEventListener('focus', clearOnForeground);
+}
+
+function collectNotificationEvents(conversations) {
+  const events = [];
+  const list = Array.isArray(conversations) ? conversations : [];
+  for (const item of list) {
+    if (!item || !item.id) continue;
+    const id = item.id;
+    const prev = conversationSnapshotsById[id];
+    const messageCount = normalizeMessageCount(item.message_count);
+    const seenCount = normalizeMessageCount(lastSeenMessageCountByConversation[id]);
+
+    if (!prev) {
+      lastSeenMessageCountByConversation[id] = Math.max(seenCount, messageCount);
+      continue;
+    }
+
+    const prevMessageCount = normalizeMessageCount(prev.message_count);
+    const hasNewMessage = messageCount > prevMessageCount;
+    const lastRole = String(item.last_message_role || '').toLowerCase();
+    const autoRunning = !!item.auto_iterating;
+
+    if (hasNewMessage && lastRole === 'assistant' && !autoRunning) {
+      if (id !== currentId && messageCount > seenCount) {
+        conversationMessageUnread[id] = true;
+      }
+      events.push({
+        type: 'assistant_message',
+        id,
+        title: item.workdir_base || item.title || 'Conversation',
+        body: String(item.last_message_preview || 'New assistant reply'),
+      });
+    }
+
+    if (!prev.task_has_failed_unread && !!item.task_has_failed_unread) {
+      events.push({
+        type: 'task_failed',
+        id,
+        title: item.workdir_base || item.title || 'Conversation',
+        body: 'A task failed.',
+      });
+    }
+
+    if (!!prev.auto_iterating && !autoRunning) {
+      const err = String(item.auto_iterate_last_error || item.last_error || '').trim();
+      if (err) {
+        events.push({
+          type: 'auto_iterate_failed',
+          id,
+          title: item.workdir_base || item.title || 'Conversation',
+          body: `Auto iterate failed: ${err}`,
+        });
+      } else {
+        events.push({
+          type: 'auto_iterate_done',
+          id,
+          title: item.workdir_base || item.title || 'Conversation',
+          body: 'Auto iterate completed.',
+        });
+      }
+    }
+  }
+  return events;
+}
+
+function dispatchNotificationEvents(events, conversations) {
+  const list = Array.isArray(events) ? events : [];
+  if (!list.length) return;
+  if (anyAutoIterating(conversations)) return;
+
+  for (const event of list) {
+    const id = String(event && event.id || '').trim();
+    if (!id) continue;
+    notificationPendingByConversation[id] = Number(notificationPendingByConversation[id] || 0) + 1;
+  }
+  refreshDocumentTitle();
+
+  const pageInForeground = document.visibilityState === 'visible' && document.hasFocus();
+  if (!pageInForeground) {
+    playNotificationSound();
+  }
+  for (const event of list.slice(0, 3)) {
+    const title = event.type === 'assistant_message'
+      ? `New agent reply · ${event.title}`
+      : (event.type === 'task_failed'
+        ? `Task failed · ${event.title}`
+        : (event.type === 'auto_iterate_failed'
+          ? `Auto iterate failed · ${event.title}`
+          : `Auto iterate completed · ${event.title}`));
+    maybeDesktopNotify(title, event.body || '', `cursor-${event.type}-${event.id}`);
+  }
+}
+
+function updateConversationSnapshots(conversations) {
+  const next = {};
+  const list = Array.isArray(conversations) ? conversations : [];
+  for (const item of list) {
+    if (!item || !item.id) continue;
+    next[item.id] = {
+      id: item.id,
+      message_count: normalizeMessageCount(item.message_count),
+      last_message_role: String(item.last_message_role || ''),
+      auto_iterating: !!item.auto_iterating,
+      task_has_failed_unread: !!item.task_has_failed_unread,
+      auto_iterate_last_error: String(item.auto_iterate_last_error || ''),
+      last_error: String(item.last_error || ''),
+    };
+  }
+  conversationSnapshotsById = next;
+}
+
 function getConversationAlertSummary(conversationId) {
   const item = conversationSummariesById[conversationId] || {};
   const unreadCount = Number(item.task_unread_count || 0);
@@ -1885,12 +2112,16 @@ function getConversationAlertSummary(conversationId) {
 }
 
 function renderConversationAlertHtml(conversationItem) {
+  const messageUnread = !!conversationMessageUnread[String((conversationItem && conversationItem.id) || '')];
   const summary = {
     unreadCount: Number(conversationItem && conversationItem.task_unread_count || 0),
     hasFailedUnread: !!(conversationItem && conversationItem.task_has_failed_unread),
   };
   if (summary.hasFailedUnread) {
     return '<span class="conv-alert failed" title="Task failed">!</span>';
+  }
+  if (messageUnread) {
+    return '<span class="conv-alert" title="New assistant reply"></span>';
   }
   if (summary.unreadCount > 0) {
     return '<span class="conv-alert" title="Task update"></span>';
@@ -1951,9 +2182,21 @@ async function pollTaskNotifications() {
       } else {
         delete conversationTaskRuntimeStatus[result.id];
       }
+      if (result.id === currentId) {
+        currentTasks = result.jobs;
+        if (currentConversation) {
+          renderConversation(currentConversation);
+          if (currentView === 'tasks') {
+            renderTasks(result.jobs, currentId);
+          }
+        }
+      }
     }
     const refreshed = await api('/api/conversations');
     const latest = Array.isArray(refreshed.conversations) ? refreshed.conversations : [];
+    const events = collectNotificationEvents(latest);
+    dispatchNotificationEvents(events, latest);
+    updateConversationSnapshots(latest);
     renderConversationList(latest);
     refreshTaskTabAlert();
   } catch (err) {
@@ -1969,6 +2212,7 @@ function startTaskNotificationPolling() {
 }
 
 async function bootstrapConversations() {
+  setupNotificationCapabilities();
   await pollTaskNotifications();
   if (!Object.keys(conversationSummariesById || {}).length) {
     await loadConversations();
@@ -2453,6 +2697,17 @@ function renderConversationList(items) {
   const list = document.getElementById('conv-list');
   list.innerHTML = '';
   conversationSummariesById = {};
+  const validIds = new Set((Array.isArray(items) ? items : []).map(item => item && item.id).filter(Boolean));
+  for (const id of Object.keys(conversationMessageUnread)) {
+    if (!validIds.has(id)) delete conversationMessageUnread[id];
+  }
+  for (const id of Object.keys(lastSeenMessageCountByConversation)) {
+    if (!validIds.has(id)) delete lastSeenMessageCountByConversation[id];
+  }
+  for (const id of Object.keys(notificationPendingByConversation)) {
+    if (!validIds.has(id)) delete notificationPendingByConversation[id];
+  }
+  refreshDocumentTitle();
   for (const item of items) {
     if (item && item.id) {
       conversationSummariesById[item.id] = item;
@@ -2697,6 +2952,10 @@ async function openConversation(id, updateList = true) {
   currentId = id;
   const data = await api('/api/conversations/' + id);
   currentConversation = data.conversation;
+  const currentMessageCount = normalizeMessageCount(currentConversation && currentConversation.messages && currentConversation.messages.length);
+  conversationMessageUnread[id] = false;
+  lastSeenMessageCountByConversation[id] = currentMessageCount;
+  clearPendingNotificationsForConversation(id);
   input.value = conversationDrafts[currentId] || '';
   renderConversation(currentConversation);
   renderPendingTaskRefs();

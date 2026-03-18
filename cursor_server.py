@@ -48,6 +48,8 @@ from yaml_editor_api import register_ka_editor_routes, register_yaml_editor_rout
 APP_ROOT = Path(__file__).parent.absolute()
 CONFIG_PATH = APP_ROOT / "config.json"
 WANDB_URL_PATTERN = re.compile(r"https?://(?:[A-Za-z0-9-]+\.)*wandb\.(?:ai|me)/[^\s\"'<>())]+")
+LAUNCH_DIR_HINT_PATTERN = re.compile(r"/kmh-nfs-ssd-us-mount/staging/[^\s\"'`]+/launch_[^\s\"'`]+")
+LOCAL_LOG_DIR_ID_PATTERN = re.compile(r"^log(\d+)_")
 
 
 def load_ui_config() -> dict:
@@ -419,6 +421,30 @@ def update_task_alert_state(conversation_id: str, conv: dict, jobs: list[dict]) 
 
     next_entry: dict[str, object] = dict(prev_entry)
     next_entry["last_status"] = now_status
+
+    needs_output_log_capture = (
+      is_terminal_task_status(now_status)
+      and not str(prev_entry.get("full_log_path") or "").strip()
+      and normalize_task_status(prev_entry.get("output_log_path_checked_status")) != now_status
+    )
+    if needs_output_log_capture:
+      captured_path = ""
+      try:
+        capture_status, capture_payload = fetch_task_reference_payload(ZHH_SERVER_URL, job_id, lines=400)
+        if capture_status == 200 and isinstance(capture_payload, dict):
+          candidate = str(capture_payload.get("full_log_path") or capture_payload.get("stdout_source") or "").strip()
+          if candidate:
+            candidate_path = Path(candidate)
+            if candidate_path.exists() and candidate_path.is_file():
+              captured_path = str(candidate_path)
+      except Exception:
+        captured_path = ""
+
+      if captured_path:
+        next_entry["full_log_path"] = captured_path
+      next_entry["output_log_path_checked_status"] = now_status
+      next_entry["output_log_path_checked_at"] = utc_now()
+
     if nickname:
       next_entry["nickname"] = nickname
     else:
@@ -439,6 +465,8 @@ def update_task_alert_state(conversation_id: str, conv: dict, jobs: list[dict]) 
     enriched["nickname"] = nickname
     enriched["unread"] = bool(next_entry.get("unread", False))
     enriched["alert_kind"] = str(next_entry.get("alert_kind") or "")
+    if str(next_entry.get("full_log_path") or "").strip():
+      enriched["full_log_path"] = str(next_entry.get("full_log_path") or "")
     updated_jobs.append(enriched)
 
   if prev_meta != next_meta:
@@ -627,7 +655,151 @@ def _local_task_log_payload(conv: dict, job_id: str, lines: int = 500, prefer_pa
   return None
 
 
+def _extract_launch_dirs_from_text(text: str) -> list[Path]:
+  raw = str(text or "")
+  repaired = raw
+  while True:
+    updated = re.sub(
+      r"(/kmh-nfs-ssd-us-mount/staging/[^\s\"'`]+/launch_[^\s\"'`]+)\n([A-Za-z0-9._/-]+)",
+      r"\1\2",
+      repaired,
+    )
+    if updated == repaired:
+      break
+    repaired = updated
+  matches = [m.group(0) for m in LAUNCH_DIR_HINT_PATTERN.finditer(repaired)]
+  if not matches:
+    return []
+  unique = list(dict.fromkeys(matches))
+  return [Path(item) for item in unique]
+
+
+def _find_latest_output_log_for_launch_dir(launch_dir: Path) -> Path | None:
+  logs_root = launch_dir / "logs"
+  if not logs_root.exists() or not logs_root.is_dir():
+    return None
+
+  best_id = -1
+  best_path: Path | None = None
+  for child in logs_root.iterdir():
+    if not child.is_dir():
+      continue
+    m = LOCAL_LOG_DIR_ID_PATTERN.match(child.name)
+    if not m:
+      continue
+    output_log = child / "output.log"
+    if not output_log.exists() or not output_log.is_file():
+      continue
+    try:
+      log_id = int(m.group(1))
+    except Exception:
+      continue
+    if log_id > best_id:
+      best_id = log_id
+      best_path = output_log
+  return best_path
+
+
+def _resolve_output_log_path_from_local_entry(conv: dict, job_id: str) -> str | None:
+  task_meta = conv.get("task_meta")
+  if not isinstance(task_meta, dict):
+    return None
+  entry = task_meta.get(job_id)
+  if not isinstance(entry, dict):
+    return None
+
+  for key in ("full_log_path", "resume_log_path"):
+    direct = str(entry.get(key) or "").strip()
+    if direct:
+      path = Path(direct)
+      if path.exists() and path.is_file():
+        return str(path)
+
+  for key in ("pane_log_file", "final_log_file", "cancel_log_file"):
+    candidate = str(entry.get(key) or "").strip()
+    if not candidate:
+      continue
+    path = Path(candidate)
+    if not path.exists() or not path.is_file():
+      continue
+    text = _read_text_file(path, max_chars=500_000)
+    for launch_dir in reversed(_extract_launch_dirs_from_text(text)):
+      output_log = _find_latest_output_log_for_launch_dir(launch_dir)
+      if output_log is not None:
+        return str(output_log)
+  return None
+
+
+def _build_task_reference_payload(
+  conversation_id: str,
+  conv: dict,
+  job_id: str,
+  *,
+  lines: int = 400,
+) -> tuple[str, str]:
+  status_code, payload = fetch_task_reference_payload(ZHH_SERVER_URL, job_id, lines=lines)
+  if status_code == 200 and isinstance(payload, dict) and "stdout" in payload:
+    source = str(payload.get("stdout_source") or "").strip()
+    full_log_path = str(payload.get("full_log_path") or "").strip()
+    stdout_text = str(payload.get("stdout", ""))
+
+    if full_log_path:
+      stdout_text = (
+        f"{stdout_text}\n\n"
+        "[Full log path]\n"
+        f"{full_log_path}\n"
+        "Use the path above to inspect the full output log; do not inline the whole file."
+      )
+
+      def save_full_path(c: dict):
+        task_meta = c.setdefault("task_meta", {})
+        entry = task_meta.get(job_id)
+        if not isinstance(entry, dict):
+          entry = {}
+        else:
+          entry = dict(entry)
+        if str(entry.get("full_log_path") or "") != full_log_path:
+          entry["full_log_path"] = full_log_path
+          entry["updated_at"] = utc_now()
+        task_meta[job_id] = entry
+
+      update_conversation(conversation_id, save_full_path)
+
+    ref_source = source if source and source != "zhh_log" else "tmux out"
+    return stdout_text, ref_source
+
+  local_output_path = _resolve_output_log_path_from_local_entry(conv, job_id)
+  if local_output_path:
+    output_text = _tail_text_file(Path(local_output_path), lines=lines)
+    if output_text.strip():
+      return (
+        f"{output_text}\n\n"
+        "[Full log path]\n"
+        f"{local_output_path}\n"
+        "Use the path above to inspect the full output log; do not inline the whole file.",
+        local_output_path,
+      )
+
+  local_payload = _local_task_log_payload(conv, job_id, lines=lines, prefer_pane=True)
+  if isinstance(local_payload, dict):
+    return str(local_payload.get("log") or ""), str(local_payload.get("log_path") or "local_file")
+
+  return "", "tmux out"
+
+
 def snapshot_task_log_before_cancel(conversation_id: str, job_id: str, *, lines: int = 2000) -> str | None:
+  full_output_log_path = ""
+  try:
+    ref_status, ref_payload = fetch_task_reference_payload(ZHH_SERVER_URL, job_id, lines=1200)
+    if ref_status == 200 and isinstance(ref_payload, dict):
+      full_output_log_path = str(ref_payload.get("full_log_path") or ref_payload.get("stdout_source") or "").strip()
+      if full_output_log_path:
+        p = Path(full_output_log_path)
+        if not p.exists() or not p.is_file():
+          full_output_log_path = ""
+  except Exception:
+    full_output_log_path = ""
+
   try:
     status_code, payload = fetch_task_log_payload(ZHH_SERVER_URL, job_id, lines=lines)
   except Exception:
@@ -656,6 +828,8 @@ def snapshot_task_log_before_cancel(conversation_id: str, job_id: str, *, lines:
     else:
       entry = dict(entry)
     entry["cancel_log_file"] = str(snapshot_path)
+    if full_output_log_path:
+      entry["full_log_path"] = full_output_log_path
     entry["updated_at"] = utc_now()
     task_meta[job_id] = entry
 
@@ -955,28 +1129,11 @@ def auto_iterate_agent_turn(
   ref_sources: dict[str, str] = {}
   consumed_ref_ids: list[str] = []
   for job_id in normalized_refs:
-    status_code, payload = fetch_task_reference_payload(ZHH_SERVER_URL, job_id, lines=400)
-    if status_code == 200 and isinstance(payload, dict) and "stdout" in payload:
-      source = str(payload.get("stdout_source") or "").strip()
-      full_log_path = str(payload.get("full_log_path") or "").strip()
-      if source and source != "zhh_log":
-        ref_sources[job_id] = source
-      else:
-        ref_sources[job_id] = "tmux out"
-      stdout_text = str(payload.get("stdout", ""))
-      if full_log_path:
-        stdout_text = (
-          f"{stdout_text}\n\n"
-          "[Full log path]\n"
-          f"{full_log_path}\n"
-          "Use the path above to inspect the full output log; do not inline the whole file."
-        )
-      if stdout_text.strip():
-        consumed_ref_ids.append(job_id)
-      refs_payload.append({"stdout": stdout_text})
-    else:
-      ref_sources[job_id] = "tmux out"
-      refs_payload.append({"stdout": ""})
+    stdout_text, source = _build_task_reference_payload(conversation_id, conv, job_id, lines=400)
+    ref_sources[job_id] = source
+    if stdout_text.strip():
+      consumed_ref_ids.append(job_id)
+    refs_payload.append({"stdout": stdout_text})
 
   prompt_text = build_prompt_with_task_refs(text, refs_payload)
   append_message(conversation_id, "user", text, {
@@ -1738,30 +1895,11 @@ def api_send_message(conversation_id: str):
     refs_payload: list[dict] = []
     ref_sources: dict[str, str] = {}
     for job_id in normalized_refs:
-      status_code, payload = fetch_task_reference_payload(ZHH_SERVER_URL, job_id, lines=400)
-      if status_code == 200 and isinstance(payload, dict) and "stdout" in payload:
-        source = str(payload.get("stdout_source") or "").strip()
-        full_log_path = str(payload.get("full_log_path") or "").strip()
-        if source and source != "zhh_log":
-          ref_sources[job_id] = source
-        else:
-          ref_sources[job_id] = "tmux out"
-        stdout_text = str(payload.get("stdout", ""))
-        if full_log_path:
-          stdout_text = (
-            f"{stdout_text}\n\n"
-            "[Full log path]\n"
-            f"{full_log_path}\n"
-            "Use the path above to inspect the full output log; do not inline the whole file."
-          )
-        refs_payload.append({
-          "stdout": stdout_text,
-        })
-      else:
-        ref_sources[job_id] = "tmux out"
-        refs_payload.append({
-          "stdout": "",
-        })
+      stdout_text, source = _build_task_reference_payload(conversation_id, conv, job_id, lines=400)
+      ref_sources[job_id] = source
+      refs_payload.append({
+        "stdout": stdout_text,
+      })
 
     prompt_text = build_prompt_with_task_refs(text, refs_payload)
     append_message(conversation_id, "user", text, {

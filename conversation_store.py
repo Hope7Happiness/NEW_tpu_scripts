@@ -46,7 +46,10 @@ def conversation_summary(conv: dict, workdir_base_fn) -> dict:
             task_unread_count += 1
             if str(value.get("alert_kind") or "").lower() == "failed":
                 task_has_failed_unread = True
-    last_message = messages[-1]["content"] if messages else ""
+    last_message_obj = messages[-1] if messages and isinstance(messages[-1], dict) else {}
+    last_message = str(last_message_obj.get("content") or "")
+    last_message_role = str(last_message_obj.get("role") or "")
+    last_message_created_at = last_message_obj.get("created_at")
     return {
         "id": conv["id"],
         "title": conv.get("title") or "Untitled",
@@ -65,6 +68,10 @@ def conversation_summary(conv: dict, workdir_base_fn) -> dict:
         "task_has_unread": task_unread_count > 0,
         "task_has_failed_unread": task_has_failed_unread,
         "last_message_preview": last_message[:120],
+        "last_message_role": last_message_role,
+        "last_message_created_at": last_message_created_at,
+        "last_error": str(conv.get("last_error") or ""),
+        "auto_iterate_last_error": str(conv.get("auto_iterate_last_error") or ""),
     }
 
 
