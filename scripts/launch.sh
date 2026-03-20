@@ -283,7 +283,7 @@ run_job(){
     trap killer_trap INT
 
     cd $STAGE_DIR && \
-    gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command "$DBG_COMMANDS && cd $STAGE_DIR && $COMMAND" 2>&1 | stdbuf -oL -eL sudo tee -a $LOG_DIR/output.log
+    $CUSTOM_GCLOUD_EXE compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command "$DBG_COMMANDS && cd $STAGE_DIR && $COMMAND" 2>&1 | stdbuf -oL -eL sudo tee -a $LOG_DIR/output.log
 
     status=${PIPESTATUS[0]}   # this get the return code of gcloud
     unset FAST_DEBUG # when job preempted/finished, reset FAST_DEBUG
