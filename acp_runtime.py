@@ -1,165 +1,129 @@
 from __future__ import annotations
 
 import json
-import queue
+import os
 import subprocess
 import threading
 import time
+from pathlib import Path
 from typing import Callable
-from collections import deque
 
 
-class ACPClient:
-    def __init__(self, agent_path: str, cwd: str):
-        self.agent_path = agent_path
-        self.cwd = cwd
-        self.proc = None
-        self.pending: dict[int, queue.Queue] = {}
-        self.pending_lock = threading.Lock()
-        self.updates: queue.Queue = queue.Queue()
-        self._recent_stderr = deque(maxlen=30)
-        self._next_id = 1
+class CLIPromptCanceler:
+    def __init__(self):
+        self._proc: subprocess.Popen[str] | None = None
+        self._lock = threading.Lock()
 
-    def start(self):
-        self.proc = subprocess.Popen(
-            [self.agent_path, "acp"],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            bufsize=1,
-            cwd=self.cwd,
-        )
-        threading.Thread(target=self._read_stdout, daemon=True).start()
-        threading.Thread(target=self._read_stderr, daemon=True).start()
+    def attach(self, proc: subprocess.Popen[str]) -> None:
+        with self._lock:
+            self._proc = proc
 
-    def close(self):
-        if not self.proc:
+    def close(self) -> None:
+        with self._lock:
+            proc = self._proc
+        if not proc:
             return
-        if self.proc.poll() is None:
+        if proc.poll() is None:
             try:
-                self.proc.stdin.close()
-            except Exception:
-                pass
-            try:
-                self.proc.terminate()
-                self.proc.wait(timeout=3)
+                proc.terminate()
+                proc.wait(timeout=2)
             except Exception:
                 try:
-                    self.proc.kill()
+                    proc.kill()
                 except Exception:
                     pass
 
-    def _read_stdout(self):
-        for line in self.proc.stdout:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                msg = json.loads(line)
-            except json.JSONDecodeError:
-                continue
 
-            if "id" in msg and ("result" in msg or "error" in msg):
-                with self.pending_lock:
-                    waiter = self.pending.pop(msg["id"], None)
-                if waiter is not None:
-                    waiter.put(msg)
-                continue
-
-            if msg.get("method") == "session/request_permission":
-                self.respond(msg["id"], {
-                    "outcome": {"outcome": "selected", "optionId": "allow-once"}
-                })
-                continue
-
-            if msg.get("method") == "session/update":
-                self.updates.put(msg)
-
-    def _read_stderr(self):
-        for line in self.proc.stderr:
-            self._recent_stderr.append(line.rstrip("\n"))
-
-    def request(
-        self,
-        method: str,
-        params: dict,
-        timeout: float = 120.0,
-        cancel_event: threading.Event | None = None,
-    ) -> dict:
-        request_id = self._next_id
-        self._next_id += 1
-
-        waiter: queue.Queue = queue.Queue(maxsize=1)
-        with self.pending_lock:
-            self.pending[request_id] = waiter
-
-        payload = {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "method": method,
-            "params": params,
-        }
-        self.proc.stdin.write(json.dumps(payload) + "\n")
-        self.proc.stdin.flush()
-
-        started_at = time.time()
-        msg = None
-        while True:
-            if cancel_event is not None and cancel_event.is_set():
-                with self.pending_lock:
-                    self.pending.pop(request_id, None)
-                raise InterruptedError(f"{method} canceled")
-
-            elapsed = time.time() - started_at
-            remaining = timeout - elapsed
-            if remaining <= 0:
-                with self.pending_lock:
-                    self.pending.pop(request_id, None)
-                stderr_tail = " | ".join(list(self._recent_stderr)[-5:])
-                proc_state = "exited" if (self.proc and self.proc.poll() is not None) else "running"
-                detail = f"{method} timed out after {timeout}s (agent process {proc_state})"
-                if stderr_tail:
-                    detail += f"; stderr: {stderr_tail}"
-                raise RuntimeError(detail)
-
-            wait_for = min(0.2, remaining)
-            try:
-                msg = waiter.get(timeout=wait_for)
-                break
-            except queue.Empty:
-                continue
-        if "error" in msg:
-            raise RuntimeError(msg["error"])
-        return msg["result"]
-
-    def respond(self, request_id: int, result: dict) -> None:
-        payload = {"jsonrpc": "2.0", "id": request_id, "result": result}
-        self.proc.stdin.write(json.dumps(payload) + "\n")
-        self.proc.stdin.flush()
+def _create_chat_session(agent_path: str, cwd: str, timeout: float) -> str:
+    result = subprocess.run(
+        [agent_path, "create-chat"],
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        raise RuntimeError(f"create-chat failed ({result.returncode}): {detail}")
+    session_id = (result.stdout or "").strip().splitlines()
+    if not session_id:
+        raise RuntimeError("create-chat returned empty session id")
+    return session_id[-1].strip()
 
 
-def extract_chunk_text(update_message: dict) -> str:
-    params = update_message.get("params") or {}
-    update = params.get("update") or {}
-    if update.get("sessionUpdate") != "agent_message_chunk":
-        return ""
-    content = update.get("content") or {}
-    if isinstance(content, dict):
-        return content.get("text") or ""
-    return ""
+def _parse_json_result(stdout_text: str) -> dict:
+    lines = [line.strip() for line in str(stdout_text or "").splitlines() if line.strip()]
+    for line in reversed(lines):
+        try:
+            payload = json.loads(line)
+        except Exception:
+            continue
+        if isinstance(payload, dict) and payload.get("type") == "result":
+            return payload
+    raise RuntimeError(f"agent did not return JSON result. stdout={stdout_text[-500:]}")
 
 
-def acp_initialize(client: ACPClient) -> None:
-    client.request("initialize", {
-        "protocolVersion": 1,
-        "clientCapabilities": {
-            "fs": {"readTextFile": False, "writeTextFile": False},
-            "terminal": False,
-        },
-        "clientInfo": {"name": "cursor-server", "version": "0.1"},
-    })
-    client.request("authenticate", {"methodId": "cursor_login"})
+def _run_cli_prompt(
+    agent_path: str,
+    cwd: str,
+    session_id: str,
+    text: str,
+    timeout: float,
+    cancel_event: threading.Event | None,
+    model_id: str | None,
+    mode: str,
+    force_allow: bool,
+    canceler: CLIPromptCanceler,
+) -> dict:
+    cmd = [
+        agent_path,
+        "--print",
+        "--output-format",
+        "json",
+        "--trust",
+        "--resume",
+        session_id,
+    ]
+    if force_allow:
+        cmd.append("--force")
+    if mode in {"plan", "ask"}:
+        cmd.extend(["--mode", mode])
+    if model_id:
+        cmd.extend(["--model", model_id])
+    cmd.append(text)
+
+    proc = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        text=True,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    canceler.attach(proc)
+
+    started_at = time.time()
+    while proc.poll() is None:
+        if cancel_event is not None and cancel_event.is_set():
+            canceler.close()
+            raise InterruptedError("session/prompt canceled")
+        if (time.time() - started_at) > timeout:
+            canceler.close()
+            raise RuntimeError(f"session/prompt timed out after {timeout:.1f}s (agent process running)")
+        time.sleep(0.1)
+
+    stdout_text, stderr_text = proc.communicate()
+    if proc.returncode != 0:
+        detail = (stderr_text or stdout_text or "").strip()
+        raise RuntimeError(f"session/prompt failed ({proc.returncode}): {detail}")
+
+    payload = _parse_json_result(stdout_text)
+    return {
+        "cursor_session_id": str(payload.get("session_id") or session_id),
+        "text": str(payload.get("result") or "").strip(),
+        "stop_reason": str(payload.get("subtype") or "success"),
+    }
 
 
 def acp_prompt_session(
@@ -170,58 +134,29 @@ def acp_prompt_session(
     cursor_session_id: str | None = None,
     timeout: float = 900.0,
     cancel_event: threading.Event | None = None,
-    on_client_ready: Callable[[ACPClient], None] | None = None,
+    on_client_ready: Callable[[CLIPromptCanceler], None] | None = None,
 ) -> dict:
-    client = ACPClient(agent_path, cwd)
-    try:
-        client.start()
-        if on_client_ready is not None:
-            on_client_ready(client)
-        acp_initialize(client)
-        if cursor_session_id:
-            client.request("session/load", {
-                "sessionId": cursor_session_id,
-                "cwd": cwd,
-                "mcpServers": [],
-                "mode": mode,
-            })
-            active_session_id = cursor_session_id
-        else:
-            new_session = client.request("session/new", {
-                "cwd": cwd,
-                "mcpServers": [],
-                "mode": mode,
-            })
-            active_session_id = new_session["sessionId"]
+    model_id = str(os.environ.get("CURSOR_CLI_MODEL") or "").strip() or None
+    force_allow_env = str(os.environ.get("CURSOR_CLI_FORCE_ALLOW", "1")).strip().lower()
+    force_allow = force_allow_env not in {"0", "false", "no", "off"}
+    resolved_cwd = str(Path(cwd).expanduser())
+    session_id = str(cursor_session_id or "").strip()
+    if not session_id:
+        session_id = _create_chat_session(agent_path, resolved_cwd, timeout=min(timeout, 120.0))
 
-        chunks: list[str] = []
-        stop_flag = {"done": False}
+    canceler = CLIPromptCanceler()
+    if on_client_ready is not None:
+        on_client_ready(canceler)
 
-        def pump_updates():
-            while not stop_flag["done"]:
-                try:
-                    update = client.updates.get(timeout=0.2)
-                except queue.Empty:
-                    continue
-                chunk = extract_chunk_text(update)
-                if chunk:
-                    chunks.append(chunk)
-
-        pump_thread = threading.Thread(target=pump_updates, daemon=True)
-        pump_thread.start()
-
-        result = client.request("session/prompt", {
-            "sessionId": active_session_id,
-            "prompt": [{"type": "text", "text": text}],
-        }, timeout=timeout, cancel_event=cancel_event)
-
-        stop_flag["done"] = True
-        pump_thread.join(timeout=1)
-
-        return {
-            "cursor_session_id": active_session_id,
-            "text": "".join(chunks).strip(),
-            "stop_reason": result.get("stopReason", "unknown"),
-        }
-    finally:
-        client.close()
+    return _run_cli_prompt(
+        agent_path=agent_path,
+        cwd=resolved_cwd,
+        session_id=session_id,
+        text=text,
+        timeout=timeout,
+        cancel_event=cancel_event,
+        model_id=model_id,
+        mode=str(mode or "agent").strip().lower(),
+        force_allow=force_allow,
+        canceler=canceler,
+    )
