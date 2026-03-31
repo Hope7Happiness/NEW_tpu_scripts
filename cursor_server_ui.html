@@ -97,6 +97,12 @@ body {
   transform: translateY(-0.5px);
   flex-shrink: 0;
 }
+#model-policy {
+  margin: 6px 0 8px;
+  font-size: 11px;
+  line-height: 1.35;
+  color: var(--muted);
+}
 #new-btn {
   width: 100%;
   border: 0;
@@ -419,6 +425,12 @@ body {
   padding: 9px 12px;
   box-shadow: none;
 }
+.msg.system.action-msg .system-banner {
+  background: linear-gradient(180deg, rgba(18, 105, 92, .96) 0%, rgba(14, 82, 72, .96) 100%);
+  color: #ddfff8;
+  border-top: 1px solid rgba(84, 219, 194, .6);
+  border-bottom: 1px solid rgba(84, 219, 194, .6);
+}
 .msg.user {
   align-items: flex-end;
 }
@@ -454,6 +466,9 @@ body {
 }
 .msg.system .system-banner .md-content a {
   color: #bba2ff;
+}
+.msg.system.action-msg .system-banner .md-content a {
+  color: #9ef2df;
 }
 .msg.user .bubble .md-content code {
   background: rgba(255, 255, 255, .42);
@@ -607,17 +622,6 @@ body {
   min-height: 48px;
   cursor: pointer;
 }
-#auto-iterate-btn {
-  width: 100%;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--panel-soft);
-  color: var(--text);
-  font-weight: 700;
-  font-size: 11px;
-  min-height: 32px;
-  cursor: pointer;
-}
 #send-btn:disabled, #new-btn:disabled {
   opacity: .55;
   cursor: default;
@@ -654,6 +658,20 @@ body {
   cursor: pointer;
   font-weight: 700;
   flex-shrink: 0;
+}
+#compact-btn {
+  border: 1px solid rgba(125, 171, 255, .34);
+  background: rgba(97, 153, 255, .14);
+  color: #b9d4ff;
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+#compact-btn:disabled {
+  opacity: .5;
+  cursor: default;
 }
 #delete-btn:disabled {
   opacity: .5;
@@ -1355,6 +1373,14 @@ button:disabled {
     overflow: hidden;
     text-overflow: ellipsis;
   }
+  #compact-btn {
+    padding: 8px 10px;
+    font-size: 12px;
+    max-width: 120px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   #messages {
     padding: 12px 10px;
   }
@@ -1420,10 +1446,6 @@ button:disabled {
     min-height: 34px;
     font-size: 12px;
   }
-  #auto-iterate-btn {
-    min-height: 28px;
-    font-size: 10px;
-  }
   #tasks-toolbar,
   #yaml-toolbar,
   #ka-toolbar {
@@ -1479,6 +1501,7 @@ button:disabled {
         <span class="brand-mark"><img src="/assets/curchat-180.png?v=5" alt="curchat"/></span>
         <span class="brand-name">CurChat</span>
       </h1>
+      <div id="model-policy">Model: __DEFAULT_MODEL__</div>
       <button id="new-btn" onclick="createConversation()">+ New conversation</button>
     </div>
     <ul id="conv-list"></ul>
@@ -1492,6 +1515,7 @@ button:disabled {
       </div>
       <div id="topbar-actions">
         <button id="sidebar-toggle-btn" onclick="toggleSidebarMobile()">Sessions</button>
+        <button id="compact-btn" onclick="compactCurrentConversation()" disabled>Compact</button>
         <button id="delete-btn" onclick="deleteCurrentConversation()" disabled>Delete session</button>
       </div>
     </div>
@@ -1510,7 +1534,6 @@ button:disabled {
           <button id="send-btn" onclick="sendMessage()" disabled>Send</button>
           <div id="quick-actions">
             <button id="run-quick-btn" onclick="runTaskQuickFromChat()" disabled>Run</button>
-            <button id="auto-iterate-btn" onclick="handleAutoIterateButton()" disabled>Auto Iterate</button>
           </div>
         </div>
         <div id="composer-ref-row"></div>
@@ -1522,6 +1545,15 @@ button:disabled {
         <input id="task-args" placeholder="Optional args, e.g. s / q / rr" />
         <button id="run-task-btn" onclick="runTaskForCurrentConversation()" disabled>Run</button>
         <button id="refresh-task-btn" onclick="loadTasksForCurrentConversation()" disabled>Refresh</button>
+        <select id="task-status-filter" onchange="applyTaskStatusFilter()" disabled>
+          <option value="all">All</option>
+          <option value="running">Running</option>
+          <option value="creating">Creating</option>
+          <option value="completed">Completed</option>
+          <option value="error">Error</option>
+          <option value="canceled">Canceled</option>
+        </select>
+        <button id="mark-read-btn" onclick="markAllTasksRead()" disabled>Mark All Read</button>
       </div>
       <div id="tasks-list"><div class="empty">No conversation selected.</div></div>
     </section>
@@ -1637,6 +1669,7 @@ let currentId = null;
 let currentConversation = null;
 let currentView = 'chat';
 let currentTasks = [];
+let taskStatusFilter = 'all';
 let conversationDrafts = {};
 let conversationTaskRefs = {};
 const sendingConversationIds = new Set();
@@ -1665,7 +1698,16 @@ let notificationAudioCtx = null;
 let lastNotificationSoundAt = 0;
 const BASE_DOCUMENT_TITLE = document.title || 'Cursor Server';
 const WORKDIR_ROOT = '__WORKDIR_ROOT__';
+const DEFAULT_MODEL = '__DEFAULT_MODEL__';
+const CONFIGURED_MODEL = '__CONFIGURED_MODEL__';
 const FILESYSTEM_ROOT = '/';
+let runtimeModelPolicy = {
+  configured_model: CONFIGURED_MODEL || 'default',
+  effective_model: DEFAULT_MODEL || CONFIGURED_MODEL || 'default',
+  force_auto_active: false,
+  force_auto_until: '',
+  force_auto_days_remaining: 0,
+};
 let pickerCurrentPath = WORKDIR_ROOT;
 let pickerSelectedPath = WORKDIR_ROOT;
 let createModalMode = 'directory';
@@ -1749,6 +1791,55 @@ function renderCurrentConversationStatus() {
   }
 }
 
+function daysLeftText(n) {
+  const v = Number(n || 0);
+  if (!Number.isFinite(v) || v <= 0) return '0 days';
+  if (v === 1) return '1 day';
+  return `${v} days`;
+}
+
+function renderModelPolicyBanner() {
+  const el = document.getElementById('model-policy');
+  if (!el) return;
+  const policy = runtimeModelPolicy || {};
+  const configured = String(policy.configured_model || CONFIGURED_MODEL || 'default');
+  const effective = String(policy.effective_model || configured || 'default');
+  if (effective === 'default' && policy.force_auto_active) {
+    const until = String(policy.force_auto_until || '').trim();
+    const left = daysLeftText(policy.force_auto_days_remaining);
+    const untilText = until ? ` (until ${until}, ${left})` : '';
+    el.textContent = `Model: auto · claude 4.6 in ${left}${untilText}`;
+    return;
+  }
+  if (policy.force_auto_active) {
+    const until = String(policy.force_auto_until || '').trim();
+    const left = daysLeftText(policy.force_auto_days_remaining);
+    const untilText = until ? ` (until ${until}, ${left})` : '';
+    el.textContent = `Model: ${effective} · claude 4.6 in ${left}${untilText}`;
+    return;
+  }
+  if (configured === 'default') {
+    el.textContent = `Model: ${effective} · claude 4.6 available now`;
+    return;
+  }
+  el.textContent = `Model: ${effective}`;
+}
+
+async function refreshModelPolicy() {
+  try {
+    const data = await api('/api/runtime/model-policy');
+    if (data && typeof data === 'object') {
+      runtimeModelPolicy = {
+        ...runtimeModelPolicy,
+        ...data,
+      };
+    }
+  } catch (_) {
+    // keep last known value
+  }
+  renderModelPolicyBanner();
+}
+
 function setStatus(text, kind = 'normal', conversationId = null) {
   const targetConversationId = conversationId || currentId;
   if (targetConversationId) {
@@ -1805,16 +1896,8 @@ function refreshComposerControls() {
   const busyCurrent = hasCurrent && sendingConversationIds.has(currentId);
   const summary = hasCurrent ? (conversationSummariesById[currentId] || {}) : {};
   const autoRunning = !!(summary && summary.auto_iterating);
-  const autoStopping = autoRunning && String(summary.status || '').toLowerCase() === 'stopping';
   document.getElementById('send-btn').disabled = !hasCurrent || !draftText.trim() || busyCurrent || autoRunning;
   document.getElementById('run-quick-btn').disabled = !hasCurrent;
-  const autoBtn = document.getElementById('auto-iterate-btn');
-  if (autoBtn) {
-    autoBtn.textContent = autoStopping
-      ? 'Stopping...'
-      : (autoRunning ? 'Stop Auto Iterate' : 'Auto Iterate');
-    autoBtn.disabled = !hasCurrent || busyCurrent || autoStopping || (!autoRunning && !draftText.trim());
-  }
 }
 
 function getTaskRefsForConversation(conversationId) {
@@ -2193,6 +2276,7 @@ async function pollTaskNotifications() {
       }
     }
     const refreshed = await api('/api/conversations');
+    await refreshModelPolicy();
     const latest = Array.isArray(refreshed.conversations) ? refreshed.conversations : [];
     const events = collectNotificationEvents(latest);
     dispatchNotificationEvents(events, latest);
@@ -2213,6 +2297,7 @@ function startTaskNotificationPolling() {
 
 async function bootstrapConversations() {
   setupNotificationCapabilities();
+  renderModelPolicyBanner();
   await pollTaskNotifications();
   if (!Object.keys(conversationSummariesById || {}).length) {
     await loadConversations();
@@ -2961,9 +3046,14 @@ async function openConversation(id, updateList = true) {
   renderPendingTaskRefs();
   renderCurrentConversationStatus();
   refreshComposerControls();
-  document.getElementById('delete-btn').disabled = currentConversation.status === 'running';
+  const statusLower = String(currentConversation.status || '').toLowerCase();
+  const lockedSession = ['running', 'debugging'].includes(statusLower);
+  document.getElementById('delete-btn').disabled = lockedSession;
+  document.getElementById('compact-btn').disabled = lockedSession;
   document.getElementById('run-task-btn').disabled = false;
   document.getElementById('refresh-task-btn').disabled = false;
+  document.getElementById('task-status-filter').disabled = false;
+  document.getElementById('mark-read-btn').disabled = false;
   if (isNarrowScreen()) {
     setSidebarHiddenMobile(true);
   }
@@ -3012,8 +3102,9 @@ function conversationHasJob(jobId) {
 function renderSystemTaskCard(job, removedFromConversation = false) {
   const jobId = String((job && job.job_id) || 'unknown');
   const statusRaw = String((job && job.status) || 'unknown');
+  const statusDisplayRaw = String((job && job.display_status) || statusRaw || 'unknown');
   const effectiveStatusRaw = removedFromConversation ? 'removed' : statusRaw;
-  const status = removedFromConversation ? '[removed]' : taskDisplayStatus(effectiveStatusRaw);
+  const status = removedFromConversation ? '[removed]' : taskDisplayStatus(statusDisplayRaw);
   const args = String((job && job.zhh_args) || '');
   const nickname = String((job && job.nickname) || '').trim();
   const createdAt = String((job && job.created_at) || '-');
@@ -3055,8 +3146,19 @@ function renderConversation(conv) {
   document.getElementById('title').textContent = basenameFromPath(conv.cwd) || conv.title || 'Untitled';
   const summary = conversationSummariesById[conv.id] || { id: conv.id, status: conv.status };
   const statusText = effectiveConversationStatus(summary);
-  document.getElementById('meta').textContent = `${statusText} · ${conv.cwd}`;
+  const modelText = String(
+    (conv && conv.current_model)
+    || (summary && summary.current_model)
+    || (runtimeModelPolicy && runtimeModelPolicy.effective_model)
+    || DEFAULT_MODEL
+    || 'default'
+  );
+  document.getElementById('meta').textContent = `${statusText} · model=${modelText} · ${conv.cwd}`;
   const messages = document.getElementById('messages');
+  const prevScrollTop = messages.scrollTop;
+  const prevScrollHeight = messages.scrollHeight;
+  const prevBottomGap = prevScrollHeight - prevScrollTop;
+  const wasNearBottom = (prevScrollHeight - (prevScrollTop + messages.clientHeight)) <= 80;
   messages.innerHTML = '';
   if (!conv.messages || !conv.messages.length) {
     messages.innerHTML = '<div class="empty">No messages yet.</div>';
@@ -3064,6 +3166,9 @@ function renderConversation(conv) {
     for (const m of conv.messages) {
       const wrap = document.createElement('div');
       wrap.className = 'msg ' + m.role;
+      if (m && m.role === 'system' && m.system_event === 'agent_action_run_job') {
+        wrap.classList.add('action-msg');
+      }
       const refSources = (m && typeof m.task_ref_sources === 'object' && m.task_ref_sources) ? m.task_ref_sources : {};
       const refs = (m.task_refs || []).map(jobId => {
         const sourceRaw = refSources ? refSources[jobId] : '';
@@ -3106,7 +3211,11 @@ function renderConversation(conv) {
       messages.appendChild(wrap);
     }
   }
-  messages.scrollTop = messages.scrollHeight;
+  if (wasNearBottom) {
+    messages.scrollTop = messages.scrollHeight;
+  } else {
+    messages.scrollTop = Math.max(0, messages.scrollHeight - prevBottomGap);
+  }
 }
 
 function renderPendingTaskRefs() {
@@ -3169,9 +3278,12 @@ function resetConversationView() {
   document.getElementById('tasks-list').innerHTML = '<div class="empty">No conversation selected.</div>';
   document.getElementById('input').value = '';
   refreshComposerControls();
+  document.getElementById('compact-btn').disabled = true;
   document.getElementById('delete-btn').disabled = true;
   document.getElementById('run-task-btn').disabled = true;
   document.getElementById('refresh-task-btn').disabled = true;
+  document.getElementById('task-status-filter').disabled = true;
+  document.getElementById('mark-read-btn').disabled = true;
   renderYamlUnavailable('No conversation selected.');
   renderKaUnavailable('No conversation selected.');
   renderPendingTaskRefs();
@@ -3192,6 +3304,7 @@ async function deleteCurrentConversation() {
   const deletingId = currentId;
   try {
     document.getElementById('delete-btn').disabled = true;
+    document.getElementById('compact-btn').disabled = true;
     setStatus('Deleting session...', 'busy');
     await api(`/api/conversations/${deletingId}`, { method: 'DELETE' });
     delete conversationDrafts[deletingId];
@@ -3205,9 +3318,36 @@ async function deleteCurrentConversation() {
     setStatus('Session deleted.', 'success');
   } catch (err) {
     if (currentConversation) {
-      document.getElementById('delete-btn').disabled = currentConversation.status === 'running';
+      const statusLower = String(currentConversation.status || '').toLowerCase();
+      const lockedSession = ['running', 'debugging'].includes(statusLower);
+      document.getElementById('delete-btn').disabled = lockedSession;
+      document.getElementById('compact-btn').disabled = lockedSession;
     }
     setStatus('Delete failed: ' + err.message, 'error');
+  }
+}
+
+async function compactCurrentConversation() {
+  if (!currentId) return;
+  const ok = confirm('Compact this conversation context now? This will reset session context and keep only a summary for subsequent turns.');
+  if (!ok) return;
+  const compactId = currentId;
+  try {
+    document.getElementById('compact-btn').disabled = true;
+    setStatus('Compacting conversation context...', 'busy', compactId);
+    await api(`/api/conversations/${compactId}/compact`, { method: 'POST' });
+    await loadConversations(compactId);
+    if (currentId === compactId) {
+      await openConversation(compactId, false);
+    }
+    setStatus('Conversation compacted.', 'success', compactId);
+  } catch (err) {
+    setStatus('Compaction failed: ' + err.message, 'error', compactId);
+  } finally {
+    if (currentConversation && currentId === compactId) {
+      const statusLower = String(currentConversation.status || '').toLowerCase();
+      document.getElementById('compact-btn').disabled = ['running', 'debugging'].includes(statusLower);
+    }
   }
 }
 
@@ -3277,7 +3417,10 @@ async function sendMessage() {
     sendingConversationIds.delete(targetId);
     refreshComposerControls();
     if (currentConversation) {
-      document.getElementById('delete-btn').disabled = currentConversation.status === 'running';
+      const statusLower = String(currentConversation.status || '').toLowerCase();
+      const lockedSession = ['running', 'debugging'].includes(statusLower);
+      document.getElementById('delete-btn').disabled = lockedSession;
+      document.getElementById('compact-btn').disabled = lockedSession;
     }
   }
 }
@@ -3309,17 +3452,30 @@ function renderTasks(items, conversationId = currentId) {
     return;
   }
   const root = document.getElementById('tasks-list');
-  if (!items || !items.length) {
+  const sourceItems = Array.isArray(items) ? items : [];
+  const filterValue = String(taskStatusFilter || 'all').toLowerCase();
+  const filteredItems = sourceItems.filter(job => {
+    if (!job || filterValue === 'all') return true;
+    const status = String(job.status || '').toLowerCase();
+    const displayStatus = String(job.display_status || status || '').toLowerCase();
+    if (filterValue === 'creating') return displayStatus === 'creating';
+    if (filterValue === 'error') return ['error', 'failed', 'timeout', 'aborted'].includes(status);
+    if (filterValue === 'canceled') return ['canceled', 'cancelled'].includes(status);
+    return status === filterValue;
+  });
+
+  if (!filteredItems.length) {
     root.innerHTML = '<div class="empty">No tasks in this conversation yet.</div>';
     return;
   }
 
   root.innerHTML = '';
-  for (const [jobIndex, job] of items.entries()) {
+  for (const [jobIndex, job] of filteredItems.entries()) {
     const div = document.createElement('div');
     div.className = 'task-item';
     const jobId = String(job.job_id || 'unknown');
     const status = job.status || 'unknown';
+    const displayStatus = job.display_status || status;
     const args = job.zhh_args || '';
     const nickname = (job.nickname || '').trim();
     const createdAt = job.created_at || '-';
@@ -3342,7 +3498,7 @@ function renderTasks(items, conversationId = currentId) {
           ${nickname ? `<span class="task-tag nickname">🏷 ${escapeHtml(nickname)}</span>` : ''}
           ${taskAlertHtml}
         </div>
-        <div class="task-status ${taskStatusClass(status)}">${escapeHtml(status)}</div>
+        <div class="task-status ${taskStatusClass(status)}">${escapeHtml(displayStatus)}</div>
       </div>
       <div class="task-meta">args: ${escapeHtml(args)} · created: ${escapeHtml(createdAt)}</div>
       <div class="task-actions">
@@ -3449,6 +3605,8 @@ async function loadTasksForCurrentConversation(silent = false) {
   const targetId = currentId;
   if (!targetId) {
     document.getElementById('tasks-list').innerHTML = '<div class="empty">No conversation selected.</div>';
+    document.getElementById('task-status-filter').disabled = true;
+    document.getElementById('mark-read-btn').disabled = true;
     return;
   }
   try {
@@ -3488,6 +3646,8 @@ async function runTaskForCurrentConversation(argsOverride = null, conversationId
       ? document.getElementById('task-args').value.trim()
       : String(argsOverride);
     document.getElementById('run-task-btn').disabled = true;
+    document.getElementById('task-status-filter').disabled = true;
+    document.getElementById('mark-read-btn').disabled = true;
     setStatus('Creating task in /run...', 'busy', targetId);
     const runData = await api(`/api/conversations/${targetId}/tasks/run`, {
       method: 'POST',
@@ -3507,87 +3667,14 @@ async function runTaskForCurrentConversation(argsOverride = null, conversationId
     return null;
   } finally {
     document.getElementById('run-task-btn').disabled = !currentId;
+    document.getElementById('task-status-filter').disabled = !currentId;
+    document.getElementById('mark-read-btn').disabled = !currentId;
     refreshComposerControls();
   }
 }
 
 async function runTaskQuickFromChat() {
   await runTaskForCurrentConversation('');
-}
-
-async function handleAutoIterateButton() {
-  const targetId = currentId;
-  if (!targetId) return;
-  const summary = conversationSummariesById[targetId] || {};
-  if (summary.auto_iterating) {
-    await stopAutoIteration();
-    return;
-  }
-  await startAutoIteration();
-}
-
-async function startAutoIteration() {
-  const targetId = currentId;
-  const input = document.getElementById('input');
-  const firstText = String((input && input.value) || '').trim();
-  if (!targetId) return;
-  if (!firstText) {
-    setStatus('Auto iterate requires message text in the input box.', 'error');
-    return;
-  }
-  const summary = conversationSummariesById[targetId] || {};
-  if (summary.auto_iterating) {
-    setStatus('Auto iterate is already running for this conversation.', 'busy');
-    return;
-  }
-
-  try {
-    setStatus('Starting backend auto iterate...', 'busy', targetId);
-    await api(`/api/conversations/${targetId}/auto-iterate/start`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ text: firstText, max_rounds: 8 })
-    });
-
-    conversationDrafts[targetId] = '';
-    if (currentId === targetId && input) {
-      input.value = '';
-    }
-    await loadConversations(targetId);
-    if (currentId === targetId) {
-      await openConversation(targetId, false);
-    }
-    setStatus('Auto iterate running in backend.', 'success', targetId);
-  } catch (err) {
-    setStatus('Auto iterate failed: ' + (err && err.message ? err.message : String(err)), 'error', targetId);
-  }
-  refreshComposerControls();
-}
-
-async function stopAutoIteration() {
-  const targetId = currentId;
-  if (!targetId) return;
-  try {
-    setStatus('Stopping auto iterate...', 'busy', targetId);
-    if (conversationSummariesById[targetId]) {
-      conversationSummariesById[targetId].status = 'stopping';
-      conversationSummariesById[targetId].auto_iterating = true;
-    }
-    refreshComposerControls();
-    renderCurrentConversationStatus();
-    await api(`/api/conversations/${targetId}/auto-iterate/stop`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-    });
-    await loadConversations(targetId);
-    if (currentId === targetId) {
-      await openConversation(targetId, false);
-    }
-    setStatus('Stop signal sent for auto iterate.', 'success', targetId);
-  } catch (err) {
-    setStatus('Stop auto iterate failed: ' + (err && err.message ? err.message : String(err)), 'error', targetId);
-  }
-  refreshComposerControls();
 }
 
 async function cancelTask(jobId) {
@@ -3615,6 +3702,35 @@ async function resumeTask(jobId) {
     setStatus('Task resumed as a new job.', 'success');
   } catch (err) {
     setStatus('Resume failed: ' + err.message, 'error');
+  }
+}
+
+async function markAllTasksRead() {
+  if (!currentId) return;
+  try {
+    setStatus('Marking all tasks as read...', 'busy');
+    await api(`/api/conversations/${currentId}/tasks/mark-all-read`, { method: 'POST' });
+    if (currentConversation && currentConversation.task_meta) {
+      for (const key of Object.keys(currentConversation.task_meta)) {
+        const entry = currentConversation.task_meta[key];
+        if (!entry || typeof entry !== 'object') continue;
+        entry.unread = false;
+        entry.alert_kind = '';
+      }
+    }
+    await loadTasksForCurrentConversation();
+    pollTaskNotifications();
+    setStatus('All task notifications marked as read.', 'success');
+  } catch (err) {
+    setStatus('Mark-all-read failed: ' + err.message, 'error');
+  }
+}
+
+function applyTaskStatusFilter() {
+  const el = document.getElementById('task-status-filter');
+  taskStatusFilter = String((el && el.value) || 'all').toLowerCase();
+  if (currentId) {
+    renderTasks(currentTasks || [], currentId);
   }
 }
 
@@ -3663,6 +3779,12 @@ async function openTaskWandb(jobId) {
       throw new Error('wandb link not found');
     }
     window.open(url, '_blank', 'noopener,noreferrer');
+    if (currentConversation && currentConversation.task_meta && currentConversation.task_meta[jobId]) {
+      currentConversation.task_meta[jobId].unread = false;
+      currentConversation.task_meta[jobId].alert_kind = '';
+    }
+    await loadTasksForCurrentConversation();
+    pollTaskNotifications();
     setStatus('Opened wandb link.', 'success');
   } catch (err) {
     setStatus('Open wandb failed: ' + err.message, 'error');

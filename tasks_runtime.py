@@ -1,8 +1,6 @@
 from __future__ import annotations
 
 import json
-import re
-from pathlib import Path
 from urllib import error as urllib_error
 from urllib import request as urllib_request
 
@@ -110,65 +108,19 @@ def fetch_task_log_payload(zhh_server_url: str, job_id: str, lines: int = 400) -
     return zhh_request(zhh_server_url, "GET", f"/log/{job_id}?lines={lines}")
 
 
-LAUNCH_DIR_PATTERN = re.compile(r"/kmh-nfs-ssd-us-mount/staging/[^\s\"'`]+/launch_[^/\s\"'`]+")
-LOG_DIR_ID_PATTERN = re.compile(r"^log(\d+)_")
+def fetch_task_output_log_path(zhh_server_url: str, job_id: str) -> tuple[int, str | None, dict]:
+    status_code, payload = zhh_request(zhh_server_url, "GET", f"/status/{job_id}")
+    if status_code != 200 or not isinstance(payload, dict):
+        return status_code, None, payload if isinstance(payload, dict) else {"error": f"status code {status_code}"}
 
+    output_log = str(payload.get("output_log") or "").strip()
+    if not output_log:
+        return 404, None, {
+            "error": f"output_log unavailable for job {job_id}; ensure /job-log-dir/{job_id} was reported",
+            "detail": payload,
+        }
 
-def _extract_launch_dirs(text: str) -> list[Path]:
-    raw = str(text or "")
-    repaired = raw
-    while True:
-        updated = re.sub(
-            r"(/kmh-nfs-ssd-us-mount/staging/[^\s\"'`]+/launch_[^\s\"'`]+)\n([A-Za-z0-9._/-]+)",
-            r"\1\2",
-            repaired,
-        )
-        if updated == repaired:
-            break
-        repaired = updated
-
-    matches = [m.group(0) for m in LAUNCH_DIR_PATTERN.finditer(repaired)]
-    if not matches:
-        return []
-    unique_in_order = list(dict.fromkeys(matches))
-    return [Path(item) for item in unique_in_order]
-
-
-def _find_latest_output_log(launch_dir: Path) -> Path | None:
-    logs_root = launch_dir / "logs"
-    if not logs_root.exists() or not logs_root.is_dir():
-        return None
-
-    best_id = -1
-    best_path: Path | None = None
-    for child in logs_root.iterdir():
-        if not child.is_dir():
-            continue
-        m = LOG_DIR_ID_PATTERN.match(child.name)
-        if not m:
-            continue
-        output_log = child / "output.log"
-        if not output_log.exists() or not output_log.is_file():
-            continue
-        try:
-            log_id = int(m.group(1))
-        except Exception:
-            continue
-        if log_id > best_id:
-            best_id = log_id
-            best_path = output_log
-
-    return best_path
-
-
-def _read_text_file(path: Path, max_chars: int = 120_000) -> str:
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except Exception:
-        return ""
-    if len(text) <= max_chars:
-        return text
-    return text[-max_chars:]
+    return 200, output_log, payload
 
 
 def fetch_task_reference_payload(zhh_server_url: str, job_id: str, lines: int = 400) -> tuple[int, dict]:
@@ -177,28 +129,15 @@ def fetch_task_reference_payload(zhh_server_url: str, job_id: str, lines: int = 
         return status_code, payload
 
     base_stdout = str(payload.get("log", ""))
-    launch_dirs = _extract_launch_dirs(base_stdout)
-
-    selected_output = ""
-    selected_source = ""
-    for launch_dir in reversed(launch_dirs):
-        latest_output = _find_latest_output_log(launch_dir)
-        if latest_output is None:
-            continue
-        content = _read_text_file(latest_output)
-        if content.strip():
-            selected_output = content
-            selected_source = str(latest_output)
-            break
+    output_status, output_path, output_payload = fetch_task_output_log_path(zhh_server_url, job_id)
+    if output_status != 200 or not output_path:
+        err = output_payload if isinstance(output_payload, dict) else {"error": f"status code {output_status}"}
+        return output_status, err
 
     merged = dict(payload)
-    if selected_output:
-        merged["stdout"] = base_stdout
-        merged["stdout_source"] = selected_source
-        merged["full_log_path"] = selected_source
-    else:
-        merged["stdout"] = base_stdout
-        merged["stdout_source"] = "zhh_log"
+    merged["stdout"] = base_stdout
+    merged["stdout_source"] = output_path
+    merged["full_log_path"] = output_path
 
     return status_code, merged
 

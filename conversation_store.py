@@ -62,8 +62,8 @@ def conversation_summary(conv: dict, workdir_base_fn) -> dict:
         "updated_at": conv.get("updated_at"),
         "message_count": len(messages),
         "task_count": len(job_ids),
-        "auto_iterating": bool(conv.get("auto_iterating", False)),
-        "auto_iterate_round": conv.get("auto_iterate_round", 0),
+        "auto_iterating": False,
+        "auto_iterate_round": 0,
         "task_unread_count": task_unread_count,
         "task_has_unread": task_unread_count > 0,
         "task_has_failed_unread": task_has_failed_unread,
@@ -71,7 +71,8 @@ def conversation_summary(conv: dict, workdir_base_fn) -> dict:
         "last_message_role": last_message_role,
         "last_message_created_at": last_message_created_at,
         "last_error": str(conv.get("last_error") or ""),
-        "auto_iterate_last_error": str(conv.get("auto_iterate_last_error") or ""),
+        "auto_iterate_last_error": "",
+        "current_model": str(conv.get("current_model") or ""),
     }
 
 

@@ -124,7 +124,7 @@ curl http://localhost:8080/status/4f771738-a452-4bab-98c3-39be046c7215
 
 ### 4. 取消任务 (POST /cancel/<job_id>)
 
-先向任务对应的 tmux pane 发送 `Ctrl+C`，再关闭 tmux window，并从任务列表中删除。
+向任务对应的 tmux pane 发送 `Ctrl+C`（不再强制 kill window），并立即返回取消结果，同时从任务列表中删除。
 
 **请求：**
 ```bash
@@ -226,7 +226,37 @@ curl -X POST http://localhost:8080/resume \
 
 ---
 
-### 7. 健康检查 (GET /health)
+### 7. 记录任务日志目录 (POST /job-log-dir/<job_id>)
+
+用于把运行时生成的 `log_dir` 回传到 server，对应任务会更新以下字段：
+- `log_dir`
+- `output_log`（自动拼接为 `log_dir/output.log`）
+
+通常由 `launch.sh` 自动调用，不需要手动调用。
+
+**请求示例：**
+```bash
+curl -X POST http://localhost:8080/job-log-dir/4f771738-a452-4bab-98c3-39be046c7215 \
+  --data-urlencode "log_dir=/kmh-nfs-ssd-us-mount/staging/.../logs/log1_xxx"
+```
+
+**参数：**
+- `job_id` (路径参数): 任务 ID
+- `log_dir` (必填): 该任务实际日志目录
+
+**响应示例：**
+```json
+{
+  "job_id": "4f771738-a452-4bab-98c3-39be046c7215",
+  "status": "running",
+  "log_dir": "/kmh-nfs-ssd-us-mount/staging/.../logs/log1_xxx",
+  "output_log": "/kmh-nfs-ssd-us-mount/staging/.../logs/log1_xxx/output.log"
+}
+```
+
+---
+
+### 8. 健康检查 (GET /health)
 
 **请求：**
 ```bash
@@ -343,6 +373,7 @@ tmux capture-pane -t zhh_4f771738 -p | tail -50
 4. **resume 路径规则**: `/resume` 会基于 `log_path/log_dir` 推导到 `../..` 目录执行 `main.sh rr`
 5. **任务完成后 session 会退出**: 查看输出请使用 `/log/<job_id>`
 6. **自动 ack**: 任务完成时会自动更新状态，无需手动操作
+7. **log_dir 自动上报**: 任务启动后会通过 `/job-log-dir/<job_id>` 回传运行日志目录
 
 ---
 

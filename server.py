@@ -22,6 +22,9 @@ API:
     
     POST /ack/<job_id> - Acknowledge job completion (called by main.sh)
         Body: {"status": "completed|failed", "exit_code": 0}
+
+    POST /job-log-dir/<job_id> - Update job log directory from runtime script
+        Body: {"log_dir": "/path/to/log/dir"}
     
     POST /cancel/<job_id> - Cancel a running job
         Response: {"job_id": "...", "status": "cancelled"}
@@ -33,7 +36,6 @@ API:
 
 import os
 import json
-import time
 import shlex
 import tempfile
 import subprocess
@@ -106,6 +108,8 @@ def create_tmux_window_and_run(job_id, zhh_args='', cwd=None, command_override=N
         f"_save_final_log() {{ tmux capture-pane -p -e -S - -t \"$TMUX_PANE\" > {quoted_final_log_file} 2>/dev/null || true; }}",
         f"_ack() {{ curl -s -m5 -X POST '{ack_url}' -H 'Content-Type: application/json' -d \"{{\\\"exit_code\\\": $1}}\" || true; }}",
         f"trap '_ec=$?; _save_final_log; _ack $_ec' EXIT",
+        f"export ZHH_SERVER_URL='http://localhost:{ACTIVE_SERVER_PORT}'",
+        f"export ZHH_JOB_ID='{job_id}'",
         # Setup
         f"cd {quoted_working_dir} || exit 1",
         f". {quoted_ka} || exit 1",
@@ -291,7 +295,28 @@ def ack_job(job_id):
     jobs[job_id]['updated_at'] = datetime.now().isoformat()
     
     save_jobs(jobs)
-    
+
+    return jsonify(jobs[job_id]), 200
+
+
+@app.route('/job-log-dir/<job_id>', methods=['POST'])
+def update_job_log_dir(job_id):
+    """Update job log directory (reported by runtime script)."""
+    jobs = load_jobs()
+
+    if job_id not in jobs:
+        return jsonify({'error': 'Job not found'}), 404
+
+    data = request.get_json(silent=True) or {}
+    log_dir = data.get('log_dir') or request.form.get('log_dir') or request.args.get('log_dir')
+    if not log_dir:
+        return jsonify({'error': 'Missing log_dir'}), 400
+
+    jobs[job_id]['log_dir'] = log_dir
+    jobs[job_id]['output_log'] = f"{log_dir}/output.log"
+    jobs[job_id]['updated_at'] = datetime.now().isoformat()
+    save_jobs(jobs)
+
     return jsonify(jobs[job_id]), 200
 
 @app.route('/log/<job_id>', methods=['GET'])
@@ -358,7 +383,7 @@ def get_job_log(job_id):
 
 @app.route('/cancel/<job_id>', methods=['POST'])
 def cancel_job(job_id):
-    """Cancel a running job by sending Ctrl+C then closing tmux window."""
+    """Cancel a running job by sending Ctrl+C to its tmux pane."""
     jobs = load_jobs()
     
     if job_id not in jobs:
@@ -366,11 +391,10 @@ def cancel_job(job_id):
     
     job = jobs[job_id]
     
-    # Stop job gracefully first, then close tmux window
+    # Stop job gracefully by sending Ctrl+C only
     tmux_session = job.get('tmux_session')
     if tmux_session:
         pane_target = f"{tmux_session}:0.0"
-        window_target = f"{tmux_session}:0"
 
         try:
             subprocess.run([
@@ -382,17 +406,7 @@ def cancel_job(job_id):
             # Session/pane might already be gone, that's ok
             pass
 
-        # Give the wrapped shell a moment to run EXIT trap and ack
-        time.sleep(0.5)
-
-        try:
-            subprocess.run([
-                "tmux", "kill-window",
-                "-t", window_target
-            ], check=True, capture_output=True, text=True)
-        except subprocess.CalledProcessError:
-            # Window/session might already be gone, that's ok
-            pass
+        # Non-blocking cancel: return immediately after sending Ctrl+C
     
     # Remove job from list
     del jobs[job_id]
