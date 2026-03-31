@@ -50,11 +50,23 @@ auto_select(){
 
     echo "Auto-selecting zone from pool: ${pool[@]}"
     found_tpu=false
-    infos=$(get_available_tpu_infos)
+    # infos=$(get_available_tpu_infos)
+    # infos is empty
+    infos=""
     # concat infos with /kmh-nfs-ssd-us-mount/code/siri/tou_result.txt
 
     # if NO_TOU=1, skip
     if [ "$NO_TOU" != "1" ]; then
+        # if tou_result.txt is later than 30 mins, abort
+        if [ -f /kmh-nfs-ssd-us-mount/code/siri/tou_result.txt ]; then
+            lmt=$(stat -c %Y /kmh-nfs-ssd-us-mount/code/siri/tou_result.txt)
+            now=$(date +%s)
+            if (( now - lmt > 1800 )); then
+                echo -e "\033[31m[ERROR] tou_result.txt is older than 30 mins. Please refresh it.\033[0m" >&2
+                return 1
+            fi
+        fi
+
         infos="$infos"$'\n'"$(cat /kmh-nfs-ssd-us-mount/code/siri/tou_result.txt 2>/dev/null || true)"
     fi
 
@@ -103,17 +115,25 @@ auto_select(){
         # get the actual file
         actual_lock_file=$(ls $group_lock_file 2>/dev/null || true)
         if [ -f "$actual_lock_file" ]; then
-            echo -e "[INFO] Found locked TPU VM $vm_name in zone $zone (lock file: $(basename $actual_lock_file))..."
-            # check the last modified time of the lock file
-            lmt=$(stat -c %Y "$actual_lock_file")
-            now=$(date +%s)
-            # if the lock file is older than 30 mins, consider it stale and ignore
-            if (( now - lmt > 1800 )); then
-                echo -e "\033[33m[WARNING] Found stale lock file for TPU VM $vm_name: $(basename $actual_lock_file). Ignoring the lock.\033[0m"
-                # remove the stale lock file
-                sudo rm -f "$actual_lock_file"
+            # if the actual lock file exists, and the name isn't zak
+            if [[ ! "$actual_lock_file" =~ "zak" ]]; then
+                echo -e "[INFO] Found locked TPU VM $vm_name in zone $zone (lock file: $(basename $actual_lock_file))..."
+                # check the name of the lock file: date -u +%Y-%m-%d_%H-%M-%S
+                # don't use stat
+                lmt=$(date -r "$actual_lock_file" +%s)
+                # use UTC
+                now=$(date -u +%s)
+                # if the lock file is older than 30 mins, consider it stale and ignore
+                if (( now - lmt > 1800 )); then
+                    echo -e "\033[33m[WARNING] Found stale lock file for TPU VM $vm_name: $(basename $actual_lock_file). Ignoring the lock.\033[0m"
+                    # remove the stale lock file
+                    # sudo rm -f "$actual_lock_file"
+                    continue # debug, this should not happen
+                else
+                    continue
+                fi
             else
-                continue
+                echo -e "[INFO] Found our lock for TPU VM $vm_name in zone $zone (lock file: $(basename $actual_lock_file)). Ignoring the lock.\033[0m"
             fi
         fi
 

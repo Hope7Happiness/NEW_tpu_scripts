@@ -261,6 +261,10 @@ run_job(){
         echo "[INFO] finished executing 补.sh, returned $ret"
     fi
 
+    # kill anyway
+    zkill
+
+
     # COMMAND="ls /foo/bar | sudo tee -a $LOG_DIR/output.log"
     COMMAND="$py_path main.py --workdir=$LOG_DIR --mode=remote_run --config=configs/load_config.py:remote_run $EXTRA_ARGS_STR 2>&1"
 
@@ -273,6 +277,14 @@ run_job(){
 
     # register command
     log_command "$COMMAND"
+
+    # report runtime log dir to current HTTP server (if running under server.py)
+    if [ ! -z "$ZHH_SERVER_URL" ] && [ ! -z "$ZHH_JOB_ID" ]; then
+        echo "[INFO] Reporting log dir to server: $ZHH_SERVER_URL/job-log-dir/$ZHH_JOB_ID"
+        curl -s -m3 -X POST "$ZHH_SERVER_URL/job-log-dir/$ZHH_JOB_ID" \
+            --data-urlencode "log_dir=$LOG_DIR" > /dev/null && echo "[INFO] Successfully reported log dir to server." || echo "[ERROR] Failed to report log dir to server."
+    fi
+
     echo "[INFO] running command: $COMMAND"
     (echo "$COMMAND"; echo ========; echo; ) > $LOG_DIR/output.log
 
@@ -357,7 +369,7 @@ while_run(){
     
         echo -e "\033[31m[Error] Job failed, first wait for a moment (feel free to ^C if you are here)...\033[0m"
         # sleep 600
-        sleep 100
+        sleep 60
 
         echo "[INFO] Checking TPU status..."
         if has_tpu $VM_NAME $ZONE; then
@@ -382,21 +394,20 @@ while_run(){
                     get_and_setup_tpu $VM_NAME $ZONE && \
                     register_tpu && \
                     kill_tpu $VM_NAME $ZONE && \
-                    sleep 60 && \
+                    sleep 10 && \
                     kill_tpu $VM_NAME $ZONE && \
-                    sleep 30 && \
                     run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
                     && ret=0 || ret=$?
-                    echo "[Debug] Re-run returned $ret"
-                elif grep -q "Fatal Python error: Aborted" $LOG_DIR/output.log; then
-                    echo -e "\033[33m[Info] Found Segfault in logs, will wait and re-run...\033[0m"
-                    echo "[Debug] Re-running job..."
-                    kill_tpu $VM_NAME $ZONE && \
-                    echo "[Debug] Sleep for a while before re-running..." && \
-                    sleep 300 && \
-                    run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
-                    && ret=0 || ret=$?
-                    echo "[Debug] Re-run returned $ret"
+                    echo "[Debug] Re-run (for grpc) returned $ret"
+                # elif grep -q "Fatal Python error: Aborted" $LOG_DIR/output.log; then
+                #     echo -e "\033[33m[Info] Found Segfault in logs, will wait and re-run...\033[0m"
+                #     echo "[Debug] Re-running job..."
+                #     kill_tpu $VM_NAME $ZONE && \
+                #     echo "[Debug] Sleep for a while before re-running..." && \
+                #     sleep 300 && \
+                #     run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
+                #     && ret=0 || ret=$?
+                #     echo "[Debug] Re-run (for segfault) returned $ret"
                 elif grep -q "(core dumped)" $LOG_DIR/output.log || grep -q "Command execution on worker 0 failed with exit status 134" $LOG_DIR/output.log || grep -q "UNKNOWN: TPU initialization failed:" $LOG_DIR/output.log; then
                     echo -e "\033[33m[Info] Our job is killed by others. Will change card and re-run...\033[0m"
                     deregister_tpu $VM_NAME $ZONE

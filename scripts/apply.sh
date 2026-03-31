@@ -113,7 +113,7 @@ get_tpu_legacy(){
             gcloud compute tpus tpu-vm delete $VM_NAME --zone=$ZONE --quiet
         else
             echo "[INFO] TPU VM status: $status. Waiting..."
-            sleep 60 # Wait for 1 minutes before checking again
+            sleep 10 # Wait for 1 minutes before checking again
             continue
         fi
         success=0
@@ -128,8 +128,8 @@ get_tpu_legacy(){
             # all other calls are quiet
             if [ $i -eq 1 ] && [ $outer_loop -eq 0 ]; then create_cmd="$create_cmd --quiet 2>/dev/null"; fi
 
-            echo "[INFO] Failed to create TPU VM. Retrying in 10 seconds..."
-            sleep 10 # Wait for 10 seconds before retrying
+            echo "[INFO] Failed to create TPU VM. Retrying..."
+            # sleep 10 # Wait for 10 seconds before retrying
         done
         if [ $success -eq 1 ]; then
             echo -e "\033[32m[INFO] TPU VM $VM_NAME created successfully.\033[0m"
@@ -140,7 +140,8 @@ get_tpu_legacy(){
             export TPU_IS_NEW=1
             return
         fi
-        sleep 60 # Wait for 1 minutes before checking again
+        # sleep 60 # Wait for 1 minutes before checking again
+
         outer_loop=$((outer_loop+1))
         # if outer_loop % 100 == 0, send email
         if [ $((outer_loop % 100)) -eq 0 ]; then
@@ -149,8 +150,8 @@ get_tpu_legacy(){
 
         # if achieve 100 loops, abort
         # if [ $outer_loop -ge 0 ]; then # debug
-        if [ $outer_loop -ge 3 ]; then
-            echo -e "\033[31m[ERROR] Failed to create TPU VM after 3 attempts. Exiting.\033[0m"
+        if [ $outer_loop -ge 1 ]; then
+            echo -e "\033[31m[ERROR] Failed to create TPU VM after 1 attempts. Exiting.\033[0m"
             deregister_tpu $VM_NAME
             return 1
         fi
@@ -455,7 +456,7 @@ get_and_setup_tpu(){
     # write name lock (group shared):
     # zak_$VM_NAME_2026-02-26_21-42-42
     echo "Writing lock file for TPU $VM_NAME"
-    LOCK_FILE="/kmh-nfs-ssd-us-mount/code/qiao/tpu_lock/zak_${VM_NAME}_$(date +%Y-%m-%d_%H-%M-%S)"
+    LOCK_FILE="/kmh-nfs-ssd-us-mount/code/qiao/tpu_lock/zak_${VM_NAME}_$(date -u +%Y-%m-%d_%H-%M-%S)"
     sudo touch $LOCK_FILE
 
     if [ ! -z "$FAST_DEBUG" ]; then
@@ -486,8 +487,8 @@ get_and_setup_tpu(){
             deregister_tpu $VM_NAME
             return 1
         fi
-        echo -e "\033[33m[INFO] Retrying to get and setup TPU after 5 minutes...\033[0m"
-        sleep 300
+        echo -e "\033[33m[INFO] Retrying to get and setup TPU after 1 minute...\033[0m"
+        sleep 60
     done
     echo -e "\033[31m[ERROR] get_and_setup_tpu exited with ret=$ret\033[0m"
     echo -e "\033[32m[INFO] we will automatically switch a card (by returning 42)"
