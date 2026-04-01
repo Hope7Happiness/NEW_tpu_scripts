@@ -317,16 +317,23 @@ run_setup_script(){
     # "
     
     # CMD is sequential print of quoted MOUNT_DISK_STR and PIP_INSTALL_STR
-    CMD=$(printf "%s\n%s" "$MOUNT_DISK_STR" "$PIP_INSTALL_STR")
+    # CMD=$(printf "%s\n%s" "$MOUNT_DISK_STR" "$PIP_INSTALL_STR")
 
     wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-    --worker=all --command "$CMD" && ret=0 || ret=$?
+    --worker=all --command "$MOUNT_DISK_STR" && ret=0 || ret=$?
     if [ $ret -ne 0 ]; then
-        echo -e "\033[31m[Error] Environment setup failed. Use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
+        echo -e "\033[31m[Error] Mount disk setup failed. Use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
         # check if DO_TPU_SETUP is not set
         # if [ "$DO_TPU_SETUP" != "1" ]; then
         #     echo -e "\033[33m[Hint] Is the TPU set up? Use \`DO_TPU_SETUP=1\` to force environment setup on TPU VM.\033[0m"
         # fi
+        return 1
+    fi
+
+    wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+    --worker=all --command "$PIP_INSTALL_STR" && ret=0 || ret=$?
+    if [ $ret -ne 0 ]; then
+        echo -e "\033[31m[Error] Pip install failed. Use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
         return 1
     fi
 }

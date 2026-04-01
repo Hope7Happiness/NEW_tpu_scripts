@@ -116,7 +116,7 @@ auto_select(){
         actual_lock_file=$(ls $group_lock_file 2>/dev/null || true)
         if [ -f "$actual_lock_file" ]; then
             # if the actual lock file exists, and the name isn't zak
-            if [[ ! "$actual_lock_file" =~ "zak" ]]; then
+            # if [[ ! "$actual_lock_file" =~ "zak" ]]; then
                 echo -e "[INFO] Found locked TPU VM $vm_name in zone $zone (lock file: $(basename $actual_lock_file))..."
                 # check the name of the lock file: date -u +%Y-%m-%d_%H-%M-%S
                 # don't use stat
@@ -132,9 +132,9 @@ auto_select(){
                 else
                     continue
                 fi
-            else
-                echo -e "[INFO] Found our lock for TPU VM $vm_name in zone $zone (lock file: $(basename $actual_lock_file)). Ignoring the lock.\033[0m"
-            fi
+            # else
+            #     echo -e "[INFO] Found our lock for TPU VM $vm_name in zone $zone (lock file: $(basename $actual_lock_file)). Ignoring the lock.\033[0m"
+            # fi
         fi
 
         echo -e "Found TPU VM: \033[32m$vm_name @ $zone\033[0m (type $tpu_cls-$tpu_type)"
