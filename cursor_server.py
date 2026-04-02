@@ -21,6 +21,7 @@ import subprocess
 import threading
 import time
 import uuid
+import getpass
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -56,14 +57,24 @@ APP_ROOT = Path(__file__).parent.absolute()
 CONFIG_PATH = APP_ROOT / "config.json"
 WANDB_URL_PATTERN = re.compile(r"https?://(?:[A-Za-z0-9-]+\.)*wandb\.(?:ai|me)/[^\s\"'<>())]+")
 COMPLETION_DIAGNOSIS_RULE_VERSION = 2
+CURCHAT_USER = str(os.environ.get("CURCHAT_USER") or os.environ.get("WHO") or getpass.getuser()).strip()
+os.environ.setdefault("CURCHAT_USER", CURCHAT_USER)
+
+
+def _default_user_code_root() -> Path:
+  candidate = Path(f"/kmh-nfs-ssd-us-mount/code/{CURCHAT_USER}").expanduser()
+  if candidate.exists() and candidate.is_dir():
+    return candidate.resolve()
+  return APP_ROOT.parent
 
 
 def load_ui_config() -> dict:
+  default_code_root = _default_user_code_root()
   defaults = {
     "host": "0.0.0.0",
     "port": 7860,
-    "workdir_root": str(APP_ROOT.parent),
-    "default_cwd": str(APP_ROOT),
+    "workdir_root": str(default_code_root),
+    "default_cwd": str(default_code_root),
     "agent_path": "claude",
     "store_file": "cursor_sessions.json",
     "task_server_url": "http://localhost:8080",
@@ -2096,6 +2107,7 @@ def main():
       AGENT_PATH = resolved_agent
 
     print("CurChat server (Claude Code)")
+    print(f"curchat user: {CURCHAT_USER}")
     print(f"agent path : {AGENT_PATH}")
     print(f"default cwd: {SERVER_CWD}")
     print(f"store file : {STORE_PATH}")

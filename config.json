@@ -3,8 +3,8 @@
     "host": "0.0.0.0",
     "port": 7860,
     "task_server_url": "http://localhost:8080",
-    "workdir_root": "..",
-    "default_cwd": ".",
+    "workdir_root": null,
+    "default_cwd": null,
     "agent_path": "claude",
     "store_file": "cursor_sessions.json"
   }

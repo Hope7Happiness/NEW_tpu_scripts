@@ -40,6 +40,7 @@ import shlex
 import tempfile
 import subprocess
 import uuid
+import getpass
 from pathlib import Path
 from flask import Flask, request, jsonify
 from datetime import datetime
@@ -51,6 +52,8 @@ SCRIPT_ROOT = Path(__file__).parent.absolute()
 DEFAULT_JOBS_FILE = SCRIPT_ROOT / "jobs.json"
 SERVER_PORT = int(os.environ.get("ZHH_SERVER_PORT", "8080"))
 ACTIVE_SERVER_PORT = SERVER_PORT
+CURCHAT_USER = str(os.environ.get("CURCHAT_USER") or os.environ.get("WHO") or getpass.getuser()).strip()
+os.environ.setdefault("CURCHAT_USER", CURCHAT_USER)
 DEFAULT_RUN_AS_USER = str(os.environ.get("ZHH_RUN_AS_USER", "zak")).strip() or "zak"
 DEFAULT_RUN_AS_PASSWORD = str(os.environ.get("ZHH_RUN_AS_PASSWORD", "0"))
 
@@ -106,6 +109,7 @@ def create_tmux_window_and_run(job_id, zhh_args='', cwd=None, command_override=N
     inner_payload = (
         f"export ZHH_SERVER_URL={shlex.quote(f'http://localhost:{ACTIVE_SERVER_PORT}')}; "
         f"export ZHH_JOB_ID={shlex.quote(job_id)}; "
+        f"export CURCHAT_USER={shlex.quote(CURCHAT_USER)}; "
         f"cd {quoted_working_dir} && . {quoted_ka} && {zhh_command}"
     )
     quoted_inner_payload = shlex.quote(inner_payload)
@@ -448,5 +452,7 @@ if __name__ == '__main__':
     print(f"Starting ZHH Job Server on {args.host}:{args.port}")
     print(f"Jobs file: {get_jobs_file()}")
     print(f"Script root: {SCRIPT_ROOT}")
+    print(f"CURCHAT_USER: {CURCHAT_USER}")
+    print(f"Run-as user: {DEFAULT_RUN_AS_USER}")
     
     app.run(host=args.host, port=args.port, debug=False)
