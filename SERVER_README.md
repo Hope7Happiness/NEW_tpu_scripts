@@ -41,7 +41,7 @@ curl -X POST http://localhost:8080/run \
   "job_id": "4f771738-a452-4bab-98c3-39be046c7215",
   "status": "running",
   "tmux_session": "zhh_4f771738",
-  "cwd": "/kmh-nfs-ssd-us-mount/code/siri/scripts",
+  "cwd": "/kmh-nfs-ssd-us-mount/code/wxb/scripts",
   "zhh_args": "s",
   "created_at": "2026-03-12T15:11:44.650747",
   "updated_at": "2026-03-12T15:11:44.650757"
@@ -53,12 +53,12 @@ curl -X POST http://localhost:8080/run \
 # 运行 zhh s（查看状态）
 curl -X POST http://localhost:8080/run \
   -H "Content-Type: application/json" \
-  -d '{"cwd": "/kmh-nfs-ssd-us-mount/code/siri/pixel_jit", "args": "s"}'
+  -d '{"cwd": "/kmh-nfs-ssd-us-mount/code/wxb/pixel_jit", "args": "s"}'
 
 # 运行训练任务
 curl -X POST http://localhost:8080/run \
   -H "Content-Type: application/json" \
-  -d '{"cwd": "/kmh-nfs-ssd-us-mount/code/siri/pixel_jit"}'
+  -d '{"cwd": "/kmh-nfs-ssd-us-mount/code/wxb/pixel_jit"}'
 ```
 
 ---
@@ -80,7 +80,7 @@ curl http://localhost:8080/status
       "status": "completed",
       "exit_code": 0,
       "tmux_session": "zhh_4f771738",
-      "cwd": "/kmh-nfs-ssd-us-mount/code/siri/scripts",
+      "cwd": "/kmh-nfs-ssd-us-mount/code/wxb/scripts",
       "zhh_args": "s",
       "created_at": "2026-03-12T15:11:44.650747",
       "completed_at": "2026-03-12T15:11:45.592879"
@@ -89,7 +89,7 @@ curl http://localhost:8080/status
       "job_id": "8381d1e0-d39e-4188-b91c-93611f1ed484",
       "status": "running",
       "tmux_session": "zhh_8381d1e0",
-      "cwd": "/kmh-nfs-ssd-us-mount/code/siri/pixel_jit",
+      "cwd": "/kmh-nfs-ssd-us-mount/code/wxb/pixel_jit",
       "zhh_args": "",
       "created_at": "2026-03-12T03:53:47.607846"
     }
@@ -113,7 +113,7 @@ curl http://localhost:8080/status/4f771738-a452-4bab-98c3-39be046c7215
   "status": "completed",
   "exit_code": 0,
   "tmux_session": "zhh_4f771738",
-  "cwd": "/kmh-nfs-ssd-us-mount/code/siri/scripts",
+  "cwd": "/kmh-nfs-ssd-us-mount/code/wxb/scripts",
   "zhh_args": "s",
   "created_at": "2026-03-12T15:11:44.650747",
   "completed_at": "2026-03-12T15:11:45.592879"
@@ -176,7 +176,7 @@ curl "http://localhost:8080/log/4f771738-a452-4bab-98c3-39be046c7215?lines=2000"
   "tmux_session": "zhh_4f771738",
   "lines": 2000,
   "source": "file",
-  "log_file": "/kmh-nfs-ssd-us-mount/code/siri/scripts/logs/4f771738-a452-4bab-98c3-39be046c7215.log",
+  "log_file": "/kmh-nfs-ssd-us-mount/code/wxb/scripts/logs/4f771738-a452-4bab-98c3-39be046c7215.log",
   "log": "...最终日志..."
 }
 ```
@@ -218,7 +218,7 @@ curl -X POST http://localhost:8080/resume \
   "job_id": "9f6ac5e3-4ac3-4f95-a5c2-7bb16d2f8484",
   "status": "running",
   "mode": "resume",
-  "command": "/kmh-nfs-ssd-us-mount/code/siri/scripts/main.sh rr",
+  "command": "/kmh-nfs-ssd-us-mount/code/wxb/scripts/main.sh rr",
   "cwd": "/kmh-nfs-ssd-us-mount/staging/chris_t2i/t2i/launch_xxx",
   "tmux_session": "zhh_9f6ac5e3"
 }

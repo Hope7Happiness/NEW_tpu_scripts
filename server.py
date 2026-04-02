@@ -51,6 +51,8 @@ SCRIPT_ROOT = Path(__file__).parent.absolute()
 DEFAULT_JOBS_FILE = SCRIPT_ROOT / "jobs.json"
 SERVER_PORT = int(os.environ.get("ZHH_SERVER_PORT", "8080"))
 ACTIVE_SERVER_PORT = SERVER_PORT
+DEFAULT_RUN_AS_USER = str(os.environ.get("ZHH_RUN_AS_USER", "zak")).strip() or "zak"
+DEFAULT_RUN_AS_PASSWORD = str(os.environ.get("ZHH_RUN_AS_PASSWORD", "0"))
 
 
 def get_jobs_file():
@@ -99,6 +101,16 @@ def create_tmux_window_and_run(job_id, zhh_args='', cwd=None, command_override=N
 
     zhh_command = command_override if command_override else (f"{quoted_main} {zhh_args}" if zhh_args else quoted_main)
     ack_url = f"http://localhost:{ACTIVE_SERVER_PORT}/ack/{job_id}"
+    run_user = DEFAULT_RUN_AS_USER
+    run_password = DEFAULT_RUN_AS_PASSWORD
+    inner_payload = (
+        f"export ZHH_SERVER_URL={shlex.quote(f'http://localhost:{ACTIVE_SERVER_PORT}')}; "
+        f"export ZHH_JOB_ID={shlex.quote(job_id)}; "
+        f"cd {quoted_working_dir} && . {quoted_ka} && {zhh_command}"
+    )
+    quoted_inner_payload = shlex.quote(inner_payload)
+    quoted_run_user = shlex.quote(run_user)
+    quoted_run_password = shlex.quote(run_password)
 
     # Self-contained bash script. The trap lives in the OUTER shell wrapper,
     # so the ack fires on exit regardless of what inner command runs or how
@@ -108,20 +120,24 @@ def create_tmux_window_and_run(job_id, zhh_args='', cwd=None, command_override=N
         f"_save_final_log() {{ tmux capture-pane -p -e -S - -t \"$TMUX_PANE\" > {quoted_final_log_file} 2>/dev/null || true; }}",
         f"_ack() {{ curl -s -m5 -X POST '{ack_url}' -H 'Content-Type: application/json' -d \"{{\\\"exit_code\\\": $1}}\" || true; }}",
         f"trap '_ec=$?; _save_final_log; _ack $_ec' EXIT",
-        f"export ZHH_SERVER_URL='http://localhost:{ACTIVE_SERVER_PORT}'",
-        f"export ZHH_JOB_ID='{job_id}'",
-        # Setup
-        f"cd {quoted_working_dir} || exit 1",
-        f". {quoted_ka} || exit 1",
+        f"TARGET_RUN_USER={quoted_run_user}",
+        f"TARGET_RUN_PASSWORD={quoted_run_password}",
+        f"RUN_PAYLOAD={quoted_inner_payload}",
         # Header
         f"echo '=== ZHH Job Server ==='",
         f"echo 'Job ID: {job_id}'",
         f"echo 'Working Directory: {working_dir}'",
         f"echo 'Command: {zhh_command}'",
+        f"echo 'Run User: {run_user}'",
         f"echo '======================='",
         f"echo ''",
-        # Run the actual command
-        zhh_command,
+        "CURRENT_USER=\"$(whoami 2>/dev/null || true)\"",
+        "if [ -n \"$TARGET_RUN_USER\" ] && [ \"$CURRENT_USER\" != \"$TARGET_RUN_USER\" ]; then",
+        "  echo \"[INFO] Switching user: $CURRENT_USER -> $TARGET_RUN_USER\"",
+        "  printf '%s\\n' \"$TARGET_RUN_PASSWORD\" | sudo -S su - \"$TARGET_RUN_USER\" -c \"$RUN_PAYLOAD\"",
+        "else",
+        "  bash -lc \"$RUN_PAYLOAD\"",
+        "fi",
     ]
     tmux_cmd = "\n".join(script_lines)
 

@@ -47,7 +47,7 @@ use_v5_env(){
 
 get_service_json(){
     zone_wo_region=${ZONE%-*}
-    f=/kmh-nfs-ssd-us-mount/code/siri/bu/bucket-$zone_wo_region.json
+    f=$CODE_HOME/bu/bucket-$zone_wo_region.json
     
     # if file doesn't exist
     if [ ! -f "$f" ]; then
@@ -103,7 +103,7 @@ check_env(){
         IS_V6=1
     fi
 
-    ENV_CHECK="ls /kmh-nfs-ssd-us-mount/code/siri > /dev/null && $py_path -c 'import jax, torch; print(jax.__file__)'"
+    ENV_CHECK="ls $CODE_HOME > /dev/null && $py_path -c 'import jax, torch; print(jax.__file__)'"
     # read both stdout and stderr
     result=$(timeout 60s gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
     --worker=all --command "$ENV_CHECK" 2>&1 || true)

@@ -280,6 +280,61 @@ body {
     linear-gradient(180deg, rgba(255, 255, 255, .01) 0%, rgba(255, 255, 255, 0) 100%),
     var(--panel-deep);
 }
+#agent-activity {
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+  background: rgba(15, 22, 32, .95);
+  display: none;
+}
+#agent-activity.show {
+  display: block;
+}
+#agent-activity-head {
+  padding: 8px 18px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: #9fb0c9;
+  border-bottom: 1px solid rgba(255, 255, 255, .04);
+}
+#agent-activity-list {
+  padding: 8px 18px 10px;
+  max-height: 148px;
+  overflow: auto;
+  display: grid;
+  gap: 6px;
+}
+.agent-activity-empty {
+  font-size: 12px;
+  color: var(--muted);
+}
+.agent-activity-item {
+  font-size: 12px;
+  line-height: 1.4;
+  color: #c9d6ea;
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.agent-activity-item .at-time {
+  color: #8697b3;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.agent-activity-item .at-text {
+  word-break: break-word;
+}
+.agent-activity-item.error .at-text {
+  color: #ffb7b7;
+}
+.agent-activity-item.success .at-text {
+  color: #9de8ba;
+}
+.agent-activity-item.warn .at-text {
+  color: #ffd48f;
+}
 .empty {
   color: var(--muted);
   text-align: center;
@@ -1528,6 +1583,10 @@ button:disabled {
 
     <section id="panel-chat">
       <div id="messages"><div class="empty">No conversation selected.</div></div>
+      <div id="agent-activity">
+        <div id="agent-activity-head">Agent Activity</div>
+        <div id="agent-activity-list"><div class="agent-activity-empty">No activity yet.</div></div>
+      </div>
       <div id="composer-wrap">
         <div id="composer">
           <textarea id="input" placeholder="Type a message..." onkeydown="handleKey(event)"></textarea>
@@ -1690,13 +1749,16 @@ let conversationStatusOverrides = {};
 let conversationTaskRuntimeStatus = {};
 let taskPollTimer = null;
 let taskPollInFlight = false;
+let activityPollTimer = null;
+let activityPollConversationId = null;
+let activityPollInFlight = false;
 let conversationSnapshotsById = {};
 let conversationMessageUnread = {};
 let lastSeenMessageCountByConversation = {};
 let notificationPendingByConversation = {};
 let notificationAudioCtx = null;
 let lastNotificationSoundAt = 0;
-const BASE_DOCUMENT_TITLE = document.title || 'Cursor Server';
+const BASE_DOCUMENT_TITLE = document.title || 'CurChat';
 const WORKDIR_ROOT = '__WORKDIR_ROOT__';
 const DEFAULT_MODEL = '__DEFAULT_MODEL__';
 const CONFIGURED_MODEL = '__CONFIGURED_MODEL__';
@@ -1762,10 +1824,10 @@ function applyStatusToUI(text, kind = 'normal') {
 function fallbackStatusForConversation(conversation) {
   const status = String((conversation && conversation.status) || '').toLowerCase();
   if (status === 'running') {
-    return { text: 'Waiting for Cursor...', kind: 'busy' };
+    return { text: 'Waiting for Claude Code...', kind: 'busy' };
   }
   if (status === 'error') {
-    const err = conversation && conversation.last_error ? String(conversation.last_error) : 'Cursor request failed.';
+    const err = conversation && conversation.last_error ? String(conversation.last_error) : 'Agent request failed.';
     return { text: err, kind: 'error' };
   }
   return { text: 'Ready.', kind: 'normal' };
@@ -1804,25 +1866,18 @@ function renderModelPolicyBanner() {
   const policy = runtimeModelPolicy || {};
   const configured = String(policy.configured_model || CONFIGURED_MODEL || 'default');
   const effective = String(policy.effective_model || configured || 'default');
-  if (effective === 'default' && policy.force_auto_active) {
-    const until = String(policy.force_auto_until || '').trim();
-    const left = daysLeftText(policy.force_auto_days_remaining);
-    const untilText = until ? ` (until ${until}, ${left})` : '';
-    el.textContent = `Model: auto · claude 4.6 in ${left}${untilText}`;
-    return;
-  }
   if (policy.force_auto_active) {
     const until = String(policy.force_auto_until || '').trim();
     const left = daysLeftText(policy.force_auto_days_remaining);
-    const untilText = until ? ` (until ${until}, ${left})` : '';
-    el.textContent = `Model: ${effective} · claude 4.6 in ${left}${untilText}`;
+    const untilText = until ? `, until ${until}` : '';
+    el.textContent = `Model: ${effective} (fallback active, ${left}${untilText})`;
     return;
   }
-  if (configured === 'default') {
-    el.textContent = `Model: ${effective} · claude 4.6 available now`;
+  if (configured && configured !== effective) {
+    el.textContent = `Model: ${effective} (configured: ${configured})`;
     return;
   }
-  el.textContent = `Model: ${effective}`;
+  el.textContent = `Model: ${effective} (default: opus)`;
 }
 
 async function refreshModelPolicy() {
@@ -1838,6 +1893,112 @@ async function refreshModelPolicy() {
     // keep last known value
   }
   renderModelPolicyBanner();
+}
+
+function formatActivityTime(ts) {
+  const value = Number(ts || 0);
+  if (!Number.isFinite(value) || value <= 0) return '--:--:--';
+  const date = new Date(value * 1000);
+  if (Number.isNaN(date.getTime())) return '--:--:--';
+  const hh = String(date.getHours()).padStart(2, '0');
+  const mm = String(date.getMinutes()).padStart(2, '0');
+  const ss = String(date.getSeconds()).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
+}
+
+function clearAgentActivityPanel(message = 'No activity yet.') {
+  const box = document.getElementById('agent-activity');
+  const list = document.getElementById('agent-activity-list');
+  if (!box || !list) return;
+  box.classList.remove('show');
+  list.innerHTML = `<div class="agent-activity-empty">${escapeHtml(message)}</div>`;
+}
+
+function renderAgentActivity(payload) {
+  const box = document.getElementById('agent-activity');
+  const list = document.getElementById('agent-activity-list');
+  if (!box || !list) return;
+
+  const entries = Array.isArray(payload && payload.entries) ? payload.entries : [];
+  const running = !!(payload && payload.running);
+  if (!entries.length) {
+    if (running) {
+      box.classList.add('show');
+      list.innerHTML = '<div class="agent-activity-empty">Agent is working...</div>';
+    } else {
+      clearAgentActivityPanel();
+    }
+    return;
+  }
+
+  const view = entries.slice(-80).map(item => {
+    const ts = formatActivityTime(item && item.created_at);
+    const kind = String((item && item.kind) || 'info').toLowerCase();
+    const text = String((item && item.text) || '').trim();
+    return `
+      <div class="agent-activity-item ${escapeHtml(kind)}">
+        <span class="at-time">${escapeHtml(ts)}</span>
+        <span class="at-text">${escapeHtml(text || '-')}</span>
+      </div>
+    `;
+  }).join('');
+
+  box.classList.add('show');
+  list.innerHTML = view;
+  if (running) {
+    list.scrollTop = list.scrollHeight;
+  }
+}
+
+async function loadAgentActivity(conversationId = currentId, silent = true) {
+  const targetId = String(conversationId || '').trim();
+  if (!targetId) {
+    clearAgentActivityPanel('No conversation selected.');
+    return;
+  }
+  try {
+    const data = await api(`/api/conversations/${targetId}/activity?limit=120`);
+    if (targetId !== String(currentId || '').trim()) return;
+    renderAgentActivity(data || {});
+  } catch (err) {
+    if (!silent) {
+      setStatus('Load agent activity failed: ' + err.message, 'error', targetId);
+    }
+  }
+}
+
+function stopAgentActivityPolling(conversationId = null) {
+  const targetId = String(conversationId || '').trim();
+  if (targetId && activityPollConversationId && targetId !== activityPollConversationId) {
+    return;
+  }
+  if (activityPollTimer) {
+    clearInterval(activityPollTimer);
+    activityPollTimer = null;
+  }
+  activityPollConversationId = null;
+  activityPollInFlight = false;
+}
+
+function startAgentActivityPolling(conversationId) {
+  const targetId = String(conversationId || '').trim();
+  if (!targetId) return;
+  if (activityPollConversationId !== targetId) {
+    stopAgentActivityPolling();
+  }
+  activityPollConversationId = targetId;
+  loadAgentActivity(targetId, true);
+  if (activityPollTimer) return;
+  activityPollTimer = setInterval(async () => {
+    if (activityPollInFlight) return;
+    if (!activityPollConversationId) return;
+    activityPollInFlight = true;
+    try {
+      await loadAgentActivity(activityPollConversationId, true);
+    } finally {
+      activityPollInFlight = false;
+    }
+  }, 1200);
 }
 
 function setStatus(text, kind = 'normal', conversationId = null) {
@@ -2162,7 +2323,7 @@ function dispatchNotificationEvents(events, conversations) {
         : (event.type === 'auto_iterate_failed'
           ? `Auto iterate failed · ${event.title}`
           : `Auto iterate completed · ${event.title}`));
-    maybeDesktopNotify(title, event.body || '', `cursor-${event.type}-${event.id}`);
+    maybeDesktopNotify(title, event.body || '', `agent-${event.type}-${event.id}`);
   }
 }
 
@@ -3006,7 +3167,7 @@ async function createConversationConfirmed() {
   try {
     document.getElementById('new-btn').disabled = true;
     document.getElementById('confirm-create-btn').disabled = true;
-    setStatus('Creating Cursor session...', 'busy');
+    setStatus('Creating Claude Code session...', 'busy');
     const data = await api('/api/conversations', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -3030,6 +3191,7 @@ async function createConversationConfirmed() {
 }
 
 async function openConversation(id, updateList = true) {
+  stopAgentActivityPolling();
   const input = document.getElementById('input');
   if (currentId && input) {
     conversationDrafts[currentId] = input.value;
@@ -3048,6 +3210,12 @@ async function openConversation(id, updateList = true) {
   refreshComposerControls();
   const statusLower = String(currentConversation.status || '').toLowerCase();
   const lockedSession = ['running', 'debugging'].includes(statusLower);
+  await loadAgentActivity(id, true);
+  if (lockedSession) {
+    startAgentActivityPolling(id);
+  } else {
+    stopAgentActivityPolling(id);
+  }
   document.getElementById('delete-btn').disabled = lockedSession;
   document.getElementById('compact-btn').disabled = lockedSession;
   document.getElementById('run-task-btn').disabled = false;
@@ -3270,6 +3438,7 @@ function basenameFromPath(path) {
 }
 
 function resetConversationView() {
+  stopAgentActivityPolling();
   currentId = null;
   currentConversation = null;
   document.getElementById('title').textContent = 'No conversation selected';
@@ -3286,6 +3455,7 @@ function resetConversationView() {
   document.getElementById('mark-read-btn').disabled = true;
   renderYamlUnavailable('No conversation selected.');
   renderKaUnavailable('No conversation selected.');
+  clearAgentActivityPanel('No conversation selected.');
   renderPendingTaskRefs();
   renderCurrentConversationStatus();
   syncMobileLayoutState();
@@ -3361,7 +3531,7 @@ async function sendMessage() {
   const optimisticMessageId = 'optimistic-' + Date.now() + '-' + Math.random().toString(36).slice(2);
   let forceSend = false;
   if (currentConversation && currentConversation.status === 'running') {
-    const ok = confirm('This session is still marked as waiting for Cursor. Force send and ignore previous unprocessed message?');
+    const ok = confirm('This session is still marked as waiting for Claude Code. Force send and ignore previous unprocessed message?');
     if (!ok) return;
     forceSend = true;
   }
@@ -3384,8 +3554,10 @@ async function sendMessage() {
       }
     }
     refreshComposerControls();
-    
-    setStatus('Waiting for Cursor...', 'busy', targetId);
+
+    clearAgentActivityPanel('Agent is working...');
+    startAgentActivityPolling(targetId);
+    setStatus('Waiting for Claude Code...', 'busy', targetId);
     const data = await api(`/api/conversations/${targetId}/messages`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -3399,6 +3571,8 @@ async function sendMessage() {
       currentConversation = data.conversation;
       renderConversation(currentConversation);
     }
+    await loadAgentActivity(targetId, true);
+    stopAgentActivityPolling(targetId);
     await loadConversations();
     setStatus('Done.', 'success', targetId);
     return true;
@@ -3411,6 +3585,8 @@ async function sendMessage() {
         renderConversation(currentConversation);
       }
     }
+    await loadAgentActivity(targetId, true);
+    stopAgentActivityPolling(targetId);
     setStatus('Send failed: ' + err.message, 'error', targetId);
     return false;
   } finally {
@@ -3421,6 +3597,11 @@ async function sendMessage() {
       const lockedSession = ['running', 'debugging'].includes(statusLower);
       document.getElementById('delete-btn').disabled = lockedSession;
       document.getElementById('compact-btn').disabled = lockedSession;
+      if (lockedSession) {
+        startAgentActivityPolling(currentId);
+      } else {
+        stopAgentActivityPolling(currentId);
+      }
     }
   }
 }

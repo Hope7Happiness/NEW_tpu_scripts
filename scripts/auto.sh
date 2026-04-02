@@ -12,6 +12,8 @@ trap_send_key(){
     trap "$CMD" EXIT
 }
 
+TOU_RESULT_PATH="/kmh-nfs-ssd-us-mount/code/${WHO:-wxb}/tou_result.txt"
+
 auto_select(){
     # if 'auto' in VM_NAME
     if [[ $VM_NAME == "autov6" || $VM_NAME == "autov6e" || $VM_NAME == "auto" ]]; then
@@ -53,13 +55,13 @@ auto_select(){
     # infos=$(get_available_tpu_infos)
     # infos is empty
     infos=""
-    # concat infos with /kmh-nfs-ssd-us-mount/code/siri/tou_result.txt
+    # concat infos with $TOU_RESULT_PATH
 
     # if NO_TOU=1, skip
     if [ "$NO_TOU" != "1" ]; then
         # if tou_result.txt is later than 30 mins, abort
-        if [ -f /kmh-nfs-ssd-us-mount/code/siri/tou_result.txt ]; then
-            lmt=$(stat -c %Y /kmh-nfs-ssd-us-mount/code/siri/tou_result.txt)
+        if [ -f "$TOU_RESULT_PATH" ]; then
+            lmt=$(stat -c %Y "$TOU_RESULT_PATH")
             now=$(date +%s)
             if (( now - lmt > 1800 )); then
                 echo -e "\033[31m[ERROR] tou_result.txt is older than 30 mins. Please refresh it.\033[0m" >&2
@@ -67,7 +69,7 @@ auto_select(){
             fi
         fi
 
-        infos="$infos"$'\n'"$(cat /kmh-nfs-ssd-us-mount/code/siri/tou_result.txt 2>/dev/null || true)"
+        infos="$infos"$'\n'"$(cat "$TOU_RESULT_PATH" 2>/dev/null || true)"
     fi
 
     # todo: low card first

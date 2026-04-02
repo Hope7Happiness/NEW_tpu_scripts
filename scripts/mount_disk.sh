@@ -1,4 +1,4 @@
-# until ls /kmh-nfs-ssd-us-mount/code/siri works, repeat
+# until ls /kmh-nfs-ssd-us-mount/code/<WHO> works, repeat
 sudo rm -rf /tmp/* || true
 sudo rm -rf /tmp/*tpu* || true
 sudo rm -rf /tmp/wandb || true
@@ -7,7 +7,8 @@ sudo rm -rf /tmp/wandb || true
 MAX_RETRIES=5
 NFS_SERVER="10.97.81.98:/kmh_nfs_ssd_us"
 MOUNT_POINT="/kmh-nfs-ssd-us-mount"
-TARGET_DIR="$MOUNT_POINT/code/siri"
+TARGET_USER="${WHO:-wxb}"
+TARGET_DIR="$MOUNT_POINT/code/$TARGET_USER"
 
 sudo mkdir -p "$MOUNT_POINT"
 
@@ -39,7 +40,7 @@ done
 echo "[apt] nfs-common ready"
 
 ########################################
-# Stage 2: wait until siri dir exists
+# Stage 2: wait until target code dir exists
 ########################################
 attempt=1
 until [ -d "$TARGET_DIR" ]; do

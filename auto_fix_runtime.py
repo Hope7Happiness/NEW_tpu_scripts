@@ -30,6 +30,7 @@ class AutoFixCoordinator:
         agent_path_getter: Callable[[], str],
         trigger_run_job: Callable[[str, bool], tuple[str | None, str | None]],
         utc_now: Callable[[], float],
+        report_agent_event: Callable[[str, dict], None] | None = None,
     ):
         self.get_conversation = get_conversation
         self.get_conversation_lock = get_conversation_lock
@@ -44,6 +45,7 @@ class AutoFixCoordinator:
         self.agent_path_getter = agent_path_getter
         self.trigger_run_job = trigger_run_job
         self.utc_now = utc_now
+        self.report_agent_event = report_agent_event
 
         self._store_lock = threading.Lock()
         self._threads: dict[str, threading.Thread] = {}
@@ -176,12 +178,18 @@ class AutoFixCoordinator:
                     },
                 )
 
+                reporter = self.report_agent_event
                 result = self.acp_prompt_session(
                     agent_path=self.agent_path_getter(),
                     cwd=latest["cwd"],
                     mode=latest.get("mode", "agent"),
                     text=prompt_text,
                     cursor_session_id=latest.get("cursor_session_id"),
+                    on_progress_event=(
+                        (lambda event: reporter(conversation_id, event))
+                        if reporter is not None
+                        else None
+                    ),
                 )
 
                 model_used = str(result.get("model") or "").strip()

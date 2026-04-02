@@ -6,9 +6,10 @@ The repository now includes a web UI server for conversation + task orchestratio
 
 1. Edit `config.json` (same directory as `cursor_server.py`) to set defaults:
     - `ui_server.port`
+    - `ui_server.task_server_url` (defaults to `http://localhost:8080`)
     - `ui_server.workdir_root`
     - `ui_server.default_cwd`
-    - `ui_server.agent_path` (defaults to `~/.local/bin/agent`)
+    - `ui_server.agent_path` (defaults to `claude`)
 
 2. Start server:
 
@@ -23,8 +24,8 @@ The repository now includes a web UI server for conversation + task orchestratio
     ```
 
 Notes:
-- Upstream task service is fixed to `http://localhost:8080`.
-- You can still override port with env `CURSOR_SERVER_PORT` or CLI `--port`.
+- UI server port can be overridden with env `CURSOR_SERVER_PORT` or CLI `--port`.
+- Task server URL can be overridden with env `CURCHAT_TASK_SERVER_URL`.
 
 # 🚀 New TPU Scripts
 
@@ -52,12 +53,12 @@ TODO List:
     ```shell
     Traceback (most recent call last):
     ...
-    File "/kmh-nfs-ssd-us-mount/code/siri/google-cloud-sdk/lib/googlecloudsdk/
+    File "/kmh-nfs-ssd-us-mount/code/wxb/google-cloud-sdk/lib/googlecloudsdk/
     command_lib/util/ssh/ssh.py", line 1986, in Run
         raise CommandError(args[0], return_code=status)
     googlecloudsdk.command_lib.util.ssh.ssh.CommandError: [/usr/bin/ssh] exited
     with return code [255].
-    [Error] Job failed. Check logs in /kmh-nfs-ssd-us-mount/staging/siri/.../output.log
+    [Error] Job failed. Check logs in /kmh-nfs-ssd-us-mount/staging/wxb/.../output.log
     [Error] Job failed, first wait for a moment (feel free to ^C if you are here)...
     [INFO] Checking TPU status...
     [Info] Card is PREEMPTED, will re-apply and re-run.
@@ -74,7 +75,7 @@ TODO List:
     --config.logging.wandb_notes=sanity check... ? (y/N) y
     [INFO] staging files
     TPU is already in use. If you want to persist, use `zhh k` and try again.
-    [Info] Queued job /kmh-nfs-ssd-us-mount/staging/siri/...
+    [Info] Queued job /kmh-nfs-ssd-us-mount/staging/wxb/...
     /launch_20251102_183108_gitd0c7f12_0df5780d
     at 20251102_183118. Now, the program will stuck, which is EXPECTED. If you want to 
     dequeue, just press Ctrl+C.
