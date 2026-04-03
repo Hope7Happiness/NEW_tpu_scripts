@@ -240,6 +240,7 @@ class AutoFixCoordinator:
                             else:
                                 entry = dict(entry)
                             entry["nickname"] = auto_fix_tag
+                            entry["auto_fix_from_job_id"] = job_id
                             entry["updated_at"] = self.utc_now()
                             task_meta[new_job_id] = entry
                         self.update_conversation(conversation_id, apply_auto_fix_tag)

@@ -88,6 +88,15 @@ def get_conversation_jobs(zhh_server_url: str, conversation: dict) -> list[dict]
                 item["status"] = cached_status
             elif (not item.get("status") or live_status == "unknown") and cached_status:
                 item["status"] = cached_status
+            if meta:
+                for key in (
+                    "resume_from_job_id",
+                    "resume_log_path",
+                    "auto_fix_from_job_id",
+                ):
+                    value = meta.get(key)
+                    if value is not None and value != "":
+                        item[key] = value
             ordered.append(item)
         else:
             fallback_status = cached_status or ("canceled" if job_id in system_run_jobs else "unknown")
@@ -97,7 +106,17 @@ def get_conversation_jobs(zhh_server_url: str, conversation: dict) -> list[dict]
                 "missing": True,
                 "nickname": nickname,
             }
-            for key in ("zhh_args", "created_at", "final_log_file", "pane_log_file", "command", "cwd"):
+            for key in (
+                "zhh_args",
+                "created_at",
+                "final_log_file",
+                "pane_log_file",
+                "command",
+                "cwd",
+                "resume_from_job_id",
+                "resume_log_path",
+                "auto_fix_from_job_id",
+            ):
                 if meta and meta.get(key):
                     item[key] = meta.get(key)
             ordered.append(item)
