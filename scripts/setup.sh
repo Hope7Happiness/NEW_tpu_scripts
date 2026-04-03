@@ -2,9 +2,9 @@ source $ZHH_SCRIPT_ROOT/scripts/common.sh
 
 wrap_gcloud(){
     if [ ! -z "$SCRIPT_DEBUG" ]; then
-        gcloud "$@"
+        $CUSTOM_GCLOUD_EXE "$@"
     else
-        gcloud "$@" > /dev/null 2>&1
+        $CUSTOM_GCLOUD_EXE "$@" > /dev/null 2>&1
     fi
 }
 
@@ -105,7 +105,7 @@ check_env(){
 
     ENV_CHECK="ls /kmh-nfs-ssd-us-mount/code/siri > /dev/null && $py_path -c 'import jax, torch; print(jax.__file__)'"
     # read both stdout and stderr
-    result=$(timeout 60s gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+    result=$(timeout 60s $CUSTOM_GCLOUD_EXE compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
     --worker=all --command "$ENV_CHECK" 2>&1 || true)
     # first, eliminate module not found
     if [[ $result == *"No such file"*  || $result == *"ModuleNotFoundError"* ]]; then
@@ -123,7 +123,7 @@ check_env(){
 
     TEST="sudo rm -rf /tmp/*tpu* && $py_path -c 'import jax; print(jax.devices())'"
     # read both stdout and stderr
-    result=$(timeout 120s gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+    result=$(timeout 120s $CUSTOM_GCLOUD_EXE compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
     --worker=all --command "$TEST" 2>&1 || true)
 
     if [[ $result == *"TpuDevice"* ]]; then
@@ -206,10 +206,10 @@ kill_tpu(){
     sudo bash $ZHH_SCRIPT_ROOT/scripts/new_killer.sh
     echo job killed
     "
-    gcloud compute tpus tpu-vm ssh $VM_NAME --zone=$ZONE --worker=all --command "$CMD" && ret=0 || ret=$?
+    $CUSTOM_GCLOUD_EXE compute tpus tpu-vm ssh $VM_NAME --zone=$ZONE --worker=all --command "$CMD" && ret=0 || ret=$?
     if [ $ret -ne 0 ]; then
         echo -e "\033[31m[Error] Failed to kill TPU process. Retrying...\033[0m"
-        output=$(gcloud compute tpus tpu-vm ssh $VM_NAME --zone=$ZONE --worker=all --command "$CMD" 2>&1 || true)
+        output=$($CUSTOM_GCLOUD_EXE compute tpus tpu-vm ssh $VM_NAME --zone=$ZONE --worker=all --command "$CMD" 2>&1 || true)
         echo "[DEBUG] kill tpu result: $output"
         if [[ $output == *"[/usr/bin/ssh] exited with return code [255]"* || $output == *"ERROR: (gcloud.compute.tpus.tpu-vm.ssh)"* ]]; then
             echo "TPU may be preempted (during killing!). Gonna re-apply..."
@@ -283,7 +283,14 @@ run_setup_script(){
 
             cd
             gcloud auth activate-service-account --key-file=$json_file
-            gsutil -m cp -r $gs_str/hanhong/v5_wheels_new.tar.gz ./wheels.tar.gz
+
+            # kill all existing gsutil processes
+            # THIS TAG IS USED FOR NOT KILLING ITSELF: TAG0123456
+            sudo pkill -f gsutil || true
+            ps -ef | grep gsutil | grep cp | grep -v TAG0123456 | grep -v grep | awk '{ print \" sudo kill -9 \" \$2 }' | sh || true
+            ps -ef | grep gsutil || true
+
+            /snap/bin/gsutil -m cp -r $gs_str/hanhong/v5_wheels_new.tar.gz ./wheels.tar.gz
             tar -xvf wheels.tar.gz
             rm -rf .local || true
             pip install --no-index --find-links=wheels wheels/*.whl --no-deps --force-reinstall --no-warn-script-location
@@ -293,10 +300,14 @@ run_setup_script(){
             PIP_INSTALL_STR="
 
             cd
-            # gsutil -m cp -r $gs_str/hanhong/v6_wheels.tar.gz ./wheels.tar.gz
-            # ### new update
             gcloud auth activate-service-account --key-file=$json_file
-            gsutil -m cp -r $gs_str/hanhong/v6_wheels_jax437.tar.gz ./wheels.tar.gz
+
+            # kill all existing gsutil processes
+            # THIS TAG IS USED FOR NOT KILLING ITSELF: TAG0123456
+            ps -ef | grep gsutil | grep cp | grep -v TAG0123456 | grep -v grep | awk '{ print \" sudo kill -9 \" \$2 }' | sh || true
+            ps -ef | grep gsutil || true
+
+            /snap/bin/gsutil -m cp -r $gs_str/hanhong/v6_wheels_jax437.tar.gz ./wheels.tar.gz
             tar -xvf wheels.tar.gz
             rm -rf .local || true
             pip install --no-index --find-links=wheels wheels/*.whl --no-deps --force-reinstall --no-warn-script-location

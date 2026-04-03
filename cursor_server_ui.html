@@ -709,52 +709,110 @@ body {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, .62);
+  backdrop-filter: blur(4px);
   display: none;
   align-items: center;
   justify-content: center;
   padding: 24px;
   z-index: 45;
+  opacity: 0;
+  transition: opacity 0.25s ease;
 }
 #stack-modal-backdrop.show {
   display: flex;
+  animation: fadeIn 0.25s ease forwards;
+}
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 #stack-modal {
   width: min(940px, 100%);
   max-height: min(760px, calc(100vh - 48px));
   display: flex;
   flex-direction: column;
-  background: #171f2b;
-  border: 1px solid var(--line);
-  border-radius: 14px;
+  background: linear-gradient(180deg, #1a2333 0%, #151d28 100%);
+  border: 1px solid rgba(114, 136, 168, .28);
+  border-radius: 16px;
   overflow: hidden;
-  box-shadow: 0 16px 40px rgba(0, 0, 0, .45);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, .55), 0 0 0 1px rgba(255, 255, 255, .04) inset;
+  animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  transform: translateY(20px);
+  opacity: 0;
+}
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
 }
 #stack-modal-head {
-  padding: 12px 14px;
-  border-bottom: 1px solid #262b36;
+  padding: 16px 18px;
+  border-bottom: 1px solid rgba(114, 136, 168, .18);
+  background: linear-gradient(180deg, rgba(26, 35, 51, .6) 0%, rgba(23, 31, 43, .3) 100%);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
 }
 #stack-modal-title {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
-  color: #d9dde7;
+  letter-spacing: 0.2px;
+  color: #e5e9f2;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, .2);
 }
 #stack-modal-close {
-  border: 1px solid var(--line);
+  border: 1px solid rgba(114, 136, 168, .28);
   border-radius: 8px;
-  background: var(--panel-soft);
-  color: var(--text);
+  background: rgba(30, 40, 56, .6);
+  color: #b8c5db;
   cursor: pointer;
-  padding: 6px 10px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.2s ease;
+}
+#stack-modal-close:hover {
+  background: rgba(40, 52, 70, .8);
+  border-color: rgba(114, 136, 168, .42);
+  color: #d8e1f0;
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, .15);
+}
+#stack-modal-close:active {
+  transform: translateY(0);
+  box-shadow: none;
 }
 #stack-modal-body {
-  padding: 12px 14px 16px;
+  padding: 16px 18px 20px;
   overflow: auto;
   flex: 1;
   min-height: 180px;
+  background: rgba(15, 21, 31, .25);
+}
+#stack-modal-body::-webkit-scrollbar {
+  width: 10px;
+}
+#stack-modal-body::-webkit-scrollbar-track {
+  background: rgba(20, 28, 40, .4);
+  border-radius: 5px;
+}
+#stack-modal-body::-webkit-scrollbar-thumb {
+  background: rgba(114, 136, 168, .3);
+  border-radius: 5px;
+  transition: background 0.2s ease;
+}
+#stack-modal-body::-webkit-scrollbar-thumb:hover {
+  background: rgba(114, 136, 168, .45);
 }
 #modal {
   width: min(760px, 100%);
@@ -908,27 +966,39 @@ body {
   background: linear-gradient(180deg, #1a2231 0%, #161f2d 100%);
   margin-bottom: 10px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, .16);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+.task-item.task-stack {
+  box-shadow: 0 8px 24px rgba(0, 0, 0, .24), 0 0 0 1px rgba(126, 176, 255, .08);
+  border-color: rgba(114, 136, 168, .35);
+}
+.task-item.task-stack:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, .32), 0 0 0 1px rgba(126, 176, 255, .12);
 }
 .task-item.task-stack::before,
 .task-item.task-stack::after {
   content: "";
   position: absolute;
-  left: 10px;
-  right: 10px;
-  border-radius: 10px;
-  border: 1px solid rgba(114, 136, 168, .26);
-  background: rgba(16, 23, 35, .55);
+  left: 8px;
+  right: 8px;
+  border-radius: 11px;
+  border: 1px solid rgba(114, 136, 168, .32);
+  background: linear-gradient(180deg, rgba(26, 34, 49, .75) 0%, rgba(20, 29, 43, .68) 100%);
   pointer-events: none;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .12);
 }
 .task-item.task-stack::before {
-  top: -6px;
-  bottom: 6px;
+  top: -5px;
+  bottom: 5px;
   z-index: 0;
+  opacity: 0.95;
 }
 .task-item.task-stack::after {
-  top: -12px;
-  bottom: 12px;
+  top: -10px;
+  bottom: 10px;
   z-index: 0;
+  opacity: 0.85;
 }
 .task-item.task-stack > * {
   position: relative;
@@ -938,12 +1008,21 @@ body {
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  padding: 2px 8px;
+  padding: 3px 10px;
   font-size: 11px;
   font-weight: 700;
-  border: 1px solid rgba(126, 176, 255, .35);
-  background: rgba(77, 163, 255, .14);
-  color: #a8d1ff;
+  letter-spacing: 0.3px;
+  border: 1px solid rgba(126, 176, 255, .42);
+  background: linear-gradient(135deg, rgba(77, 163, 255, .22) 0%, rgba(95, 145, 255, .16) 100%);
+  color: #b8dcff;
+  box-shadow: 0 2px 6px rgba(77, 163, 255, .08), inset 0 1px 0 rgba(255, 255, 255, .08);
+  transition: all 0.2s ease;
+}
+.task-stack-badge:hover {
+  border-color: rgba(126, 176, 255, .55);
+  background: linear-gradient(135deg, rgba(77, 163, 255, .28) 0%, rgba(95, 145, 255, .20) 100%);
+  box-shadow: 0 3px 8px rgba(77, 163, 255, .14), inset 0 1px 0 rgba(255, 255, 255, .12);
+  transform: translateY(-1px);
 }
 .task-top {
   display: flex;
@@ -1413,7 +1492,7 @@ button:disabled {
           <button id="send-btn" onclick="sendMessage()" disabled>Send</button>
           <div id="quick-actions">
             <button id="run-quick-btn" onclick="runTaskQuickFromChat()" disabled>Run</button>
-            <button id="auto-iterate-btn" onclick="handleAutoIterateButton()" disabled>Auto Iterate</button>
+            <button id="auto-iterate-btn" onclick="stopAutoFixFromChat()" disabled>Stop Auto Fix</button>
           </div>
         </div>
         <div id="composer-ref-row"></div>
@@ -1636,16 +1715,14 @@ function refreshComposerControls() {
   const draftText = hasCurrent ? (conversationDrafts[currentId] || input.value || '') : '';
   const busyCurrent = hasCurrent && sendingConversationIds.has(currentId);
   const summary = hasCurrent ? (conversationSummariesById[currentId] || {}) : {};
-  const autoRunning = !!(summary && summary.auto_iterating);
-  const autoStopping = autoRunning && String(summary.status || '').toLowerCase() === 'stopping';
-  document.getElementById('send-btn').disabled = !hasCurrent || !draftText.trim() || busyCurrent || autoRunning;
+  const status = String((summary && summary.status) || '').toLowerCase();
+  const debugging = status === 'debugging';
+  document.getElementById('send-btn').disabled = !hasCurrent || !draftText.trim() || busyCurrent || debugging;
   document.getElementById('run-quick-btn').disabled = !hasCurrent;
   const autoBtn = document.getElementById('auto-iterate-btn');
   if (autoBtn) {
-    autoBtn.textContent = autoStopping
-      ? 'Stopping...'
-      : (autoRunning ? 'Stop Auto Iterate' : 'Auto Iterate');
-    autoBtn.disabled = !hasCurrent || busyCurrent || autoStopping || (!autoRunning && !draftText.trim());
+    autoBtn.textContent = 'Stop Auto Fix';
+    autoBtn.disabled = !hasCurrent || busyCurrent || !debugging;
   }
 }
 
@@ -2455,6 +2532,7 @@ function openTaskStackModal(groupIndex) {
           <div class="task-actions">
             <button onclick="addTaskReference('${escapeHtml(jobId)}')">Reference</button>
             <button onclick="viewTaskLog('${escapeHtml(jobId)}')">Log</button>
+            <button onclick="openTaskWandb('${escapeHtml(jobId)}')">Wandb</button>
           </div>
         </div>
       `;
@@ -2526,7 +2604,7 @@ function isCanceledTaskStatus(status) {
 }
 
 function taskDisplayStatus(status) {
-  return isCanceledTaskStatus(status) ? '[removed]' : String(status || 'unknown');
+  return String(status || 'unknown');
 }
 
 function taskStatusClass(status) {
@@ -2552,26 +2630,27 @@ function conversationHasJob(jobId) {
   return currentConversation.job_ids.includes(String(jobId || ''));
 }
 
-function renderSystemTaskCard(job, forceCanceled = false) {
+function renderSystemTaskCard(job, removedFromConversation = false) {
   const jobId = String((job && job.job_id) || 'unknown');
   const statusRaw = String((job && job.status) || 'unknown');
-  const effectiveStatusRaw = forceCanceled ? 'canceled' : statusRaw;
-  const status = taskDisplayStatus(effectiveStatusRaw);
+  const statusDisplayRaw = String((job && job.display_status) || statusRaw || 'unknown');
+  const effectiveStatusRaw = removedFromConversation ? 'removed' : statusRaw;
+  const status = removedFromConversation ? '[removed]' : taskDisplayStatus(statusDisplayRaw);
   const args = String((job && job.zhh_args) || '');
   const nickname = String((job && job.nickname) || '').trim();
   const createdAt = String((job && job.created_at) || '-');
-  const runBtnDisabled = !currentId ? 'disabled' : '';
+  const runBtnDisabled = (!currentId || removedFromConversation) ? 'disabled' : '';
   const statusLower = String(effectiveStatusRaw || '').toLowerCase();
-  const canCancel = statusLower === 'running' || statusLower === 'starting';
-  const canRemove = !['running', 'starting', 'queued', 'pending'].includes(statusLower);
-  const canceled = forceCanceled || isCanceledTaskStatus(effectiveStatusRaw);
+  const canCancel = !removedFromConversation && (statusLower === 'running' || statusLower === 'starting');
+  const canRemove = !removedFromConversation && !['running', 'starting', 'queued', 'pending'].includes(statusLower);
 
-  const actionsHtml = canceled
+  const actionsHtml = removedFromConversation
     ? `<div class="task-meta" style="margin-top:8px;">${escapeHtml(jobId)} is removed</div>`
     : `
       <div class="task-actions">
         <button ${runBtnDisabled} onclick="addTaskReference('${escapeHtml(jobId)}')">Reference</button>
         <button ${runBtnDisabled} onclick="viewTaskLog('${escapeHtml(jobId)}')">Log</button>
+        <button ${runBtnDisabled} onclick="openTaskWandb('${escapeHtml(jobId)}')">Wandb</button>
         ${canCancel ? `<button ${runBtnDisabled} onclick="cancelTask('${escapeHtml(jobId)}')">Cancel</button>` : ''}
         ${canRemove ? `<button ${runBtnDisabled} onclick="removeTask('${escapeHtml(jobId)}')">Remove</button>` : ''}
       </div>
@@ -3048,6 +3127,7 @@ function renderTasks(items, conversationId = currentId) {
         <button type="button" class="task-nickname-btn" data-job-id="${escapeHtml(jobId)}">Nickname</button>
         <button ${runBtnDisabled} onclick="addTaskReference('${escapeHtml(jobId)}')">Reference</button>
         <button ${runBtnDisabled} onclick="viewTaskLog('${escapeHtml(jobId)}')">Log</button>
+        <button ${runBtnDisabled} onclick="openTaskWandb('${escapeHtml(jobId)}')">Wandb</button>
         ${stackHistoryBtn}
         ${canResume ? `<button ${runBtnDisabled} onclick="resumeTask('${escapeHtml(jobId)}')">Resume</button>` : ''}
         ${canCancel ? `<button ${runBtnDisabled} onclick="cancelTask('${escapeHtml(jobId)}')">Cancel</button>` : ''}
@@ -3204,67 +3284,19 @@ async function runTaskQuickFromChat() {
   await runTaskForCurrentConversation('');
 }
 
-async function handleAutoIterateButton() {
+async function stopAutoFixFromChat() {
   const targetId = currentId;
   if (!targetId) return;
   const summary = conversationSummariesById[targetId] || {};
-  if (summary.auto_iterating) {
-    await stopAutoIteration();
-    return;
-  }
-  await startAutoIteration();
-}
-
-async function startAutoIteration() {
-  const targetId = currentId;
-  const input = document.getElementById('input');
-  const firstText = String((input && input.value) || '').trim();
-  if (!targetId) return;
-  if (!firstText) {
-    setStatus('Auto iterate requires message text in the input box.', 'error');
-    return;
-  }
-  const summary = conversationSummariesById[targetId] || {};
-  if (summary.auto_iterating) {
-    setStatus('Auto iterate is already running for this conversation.', 'busy');
-    return;
-  }
-
-  try {
-    setStatus('Starting backend auto iterate...', 'busy', targetId);
-    await api(`/api/conversations/${targetId}/auto-iterate/start`, {
-      method: 'POST',
-      headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ text: firstText, max_rounds: 8 })
-    });
-
-    conversationDrafts[targetId] = '';
-    if (currentId === targetId && input) {
-      input.value = '';
-    }
-    await loadConversations(targetId);
-    if (currentId === targetId) {
-      await openConversation(targetId, false);
-    }
-    setStatus('Auto iterate running in backend.', 'success', targetId);
-  } catch (err) {
-    setStatus('Auto iterate failed: ' + (err && err.message ? err.message : String(err)), 'error', targetId);
-  }
-  refreshComposerControls();
-}
-
-async function stopAutoIteration() {
-  const targetId = currentId;
-  if (!targetId) return;
-  try {
-    setStatus('Stopping auto iterate...', 'busy', targetId);
-    if (conversationSummariesById[targetId]) {
-      conversationSummariesById[targetId].status = 'stopping';
-      conversationSummariesById[targetId].auto_iterating = true;
-    }
+  const status = String(summary.status || '').toLowerCase();
+  if (status !== 'debugging') {
+    setStatus('Stop Auto Fix is only available while debugging.', 'error', targetId);
     refreshComposerControls();
-    renderCurrentConversationStatus();
-    await api(`/api/conversations/${targetId}/auto-iterate/stop`, {
+    return;
+  }
+  try {
+    setStatus('Stopping auto fix...', 'busy', targetId);
+    await api(`/api/conversations/${targetId}/auto-fix/stop`, {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
     });
@@ -3272,9 +3304,9 @@ async function stopAutoIteration() {
     if (currentId === targetId) {
       await openConversation(targetId, false);
     }
-    setStatus('Stop signal sent for auto iterate.', 'success', targetId);
+    setStatus('Stop signal sent for auto fix.', 'success', targetId);
   } catch (err) {
-    setStatus('Stop auto iterate failed: ' + (err && err.message ? err.message : String(err)), 'error', targetId);
+    setStatus('Stop auto fix failed: ' + (err && err.message ? err.message : String(err)), 'error', targetId);
   }
   refreshComposerControls();
 }
@@ -3325,6 +3357,24 @@ async function viewTaskLog(jobId) {
     setStatus('Log fetched.', 'success');
   } catch (err) {
     setStatus('Fetch log failed: ' + err.message, 'error');
+  }
+}
+
+async function openTaskWandb(jobId) {
+  if (!currentId || !jobId) return;
+  try {
+    setStatus('Resolving wandb link...', 'busy');
+    const data = await api(`/api/conversations/${currentId}/tasks/${jobId}/wandb`);
+    const url = String((data && data.wandb_url) || '').trim();
+    if (!url) {
+      throw new Error('wandb link not found');
+    }
+    window.open(url, '_blank', 'noopener,noreferrer');
+    await loadTasksForCurrentConversation(true);
+    await loadConversations();
+    setStatus('Opened wandb.', 'success');
+  } catch (err) {
+    setStatus('Open wandb failed: ' + err.message, 'error');
   }
 }
 

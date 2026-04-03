@@ -69,7 +69,9 @@ def build_auto_fix_prompt(job_id: str, status: str, give_up_nonce: str) -> str:
         f"Task {target_job_id} finished with status '{normalized_status}'.\n"
         "Please inspect the referenced logs and fix the issue directly in this workspace.\n"
         "After making fixes, explain what you changed and why.\n"
-        "Only if you are truly blocked and cannot safely fix it now, append exactly one give-up tag in your final response:\n"
+        "In some cases, it may be possible that the issue is just random, if you are sure of that, you can just state the reason without making any modifications.\n"
+        "Beside code errors, there are two specific types of errors you might encounter: 1. environmental errors, such as missing packages, which you can fix by adding a 补.sh in the ROOT of the project, the content of it will be executed before the job runs, you can put any shell commands in it to prepare the environment, but notice that most packages (e.g. JAX/flax) are already auto-installed, you only need to add the custom packages you introduce; 2. GS bucket errors, in which you should review your GS bucket skill. Specifically, you are permitted to copy SMALL checkpoints LOCALLY (i.e. run in your shell) if needed.\n"
+        "Finally, only if you are truly blocked and cannot safely fix it now, append exactly one give-up tag in your final response:\n"
         f"<give_up_fix>{{\"job_id\":\"{target_job_id}\",\"reason\":\"<specific reason>\",\"nonce\":\"{nonce}\"}}</give_up_fix>\n"
         "Do not use the give-up tag unless absolutely necessary. The reason is mandatory."
     )

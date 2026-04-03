@@ -33,6 +33,8 @@ until sudo apt-get update && sudo apt-get install -y nfs-common; do
     sudo systemctl stop unattended-upgrades.service || true
     sudo systemctl disable unattended-upgrades.service || true
 
+    sudo dpkg --configure -a || true
+
     attempt=$((attempt + 1))
 done
 
