@@ -1,4 +1,7 @@
 shopt -s nullglob
+
+rm -rf /tmp/*tpu*
+
 for proc in /proc/*; do
     if [[ ! -d "$proc" ]]; then
         continue

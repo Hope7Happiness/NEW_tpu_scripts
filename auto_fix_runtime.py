@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import threading
-from typing import Callable
+import time
+from typing import Any, Callable
 
 from agent_action_protocol import (
     build_auto_fix_prompt,
@@ -49,6 +50,28 @@ class AutoFixCoordinator:
 
         self._store_lock = threading.Lock()
         self._threads: dict[str, threading.Thread] = {}
+        self._cancel_events: dict[str, threading.Event] = {}
+        self._cancelers: dict[str, Any] = {}
+        self._active_job_ids: dict[str, str] = {}
+
+    def request_stop(self, conversation_id: str) -> tuple[bool, str | None]:
+        canceler = None
+        job_id = None
+        with self._store_lock:
+            thread = self._threads.get(conversation_id)
+            if not (thread and thread.is_alive()):
+                return False, None
+            event = self._cancel_events.get(conversation_id)
+            if event is not None:
+                event.set()
+            canceler = self._cancelers.get(conversation_id)
+            job_id = self._active_job_ids.get(conversation_id)
+        if canceler is not None:
+            try:
+                canceler.close()
+            except Exception:
+                pass
+        return True, job_id
 
     def _set_task_auto_fix_state(
         self,
@@ -95,8 +118,16 @@ class AutoFixCoordinator:
         self.update_conversation(conversation_id, updater)
 
     def _run_worker(self, conversation_id: str, job_id: str) -> None:
+        cancel_event = threading.Event()
+        with self._store_lock:
+            self._cancel_events[conversation_id] = cancel_event
+            self._active_job_ids[conversation_id] = job_id
+
         try:
             self._set_task_auto_fix_state(conversation_id, job_id, in_progress=True)
+
+            if cancel_event.is_set():
+                raise InterruptedError("auto-fix canceled")
 
             conv = self.get_conversation(conversation_id)
             if not conv:
@@ -109,7 +140,14 @@ class AutoFixCoordinator:
                 return
 
             lock = self.get_conversation_lock(conversation_id)
-            acquired = lock.acquire(timeout=60)
+            acquired = False
+            deadline = time.monotonic() + 60
+            while time.monotonic() < deadline:
+                if cancel_event.is_set():
+                    raise InterruptedError("auto-fix canceled")
+                acquired = lock.acquire(timeout=0.5)
+                if acquired:
+                    break
             if not acquired:
                 self.append_message(
                     conversation_id,
@@ -129,6 +167,9 @@ class AutoFixCoordinator:
                         {"system_event": "auto_fix_skipped", "job_id": job_id, "reason": "conversation_disappeared"},
                     )
                     return
+
+                if cancel_event.is_set():
+                    raise InterruptedError("auto-fix canceled")
 
                 status = self.resolve_job_status(latest, job_id)
                 if not self.is_failed_task_status(status):
@@ -167,6 +208,9 @@ class AutoFixCoordinator:
                     [{"stdout": stdout_text}],
                 )
 
+                if cancel_event.is_set():
+                    raise InterruptedError("auto-fix canceled")
+
                 self.append_message(
                     conversation_id,
                     "user",
@@ -190,7 +234,10 @@ class AutoFixCoordinator:
                         if reporter is not None
                         else None
                     ),
+                    cancel_event=cancel_event,
+                    on_client_ready=lambda canceler: self._register_canceler(conversation_id, canceler),
                 )
+                self._clear_canceler(conversation_id)
 
                 model_used = str(result.get("model") or "").strip()
                 if (not latest.get("cursor_session_id")) or model_used:
@@ -252,13 +299,6 @@ class AutoFixCoordinator:
                                 "action: run job",
                                 {"system_event": "agent_action_run_job"},
                             )
-                        else:
-                            self.append_message(
-                                conversation_id,
-                                "system",
-                                "Auto-fix auto-started run job (no explicit run action in agent reply).",
-                                {"system_event": "auto_fix_auto_run", "job_id": new_job_id},
-                            )
                     elif run_err:
                         if should_run_job:
                             err_msg = f"Agent requested run job, but /run failed: {run_err}"
@@ -274,6 +314,13 @@ class AutoFixCoordinator:
                 self.maybe_autoname(conversation_id)
             finally:
                 lock.release()
+        except InterruptedError:
+            self.append_message(
+                conversation_id,
+                "system",
+                f"Auto-fix stopped by user for job {job_id}.",
+                {"system_event": "auto_fix_stopped", "job_id": job_id},
+            )
         except Exception as e:
             self.append_message(
                 conversation_id,
@@ -283,10 +330,22 @@ class AutoFixCoordinator:
             )
         finally:
             try:
+                self._clear_canceler(conversation_id)
                 self._set_task_auto_fix_state(conversation_id, job_id, in_progress=False, attempted=True)
             finally:
                 with self._store_lock:
                     self._threads.pop(conversation_id, None)
+                    self._cancel_events.pop(conversation_id, None)
+                    self._cancelers.pop(conversation_id, None)
+                    self._active_job_ids.pop(conversation_id, None)
+
+    def _register_canceler(self, conversation_id: str, canceler: Any) -> None:
+        with self._store_lock:
+            self._cancelers[conversation_id] = canceler
+
+    def _clear_canceler(self, conversation_id: str) -> None:
+        with self._store_lock:
+            self._cancelers.pop(conversation_id, None)
 
     def maybe_schedule(self, conversation_id: str, conv: dict, jobs: list[dict]) -> None:
         if bool(conv.get("auto_iterating")):

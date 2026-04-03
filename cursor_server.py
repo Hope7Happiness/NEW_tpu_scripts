@@ -1891,6 +1891,27 @@ def api_compact_conversation(conversation_id: str):
     lock.release()
 
 
+@app.route("/api/conversations/<conversation_id>/auto-fix/stop", methods=["POST"])
+def api_stop_auto_fix(conversation_id: str):
+  conv = get_conversation(conversation_id)
+  if not conv:
+    return jsonify({"error": "not found"}), 404
+
+  status = str(conv.get("status") or "").strip().lower()
+  if status != "debugging":
+    return jsonify({"error": "auto fix stop is only available while debugging"}), 409
+
+  stopped, job_id = AUTO_FIX_COORDINATOR.request_stop(conversation_id)
+  if not stopped:
+    return jsonify({"error": "no active auto fix worker"}), 409
+
+  return jsonify({
+    "ok": True,
+    "conversation_id": conversation_id,
+    "job_id": str(job_id or ""),
+  }), 202
+
+
 @app.route("/api/conversations/<conversation_id>/messages", methods=["POST"])
 def api_send_message(conversation_id: str):
   data = request.get_json(force=True, silent=True) or {}
