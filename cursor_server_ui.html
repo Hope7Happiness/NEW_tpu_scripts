@@ -29,27 +29,15 @@
 }
 
 * { box-sizing: border-box; }
-html,
-body {
-  height: 100%;
-  overflow: hidden;
-}
 body {
   margin: 0;
   background: radial-gradient(1200px 600px at 22% -20%, #1a2a44 0%, transparent 58%), var(--bg);
   color: var(--text);
   font-family: Inter, system-ui, -apple-system, sans-serif;
-  min-height: 100svh;
-  height: 100svh;
+  height: 100vh;
   display: grid;
   grid-template-columns: 280px 1fr;
   color-scheme: dark;
-}
-@supports (height: 100dvh) {
-  body {
-    min-height: 100dvh;
-    height: 100dvh;
-  }
 }
 #sidebar {
   border-right: 1px solid var(--line);
@@ -96,12 +84,6 @@ body {
   display: inline-block;
   transform: translateY(-0.5px);
   flex-shrink: 0;
-}
-#model-policy {
-  margin: 6px 0 8px;
-  font-size: 11px;
-  line-height: 1.35;
-  color: var(--muted);
 }
 #new-btn {
   width: 100%;
@@ -176,9 +158,6 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  min-width: 0;
-  height: 100%;
-  overflow: hidden;
 }
 #view-tabs {
   display: flex;
@@ -236,44 +215,17 @@ body {
   justify-content: space-between;
   gap: 16px;
 }
-#topbar > div:first-child {
-  min-width: 0;
-  flex: 1;
-}
-#sidebar-toggle-btn {
-  display: none;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel-soft);
-  color: var(--text);
-  padding: 8px 10px;
-  font-size: 12px;
-  font-weight: 700;
-  cursor: pointer;
-}
-#topbar-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-}
 #title {
   font-size: 15px;
   font-weight: 700;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 #meta {
   margin-top: 4px;
   font-size: 12px;
   color: var(--muted);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 #messages {
-  flex: 1 1 auto;
-  min-height: 0;
+  flex: 1;
   overflow-y: auto;
   padding: 20px;
   background:
@@ -415,21 +367,14 @@ body {
 .msg.system .system-banner {
   background: linear-gradient(180deg, rgba(68, 56, 112, .9) 0%, rgba(48, 42, 83, .9) 100%);
   color: #ede7ff;
-  border-top: 1px solid #635493;
-  border-bottom: 1px solid #635493;
-  border-left: 0;
-  border-right: 0;
-  border-radius: 0;
-  width: 100%;
+  border: 1px solid #635493;
+  border-radius: 8px;
+  width: min(92%, 860px);
   text-align: center;
-  padding: 9px 12px;
+  padding: 9px 14px;
+  position: relative;
+  z-index: 1;
   box-shadow: none;
-}
-.msg.system.action-msg .system-banner {
-  background: linear-gradient(180deg, rgba(18, 105, 92, .96) 0%, rgba(14, 82, 72, .96) 100%);
-  color: #ddfff8;
-  border-top: 1px solid rgba(84, 219, 194, .6);
-  border-bottom: 1px solid rgba(84, 219, 194, .6);
 }
 .msg.user {
   align-items: flex-end;
@@ -438,7 +383,7 @@ body {
   align-items: flex-start;
 }
 .msg.system {
-  align-items: stretch;
+  align-items: center;
   position: relative;
   margin-top: 12px;
   margin-bottom: 12px;
@@ -466,9 +411,6 @@ body {
 }
 .msg.system .system-banner .md-content a {
   color: #bba2ff;
-}
-.msg.system.action-msg .system-banner .md-content a {
-  color: #9ef2df;
 }
 .msg.user .bubble .md-content code {
   background: rgba(255, 255, 255, .42);
@@ -514,8 +456,6 @@ body {
 }
 .msg.system .task-item {
   width: min(92%, 860px);
-  margin-left: auto;
-  margin-right: auto;
 }
 .system-task-actions {
   margin-top: 8px;
@@ -622,6 +562,17 @@ body {
   min-height: 48px;
   cursor: pointer;
 }
+#auto-iterate-btn {
+  width: 100%;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--panel-soft);
+  color: var(--text);
+  font-weight: 700;
+  font-size: 11px;
+  min-height: 32px;
+  cursor: pointer;
+}
 #send-btn:disabled, #new-btn:disabled {
   opacity: .55;
   cursor: default;
@@ -659,20 +610,6 @@ body {
   font-weight: 700;
   flex-shrink: 0;
 }
-#compact-btn {
-  border: 1px solid rgba(125, 171, 255, .34);
-  background: rgba(97, 153, 255, .14);
-  color: #b9d4ff;
-  border-radius: 10px;
-  padding: 10px 12px;
-  cursor: pointer;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-#compact-btn:disabled {
-  opacity: .5;
-  cursor: default;
-}
 #delete-btn:disabled {
   opacity: .5;
   cursor: default;
@@ -703,7 +640,6 @@ body {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  z-index: 60;
 }
 #modal-backdrop.show {
   display: flex;
@@ -716,7 +652,7 @@ body {
   align-items: center;
   justify-content: center;
   padding: 24px;
-  z-index: 70;
+  z-index: 40;
 }
 #log-modal-backdrop.show {
   display: flex;
@@ -769,6 +705,57 @@ body {
   line-height: 1.45;
   color: #d9dde7;
 }
+#stack-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, .62);
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 45;
+}
+#stack-modal-backdrop.show {
+  display: flex;
+}
+#stack-modal {
+  width: min(940px, 100%);
+  max-height: min(760px, calc(100vh - 48px));
+  display: flex;
+  flex-direction: column;
+  background: #171f2b;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, .45);
+}
+#stack-modal-head {
+  padding: 12px 14px;
+  border-bottom: 1px solid #262b36;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+#stack-modal-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #d9dde7;
+}
+#stack-modal-close {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  color: var(--text);
+  cursor: pointer;
+  padding: 6px 10px;
+}
+#stack-modal-body {
+  padding: 12px 14px 16px;
+  overflow: auto;
+  flex: 1;
+  min-height: 180px;
+}
 #modal {
   width: min(760px, 100%);
   max-height: min(680px, calc(100vh - 48px));
@@ -797,42 +784,6 @@ body {
 #modal-body {
   padding: 16px 18px;
   overflow: auto;
-}
-#create-type-row {
-  display: grid;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-#create-type-label {
-  font-size: 12px;
-  color: var(--muted);
-}
-#create-type-select,
-.create-input {
-  width: 100%;
-  padding: 10px 12px;
-  border-radius: 10px;
-  border: 1px solid var(--line);
-  background: #101723;
-  color: var(--text);
-  font-size: 13px;
-  box-sizing: border-box;
-}
-#create-extra-fields {
-  display: grid;
-  gap: 10px;
-  margin-bottom: 12px;
-}
-.create-field {
-  display: grid;
-  gap: 6px;
-}
-.create-field > label {
-  font-size: 12px;
-  color: var(--muted);
-}
-#picker-section {
-  display: block;
 }
 #picker-toolbar {
   display: flex;
@@ -901,7 +852,6 @@ body {
   flex-direction: column;
   min-height: 0;
   flex: 1;
-  overflow: hidden;
 }
 #panel-tasks {
   display: none;
@@ -951,12 +901,49 @@ body {
   flex: 1;
 }
 .task-item {
+  position: relative;
   border: 1px solid var(--line);
   border-radius: 12px;
   padding: 12px;
   background: linear-gradient(180deg, #1a2231 0%, #161f2d 100%);
   margin-bottom: 10px;
   box-shadow: 0 6px 18px rgba(0, 0, 0, .16);
+}
+.task-item.task-stack::before,
+.task-item.task-stack::after {
+  content: "";
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  border-radius: 10px;
+  border: 1px solid rgba(114, 136, 168, .26);
+  background: rgba(16, 23, 35, .55);
+  pointer-events: none;
+}
+.task-item.task-stack::before {
+  top: -6px;
+  bottom: 6px;
+  z-index: 0;
+}
+.task-item.task-stack::after {
+  top: -12px;
+  bottom: 12px;
+  z-index: 0;
+}
+.task-item.task-stack > * {
+  position: relative;
+  z-index: 1;
+}
+.task-stack-badge {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  padding: 2px 8px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid rgba(126, 176, 255, .35);
+  background: rgba(77, 163, 255, .14);
+  color: #a8d1ff;
 }
 .task-top {
   display: flex;
@@ -1311,140 +1298,35 @@ button:disabled {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;
   }
-  body.mobile-sidebar-hidden {
-    grid-template-rows: 1fr;
-  }
-  body.mobile-no-conversation {
-    grid-template-rows: 1fr;
-  }
   #sidebar {
     border-right: 0;
     border-bottom: 1px solid var(--line);
-    max-height: min(32svh, 220px);
-  }
-  body.mobile-no-conversation #sidebar {
-    max-height: none;
-    height: 100%;
-    border-bottom: 0;
-  }
-  body.mobile-no-conversation #main {
-    display: none;
-  }
-  body.mobile-sidebar-hidden #sidebar {
-    display: none;
+    max-height: 38vh;
   }
   #conv-list {
-    display: block;
-    overflow-x: hidden;
-    overflow-y: auto;
-    padding: 10px 12px;
+    display: flex;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 10px;
+    gap: 8px;
   }
   #conv-list li {
-    min-width: 0;
-    width: 100%;
-    margin-bottom: 10px;
-  }
-  #sidebar-toggle-btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-  }
-  #topbar {
-    padding: 8px 10px;
-    gap: 8px;
-  }
-  #topbar-actions {
-    flex-shrink: 0;
-    min-width: 0;
-    gap: 6px;
-  }
-  #title {
-    font-size: 14px;
-  }
-  #meta {
-    font-size: 11px;
-    margin-top: 2px;
-  }
-  #delete-btn {
-    padding: 8px 10px;
-    font-size: 12px;
-    max-width: 120px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  #compact-btn {
-    padding: 8px 10px;
-    font-size: 12px;
-    max-width: 120px;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  #messages {
-    padding: 12px 10px;
-  }
-  .msg {
-    margin-bottom: 10px;
-  }
-  .bubble {
-    max-width: 92%;
-    padding: 12px 13px;
-  }
-  .bubble .md-content {
-    font-size: 15px;
-    line-height: 1.68;
-  }
-  #view-tabs,
-  #composer-wrap,
-  #tasks-toolbar,
-  #yaml-toolbar,
-  #ka-toolbar,
-  #tasks-list,
-  #yaml-editor-wrap,
-  #ka-editor-wrap,
-  #status-bar {
-    padding-left: 10px;
-    padding-right: 10px;
-  }
-  #view-tabs {
-    display: flex;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    gap: 6px;
-    padding-top: 6px;
-    padding-bottom: 6px;
-  }
-  .tab-btn {
-    flex: 0 0 auto;
-    min-width: 86px;
-    text-align: center;
-    font-size: 11px;
-    padding: 6px 10px;
+    min-width: 220px;
+    margin-bottom: 0;
   }
   #composer {
-    flex-direction: row;
-    gap: 8px;
-    align-items: stretch;
-  }
-  #input {
-    min-height: 64px;
+    flex-direction: column;
   }
   #quick-actions {
-    width: 88px;
-    flex-direction: column;
-    gap: 6px;
+    width: 100%;
+    flex-direction: row;
   }
   #quick-actions > button {
-    width: 100%;
+    flex: 1;
   }
   #send-btn {
-    width: 96px;
-    min-height: 40px;
-  }
-  #run-quick-btn {
-    min-height: 34px;
-    font-size: 12px;
+    width: 100%;
+    min-height: 44px;
   }
   #tasks-toolbar,
   #yaml-toolbar,
@@ -1452,8 +1334,6 @@ button:disabled {
     flex-wrap: wrap;
   }
   #yaml-file-select,
-  #create-type-select,
-  .create-input,
   #task-args {
     width: 100%;
     min-width: 0;
@@ -1468,15 +1348,25 @@ button:disabled {
 }
 
 @media (max-width: 640px) {
-  #messages {
-    padding: 10px 8px;
+  #topbar,
+  #view-tabs,
+  #composer-wrap,
+  #tasks-toolbar,
+  #yaml-toolbar,
+  #ka-toolbar,
+  #tasks-list,
+  #yaml-editor-wrap,
+  #ka-editor-wrap,
+  #status-bar {
+    padding-left: 12px;
+    padding-right: 12px;
   }
-  .bubble {
-    max-width: 95%;
+  #topbar {
+    flex-direction: column;
+    align-items: flex-start;
   }
-  .bubble .md-content {
-    font-size: 16px;
-    line-height: 1.72;
+  #delete-btn {
+    width: 100%;
   }
   .task-top {
     flex-direction: column;
@@ -1484,12 +1374,6 @@ button:disabled {
   }
   .task-actions {
     flex-wrap: wrap;
-  }
-  #send-btn {
-    width: 84px;
-  }
-  #quick-actions {
-    width: 78px;
   }
 }
 </style>
@@ -1501,7 +1385,6 @@ button:disabled {
         <span class="brand-mark"><img src="/assets/curchat-180.png?v=5" alt="curchat"/></span>
         <span class="brand-name">CurChat</span>
       </h1>
-      <div id="model-policy">Model: __DEFAULT_MODEL__</div>
       <button id="new-btn" onclick="createConversation()">+ New conversation</button>
     </div>
     <ul id="conv-list"></ul>
@@ -1513,11 +1396,7 @@ button:disabled {
         <div id="title">No conversation selected</div>
         <div id="meta">Create a new session first.</div>
       </div>
-      <div id="topbar-actions">
-        <button id="sidebar-toggle-btn" onclick="toggleSidebarMobile()">Sessions</button>
-        <button id="compact-btn" onclick="compactCurrentConversation()" disabled>Compact</button>
-        <button id="delete-btn" onclick="deleteCurrentConversation()" disabled>Delete session</button>
-      </div>
+      <button id="delete-btn" onclick="deleteCurrentConversation()" disabled>Delete session</button>
     </div>
     <div id="view-tabs">
       <button id="tab-chat" class="tab-btn active" onclick="switchTab('chat')">Chat</button>
@@ -1534,6 +1413,7 @@ button:disabled {
           <button id="send-btn" onclick="sendMessage()" disabled>Send</button>
           <div id="quick-actions">
             <button id="run-quick-btn" onclick="runTaskQuickFromChat()" disabled>Run</button>
+            <button id="auto-iterate-btn" onclick="handleAutoIterateButton()" disabled>Auto Iterate</button>
           </div>
         </div>
         <div id="composer-ref-row"></div>
@@ -1545,15 +1425,6 @@ button:disabled {
         <input id="task-args" placeholder="Optional args, e.g. s / q / rr" />
         <button id="run-task-btn" onclick="runTaskForCurrentConversation()" disabled>Run</button>
         <button id="refresh-task-btn" onclick="loadTasksForCurrentConversation()" disabled>Refresh</button>
-        <select id="task-status-filter" onchange="applyTaskStatusFilter()" disabled>
-          <option value="all">All</option>
-          <option value="running">Running</option>
-          <option value="creating">Creating</option>
-          <option value="completed">Completed</option>
-          <option value="error">Error</option>
-          <option value="canceled">Canceled</option>
-        </select>
-        <button id="mark-read-btn" onclick="markAllTasksRead()" disabled>Mark All Read</button>
       </div>
       <div id="tasks-list"><div class="empty">No conversation selected.</div></div>
     </section>
@@ -1593,48 +1464,15 @@ button:disabled {
   <div id="modal-backdrop" onclick="handleModalBackdrop(event)">
     <div id="modal">
       <div id="modal-head">
-        <h2>New conversation</h2>
+        <h2>Choose workdir</h2>
         <div id="modal-sub">Root: __WORKDIR_ROOT__</div>
       </div>
       <div id="modal-body">
-        <div id="create-type-row">
-          <label id="create-type-label" for="create-type-select">Create mode</label>
-          <select id="create-type-select" onchange="onCreateTypeChange()">
-            <option value="directory">Select a directory</option>
-            <option value="clone">Clone from GitHub</option>
-            <option value="worktree">Create branch from a directory</option>
-            <option value="copy">Copy from a directory</option>
-          </select>
+        <div id="picker-toolbar">
+          <button class="secondary-btn" onclick="goParentDir()">Up</button>
+          <div id="picker-current">Loading...</div>
         </div>
-        <div id="create-extra-fields">
-          <div class="create-field" id="clone-parent-field" style="display:none;">
-            <label for="clone-parent-input">Parent directory</label>
-            <input id="clone-parent-input" class="create-input" type="text" placeholder="/path/to/parent" />
-          </div>
-          <div class="create-field" id="clone-url-field" style="display:none;">
-            <label for="clone-url-input">GitHub repository URL</label>
-            <input id="clone-url-input" class="create-input" type="text" placeholder="https://github.com/org/repo" />
-          </div>
-          <div class="create-field" id="worktree-source-field" style="display:none;">
-            <label for="worktree-source-input">Source git directory</label>
-            <input id="worktree-source-input" class="create-input" type="text" placeholder="/path/to/existing/repo" />
-          </div>
-          <div class="create-field" id="worktree-branch-field" style="display:none;">
-            <label for="worktree-branch-input">Branch name</label>
-            <input id="worktree-branch-input" class="create-input" type="text" placeholder="feature/my-branch" />
-          </div>
-          <div class="create-field" id="new-dir-name-field" style="display:none;">
-            <label for="new-dir-name-input">New directory name</label>
-            <input id="new-dir-name-input" class="create-input" type="text" placeholder="my-new-dir" />
-          </div>
-        </div>
-        <div id="picker-section">
-          <div id="picker-toolbar">
-            <button class="secondary-btn" onclick="goParentDir()">Up</button>
-            <div id="picker-current">Loading...</div>
-          </div>
-          <div id="dir-list"></div>
-        </div>
+        <div id="dir-list"></div>
       </div>
       <div id="modal-foot">
         <div id="selected-workdir">Selected: —</div>
@@ -1658,6 +1496,16 @@ button:disabled {
     </div>
   </div>
 
+  <div id="stack-modal-backdrop" onclick="handleStackModalBackdrop(event)">
+    <div id="stack-modal">
+      <div id="stack-modal-head">
+        <div id="stack-modal-title">Task Stack</div>
+        <button id="stack-modal-close" onclick="closeTaskStackModal()">Close</button>
+      </div>
+      <div id="stack-modal-body"></div>
+    </div>
+  </div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.6/ace.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.6/mode-yaml.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/ace/1.32.6/mode-sh.min.js" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
@@ -1669,7 +1517,7 @@ let currentId = null;
 let currentConversation = null;
 let currentView = 'chat';
 let currentTasks = [];
-let taskStatusFilter = 'all';
+let taskStackGroups = [];
 let conversationDrafts = {};
 let conversationTaskRefs = {};
 const sendingConversationIds = new Set();
@@ -1690,67 +1538,9 @@ let conversationStatusOverrides = {};
 let conversationTaskRuntimeStatus = {};
 let taskPollTimer = null;
 let taskPollInFlight = false;
-let conversationSnapshotsById = {};
-let conversationMessageUnread = {};
-let lastSeenMessageCountByConversation = {};
-let notificationPendingByConversation = {};
-let notificationAudioCtx = null;
-let lastNotificationSoundAt = 0;
-const BASE_DOCUMENT_TITLE = document.title || 'Cursor Server';
 const WORKDIR_ROOT = '__WORKDIR_ROOT__';
-const DEFAULT_MODEL = '__DEFAULT_MODEL__';
-const CONFIGURED_MODEL = '__CONFIGURED_MODEL__';
-const FILESYSTEM_ROOT = '/';
-let runtimeModelPolicy = {
-  configured_model: CONFIGURED_MODEL || 'default',
-  effective_model: DEFAULT_MODEL || CONFIGURED_MODEL || 'default',
-  force_auto_active: false,
-  force_auto_until: '',
-  force_auto_days_remaining: 0,
-};
 let pickerCurrentPath = WORKDIR_ROOT;
 let pickerSelectedPath = WORKDIR_ROOT;
-let createModalMode = 'directory';
-const MOBILE_BREAKPOINT = 860;
-
-function isNarrowScreen() {
-  return window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`).matches;
-}
-
-function setSidebarHiddenMobile(hidden) {
-  const shouldHide = !!hidden && isNarrowScreen();
-  document.body.classList.toggle('mobile-sidebar-hidden', shouldHide);
-  const btn = document.getElementById('sidebar-toggle-btn');
-  if (btn) {
-    btn.textContent = shouldHide ? 'Sessions' : 'Hide';
-  }
-}
-
-function toggleSidebarMobile() {
-  if (!isNarrowScreen()) return;
-  const hidden = document.body.classList.contains('mobile-sidebar-hidden');
-  setSidebarHiddenMobile(!hidden);
-}
-
-function syncMobileLayoutState() {
-  if (isNarrowScreen()) {
-    const hidden = document.body.classList.contains('mobile-sidebar-hidden');
-    const hasConversation = !!currentId;
-    document.body.classList.toggle('mobile-no-conversation', !hasConversation);
-    if (!hasConversation && hidden) {
-      setSidebarHiddenMobile(false);
-    } else {
-      setSidebarHiddenMobile(hidden);
-    }
-    return;
-  }
-  document.body.classList.remove('mobile-sidebar-hidden');
-  document.body.classList.remove('mobile-no-conversation');
-  const btn = document.getElementById('sidebar-toggle-btn');
-  if (btn) {
-    btn.textContent = 'Sessions';
-  }
-}
 
 function applyStatusToUI(text, kind = 'normal') {
   const el = document.getElementById('status');
@@ -1789,55 +1579,6 @@ function renderCurrentConversationStatus() {
     const fallback = fallbackStatusForConversation(currentConversation);
     applyStatusToUI(fallback.text, fallback.kind);
   }
-}
-
-function daysLeftText(n) {
-  const v = Number(n || 0);
-  if (!Number.isFinite(v) || v <= 0) return '0 days';
-  if (v === 1) return '1 day';
-  return `${v} days`;
-}
-
-function renderModelPolicyBanner() {
-  const el = document.getElementById('model-policy');
-  if (!el) return;
-  const policy = runtimeModelPolicy || {};
-  const configured = String(policy.configured_model || CONFIGURED_MODEL || 'default');
-  const effective = String(policy.effective_model || configured || 'default');
-  if (effective === 'default' && policy.force_auto_active) {
-    const until = String(policy.force_auto_until || '').trim();
-    const left = daysLeftText(policy.force_auto_days_remaining);
-    const untilText = until ? ` (until ${until}, ${left})` : '';
-    el.textContent = `Model: auto · claude 4.6 in ${left}${untilText}`;
-    return;
-  }
-  if (policy.force_auto_active) {
-    const until = String(policy.force_auto_until || '').trim();
-    const left = daysLeftText(policy.force_auto_days_remaining);
-    const untilText = until ? ` (until ${until}, ${left})` : '';
-    el.textContent = `Model: ${effective} · claude 4.6 in ${left}${untilText}`;
-    return;
-  }
-  if (configured === 'default') {
-    el.textContent = `Model: ${effective} · claude 4.6 available now`;
-    return;
-  }
-  el.textContent = `Model: ${effective}`;
-}
-
-async function refreshModelPolicy() {
-  try {
-    const data = await api('/api/runtime/model-policy');
-    if (data && typeof data === 'object') {
-      runtimeModelPolicy = {
-        ...runtimeModelPolicy,
-        ...data,
-      };
-    }
-  } catch (_) {
-    // keep last known value
-  }
-  renderModelPolicyBanner();
 }
 
 function setStatus(text, kind = 'normal', conversationId = null) {
@@ -1896,8 +1637,16 @@ function refreshComposerControls() {
   const busyCurrent = hasCurrent && sendingConversationIds.has(currentId);
   const summary = hasCurrent ? (conversationSummariesById[currentId] || {}) : {};
   const autoRunning = !!(summary && summary.auto_iterating);
+  const autoStopping = autoRunning && String(summary.status || '').toLowerCase() === 'stopping';
   document.getElementById('send-btn').disabled = !hasCurrent || !draftText.trim() || busyCurrent || autoRunning;
   document.getElementById('run-quick-btn').disabled = !hasCurrent;
+  const autoBtn = document.getElementById('auto-iterate-btn');
+  if (autoBtn) {
+    autoBtn.textContent = autoStopping
+      ? 'Stopping...'
+      : (autoRunning ? 'Stop Auto Iterate' : 'Auto Iterate');
+    autoBtn.disabled = !hasCurrent || busyCurrent || autoStopping || (!autoRunning && !draftText.trim());
+  }
 }
 
 function getTaskRefsForConversation(conversationId) {
@@ -1964,226 +1713,6 @@ function isFailedTaskStatus(status) {
   return ['failed', 'error', 'timeout', 'aborted'].includes(normalizeTaskStatus(status));
 }
 
-function normalizeMessageCount(value) {
-  const num = Number(value || 0);
-  if (!Number.isFinite(num) || num < 0) return 0;
-  return Math.floor(num);
-}
-
-function anyAutoIterating(conversations) {
-  const list = Array.isArray(conversations) ? conversations : [];
-  return list.some(item => !!(item && item.auto_iterating));
-}
-
-function unlockNotificationAudio() {
-  try {
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if (!Ctx) return;
-    if (!notificationAudioCtx) {
-      notificationAudioCtx = new Ctx();
-    }
-    if (notificationAudioCtx.state === 'suspended') {
-      notificationAudioCtx.resume().catch(() => {});
-    }
-  } catch (_) {
-    // ignore
-  }
-}
-
-function playNotificationSound() {
-  const now = Date.now();
-  if ((now - lastNotificationSoundAt) < 1200) return;
-  lastNotificationSoundAt = now;
-
-  unlockNotificationAudio();
-  if (!notificationAudioCtx) return;
-
-  try {
-    const ctx = notificationAudioCtx;
-    const start = ctx.currentTime + 0.01;
-    const tone = (offset, freq, dur) => {
-      const osc = ctx.createOscillator();
-      const gain = ctx.createGain();
-      osc.type = 'sine';
-      osc.frequency.value = freq;
-      gain.gain.setValueAtTime(0.0001, start + offset);
-      gain.gain.exponentialRampToValueAtTime(0.08, start + offset + 0.01);
-      gain.gain.exponentialRampToValueAtTime(0.0001, start + offset + dur);
-      osc.connect(gain);
-      gain.connect(ctx.destination);
-      osc.start(start + offset);
-      osc.stop(start + offset + dur + 0.02);
-    };
-    tone(0, 880, 0.12);
-    tone(0.16, 1174, 0.14);
-  } catch (_) {
-    // ignore
-  }
-}
-
-function getPendingNotificationCount() {
-  let total = 0;
-  for (const value of Object.values(notificationPendingByConversation)) {
-    const num = Number(value || 0);
-    if (Number.isFinite(num) && num > 0) total += Math.floor(num);
-  }
-  return total;
-}
-
-function refreshDocumentTitle() {
-  const count = getPendingNotificationCount();
-  if (count > 0) {
-    document.title = `${count} notifications · ${BASE_DOCUMENT_TITLE}`;
-    return;
-  }
-  document.title = BASE_DOCUMENT_TITLE;
-}
-
-function clearPendingNotificationsForConversation(conversationId) {
-  const id = String(conversationId || '').trim();
-  if (!id) return;
-  if (notificationPendingByConversation[id]) {
-    delete notificationPendingByConversation[id];
-    refreshDocumentTitle();
-  }
-}
-
-function clearAllPendingNotifications() {
-  if (!Object.keys(notificationPendingByConversation).length) return;
-  notificationPendingByConversation = {};
-  refreshDocumentTitle();
-}
-
-function maybeDesktopNotify(title, body, tag) {
-  return;
-}
-
-function ensureNotificationPermissions() {
-  unlockNotificationAudio();
-}
-
-function setupNotificationCapabilities() {
-  const unlock = () => ensureNotificationPermissions();
-  window.addEventListener('pointerdown', unlock, { passive: true });
-  window.addEventListener('keydown', unlock, { passive: true });
-  const clearOnForeground = () => {
-    const pageInForeground = document.visibilityState === 'visible' && document.hasFocus();
-    if (!pageInForeground) return;
-    clearAllPendingNotifications();
-  };
-  document.addEventListener('visibilitychange', clearOnForeground);
-  window.addEventListener('focus', clearOnForeground);
-}
-
-function collectNotificationEvents(conversations) {
-  const events = [];
-  const list = Array.isArray(conversations) ? conversations : [];
-  for (const item of list) {
-    if (!item || !item.id) continue;
-    const id = item.id;
-    const prev = conversationSnapshotsById[id];
-    const messageCount = normalizeMessageCount(item.message_count);
-    const seenCount = normalizeMessageCount(lastSeenMessageCountByConversation[id]);
-
-    if (!prev) {
-      lastSeenMessageCountByConversation[id] = Math.max(seenCount, messageCount);
-      continue;
-    }
-
-    const prevMessageCount = normalizeMessageCount(prev.message_count);
-    const hasNewMessage = messageCount > prevMessageCount;
-    const lastRole = String(item.last_message_role || '').toLowerCase();
-    const autoRunning = !!item.auto_iterating;
-
-    if (hasNewMessage && lastRole === 'assistant' && !autoRunning) {
-      if (id !== currentId && messageCount > seenCount) {
-        conversationMessageUnread[id] = true;
-      }
-      events.push({
-        type: 'assistant_message',
-        id,
-        title: item.workdir_base || item.title || 'Conversation',
-        body: String(item.last_message_preview || 'New assistant reply'),
-      });
-    }
-
-    if (!prev.task_has_failed_unread && !!item.task_has_failed_unread) {
-      events.push({
-        type: 'task_failed',
-        id,
-        title: item.workdir_base || item.title || 'Conversation',
-        body: 'A task failed.',
-      });
-    }
-
-    if (!!prev.auto_iterating && !autoRunning) {
-      const err = String(item.auto_iterate_last_error || item.last_error || '').trim();
-      if (err) {
-        events.push({
-          type: 'auto_iterate_failed',
-          id,
-          title: item.workdir_base || item.title || 'Conversation',
-          body: `Auto iterate failed: ${err}`,
-        });
-      } else {
-        events.push({
-          type: 'auto_iterate_done',
-          id,
-          title: item.workdir_base || item.title || 'Conversation',
-          body: 'Auto iterate completed.',
-        });
-      }
-    }
-  }
-  return events;
-}
-
-function dispatchNotificationEvents(events, conversations) {
-  const list = Array.isArray(events) ? events : [];
-  if (!list.length) return;
-  if (anyAutoIterating(conversations)) return;
-
-  for (const event of list) {
-    const id = String(event && event.id || '').trim();
-    if (!id) continue;
-    notificationPendingByConversation[id] = Number(notificationPendingByConversation[id] || 0) + 1;
-  }
-  refreshDocumentTitle();
-
-  const pageInForeground = document.visibilityState === 'visible' && document.hasFocus();
-  if (!pageInForeground) {
-    playNotificationSound();
-  }
-  for (const event of list.slice(0, 3)) {
-    const title = event.type === 'assistant_message'
-      ? `New agent reply · ${event.title}`
-      : (event.type === 'task_failed'
-        ? `Task failed · ${event.title}`
-        : (event.type === 'auto_iterate_failed'
-          ? `Auto iterate failed · ${event.title}`
-          : `Auto iterate completed · ${event.title}`));
-    maybeDesktopNotify(title, event.body || '', `cursor-${event.type}-${event.id}`);
-  }
-}
-
-function updateConversationSnapshots(conversations) {
-  const next = {};
-  const list = Array.isArray(conversations) ? conversations : [];
-  for (const item of list) {
-    if (!item || !item.id) continue;
-    next[item.id] = {
-      id: item.id,
-      message_count: normalizeMessageCount(item.message_count),
-      last_message_role: String(item.last_message_role || ''),
-      auto_iterating: !!item.auto_iterating,
-      task_has_failed_unread: !!item.task_has_failed_unread,
-      auto_iterate_last_error: String(item.auto_iterate_last_error || ''),
-      last_error: String(item.last_error || ''),
-    };
-  }
-  conversationSnapshotsById = next;
-}
-
 function getConversationAlertSummary(conversationId) {
   const item = conversationSummariesById[conversationId] || {};
   const unreadCount = Number(item.task_unread_count || 0);
@@ -2195,16 +1724,12 @@ function getConversationAlertSummary(conversationId) {
 }
 
 function renderConversationAlertHtml(conversationItem) {
-  const messageUnread = !!conversationMessageUnread[String((conversationItem && conversationItem.id) || '')];
   const summary = {
     unreadCount: Number(conversationItem && conversationItem.task_unread_count || 0),
     hasFailedUnread: !!(conversationItem && conversationItem.task_has_failed_unread),
   };
   if (summary.hasFailedUnread) {
     return '<span class="conv-alert failed" title="Task failed">!</span>';
-  }
-  if (messageUnread) {
-    return '<span class="conv-alert" title="New assistant reply"></span>';
   }
   if (summary.unreadCount > 0) {
     return '<span class="conv-alert" title="Task update"></span>';
@@ -2265,22 +1790,9 @@ async function pollTaskNotifications() {
       } else {
         delete conversationTaskRuntimeStatus[result.id];
       }
-      if (result.id === currentId) {
-        currentTasks = result.jobs;
-        if (currentConversation) {
-          renderConversation(currentConversation);
-          if (currentView === 'tasks') {
-            renderTasks(result.jobs, currentId);
-          }
-        }
-      }
     }
     const refreshed = await api('/api/conversations');
-    await refreshModelPolicy();
     const latest = Array.isArray(refreshed.conversations) ? refreshed.conversations : [];
-    const events = collectNotificationEvents(latest);
-    dispatchNotificationEvents(events, latest);
-    updateConversationSnapshots(latest);
     renderConversationList(latest);
     refreshTaskTabAlert();
   } catch (err) {
@@ -2296,14 +1808,11 @@ function startTaskNotificationPolling() {
 }
 
 async function bootstrapConversations() {
-  setupNotificationCapabilities();
-  renderModelPolicyBanner();
   await pollTaskNotifications();
   if (!Object.keys(conversationSummariesById || {}).length) {
     await loadConversations();
   }
   startTaskNotificationPolling();
-  syncMobileLayoutState();
 }
 
 function switchTab(view) {
@@ -2782,17 +2291,6 @@ function renderConversationList(items) {
   const list = document.getElementById('conv-list');
   list.innerHTML = '';
   conversationSummariesById = {};
-  const validIds = new Set((Array.isArray(items) ? items : []).map(item => item && item.id).filter(Boolean));
-  for (const id of Object.keys(conversationMessageUnread)) {
-    if (!validIds.has(id)) delete conversationMessageUnread[id];
-  }
-  for (const id of Object.keys(lastSeenMessageCountByConversation)) {
-    if (!validIds.has(id)) delete lastSeenMessageCountByConversation[id];
-  }
-  for (const id of Object.keys(notificationPendingByConversation)) {
-    if (!validIds.has(id)) delete notificationPendingByConversation[id];
-  }
-  refreshDocumentTitle();
   for (const item of items) {
     if (item && item.id) {
       conversationSummariesById[item.id] = item;
@@ -2813,83 +2311,31 @@ function renderConversationList(items) {
 }
 
 async function createConversation() {
-  createModalMode = 'directory';
-  document.getElementById('create-type-select').value = 'directory';
-  document.getElementById('clone-parent-input').value = WORKDIR_ROOT;
-  document.getElementById('clone-url-input').value = '';
-  document.getElementById('worktree-source-input').value = currentConversation && currentConversation.cwd ? currentConversation.cwd : '';
-  document.getElementById('worktree-branch-input').value = '';
-  document.getElementById('new-dir-name-input').value = '';
   pickerSelectedPath = WORKDIR_ROOT;
   document.getElementById('selected-workdir').textContent = 'Selected: ' + pickerSelectedPath;
   document.getElementById('modal-backdrop').classList.add('show');
-  onCreateTypeChange(true);
   await browseDir(WORKDIR_ROOT);
-}
-
-function onCreateTypeChange(skipBrowse = false) {
-  const mode = String(document.getElementById('create-type-select').value || 'directory');
-  createModalMode = mode;
-  const modalSub = document.getElementById('modal-sub');
-
-  const pickerSection = document.getElementById('picker-section');
-  const cloneParentField = document.getElementById('clone-parent-field');
-  const cloneUrlField = document.getElementById('clone-url-field');
-  const worktreeSourceField = document.getElementById('worktree-source-field');
-  const worktreeBranchField = document.getElementById('worktree-branch-field');
-  const newDirNameField = document.getElementById('new-dir-name-field');
-  const selectedEl = document.getElementById('selected-workdir');
-
-  const needsPicker = mode === 'directory' || mode === 'copy';
-  pickerSection.style.display = needsPicker ? 'block' : 'none';
-
-  cloneParentField.style.display = mode === 'clone' ? 'grid' : 'none';
-  cloneUrlField.style.display = mode === 'clone' ? 'grid' : 'none';
-  worktreeSourceField.style.display = mode === 'worktree' ? 'grid' : 'none';
-  worktreeBranchField.style.display = mode === 'worktree' ? 'grid' : 'none';
-  newDirNameField.style.display = (mode === 'clone' || mode === 'worktree') ? 'grid' : 'none';
-
-  if (needsPicker) {
-    if (mode === 'copy') {
-      modalSub.textContent = 'Root: / (filesystem)';
-      pickerCurrentPath = FILESYSTEM_ROOT;
-      pickerSelectedPath = FILESYSTEM_ROOT;
-    } else {
-      modalSub.textContent = 'Root: ' + WORKDIR_ROOT;
-    }
-    selectedEl.textContent = 'Selected: ' + pickerCurrentPath;
-    if (!skipBrowse) {
-      const browseStartPath = mode === 'copy' ? FILESYSTEM_ROOT : pickerCurrentPath;
-      browseDir(browseStartPath).catch(err => {
-        setStatus('Browse failed: ' + err.message, 'error');
-      });
-    }
-    return;
-  }
-
-  if (mode === 'clone') {
-    selectedEl.textContent = 'Clone target parent: use the field above';
-  } else if (mode === 'worktree') {
-    selectedEl.textContent = 'Worktree source: use the field above';
-  } else {
-    selectedEl.textContent = 'Selected: —';
-  }
-  document.getElementById('confirm-create-btn').disabled = false;
 }
 
 async function browseDir(path) {
   setStatus('Loading directories...', 'busy');
-  const allowOutsideRoot = createModalMode === 'copy' ? '&allow_outside_root=1' : '';
-  const data = await api('/api/workdirs?path=' + encodeURIComponent(path) + allowOutsideRoot);
+  const data = await api('/api/workdirs?path=' + encodeURIComponent(path));
   pickerCurrentPath = data.current;
-  pickerSelectedPath = data.current;
+  if (!pickerSelectedPath) pickerSelectedPath = data.current;
   document.getElementById('picker-current').textContent = data.current;
-  if (createModalMode === 'directory' || createModalMode === 'copy') {
-    document.getElementById('selected-workdir').textContent = 'Selected: ' + pickerSelectedPath;
-  }
+  document.getElementById('selected-workdir').textContent = 'Selected: ' + pickerSelectedPath;
 
   const list = document.getElementById('dir-list');
   list.innerHTML = '';
+
+  const currentItem = document.createElement('div');
+  currentItem.className = 'dir-item';
+  currentItem.onclick = () => selectWorkdir(data.current);
+  currentItem.innerHTML = `
+    <div class="dir-name">📁 Select this directory</div>
+    <div class="dir-path">${escapeHtml(data.current_relative)} </div>
+  `;
+  list.appendChild(currentItem);
 
   for (const dir of data.children) {
     const item = document.createElement('div');
@@ -2960,49 +2406,68 @@ function handleLogModalBackdrop(event) {
   }
 }
 
-async function createConversationConfirmed() {
-  const mode = createModalMode || 'directory';
-  let payload = { title: 'New chat', create_type: mode };
+function closeTaskStackModal() {
+  const backdrop = document.getElementById('stack-modal-backdrop');
+  if (backdrop) backdrop.classList.remove('show');
+}
 
-  if (mode === 'directory') {
-    if (!pickerCurrentPath) {
-      setStatus('Please choose a workdir.', 'error');
-      return;
-    }
-    payload.workdir = pickerCurrentPath;
-  } else if (mode === 'clone') {
-    const parentDir = String(document.getElementById('clone-parent-input').value || '').trim();
-    const repoUrl = String(document.getElementById('clone-url-input').value || '').trim();
-    const newDirName = String(document.getElementById('new-dir-name-input').value || '').trim();
-    if (!parentDir || !repoUrl || !newDirName) {
-      setStatus('Clone requires parent directory, repo URL, and new directory name.', 'error');
-      return;
-    }
-    payload.parent_dir = parentDir;
-    payload.repo_url = repoUrl;
-    payload.new_dir_name = newDirName;
-  } else if (mode === 'worktree') {
-    const sourceDir = String(document.getElementById('worktree-source-input').value || '').trim();
-    const branchName = String(document.getElementById('worktree-branch-input').value || '').trim();
-    const newDirName = String(document.getElementById('new-dir-name-input').value || '').trim();
-    if (!sourceDir || !branchName || !newDirName) {
-      setStatus('Worktree requires source directory, branch name, and new directory name.', 'error');
-      return;
-    }
-    payload.source_dir = sourceDir;
-    payload.branch_name = branchName;
-    payload.new_dir_name = newDirName;
-  } else if (mode === 'copy') {
-    if (!pickerCurrentPath) {
-      setStatus('Please choose a source directory to copy.', 'error');
-      return;
-    }
-    payload.source_dir = pickerCurrentPath;
+function handleStackModalBackdrop(event) {
+  if (event.target && event.target.id === 'stack-modal-backdrop') {
+    closeTaskStackModal();
+  }
+}
+
+function openTaskStackModal(groupIndex) {
+  const group = taskStackGroups[groupIndex];
+  if (!group) return;
+  const title = document.getElementById('stack-modal-title');
+  const body = document.getElementById('stack-modal-body');
+  const backdrop = document.getElementById('stack-modal-backdrop');
+  if (!title || !body || !backdrop) return;
+
+  const items = Array.isArray(group.items) ? group.items : [];
+  const label = group.displayJobId ? shortJobId(group.displayJobId) : 'unknown';
+  title.textContent = `Task Stack · ${label} · ${items.length} jobs`;
+  if (!items.length) {
+    body.innerHTML = '<div class="empty" style="margin-top:0;">No jobs in this stack.</div>';
   } else {
-    setStatus('Unknown create mode.', 'error');
+    body.innerHTML = items.map((job) => {
+      const jobId = String((job && job.job_id) || 'unknown');
+      const status = String((job && job.status) || 'unknown');
+      const args = String((job && job.zhh_args) || '');
+      const nickname = String((job && job.nickname) || '').trim();
+      const createdAt = String((job && job.created_at) || '-');
+      const relType = String((job && job._lineage_edge_type) || '');
+      const relFrom = String((job && job._lineage_parent_job_id) || '').trim();
+      let relText = '';
+      if (relType === 'resume' && relFrom) relText = `resume from ${relFrom}`;
+      else if (relType === 'auto_fix' && relFrom) relText = `auto fix from ${relFrom}`;
+      return `
+        <div class="task-item" style="margin-top:8px;">
+          <div class="task-top">
+            <div class="task-id">
+              <span class="task-id-main">${escapeHtml(jobId)}</span>
+              ${nickname ? `<span class="task-tag nickname">🏷 ${escapeHtml(nickname)}</span>` : ''}
+            </div>
+            <div class="task-status ${taskStatusClass(status)}">${escapeHtml(status)}</div>
+          </div>
+          <div class="task-meta">args: ${escapeHtml(args)} · created: ${escapeHtml(createdAt)}${relText ? ` · ${escapeHtml(relText)}` : ''}</div>
+          <div class="task-actions">
+            <button onclick="addTaskReference('${escapeHtml(jobId)}')">Reference</button>
+            <button onclick="viewTaskLog('${escapeHtml(jobId)}')">Log</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+  backdrop.classList.add('show');
+}
+
+async function createConversationConfirmed() {
+  if (!pickerSelectedPath) {
+    setStatus('Please choose a workdir.', 'error');
     return;
   }
-
   try {
     document.getElementById('new-btn').disabled = true;
     document.getElementById('confirm-create-btn').disabled = true;
@@ -3010,7 +2475,7 @@ async function createConversationConfirmed() {
     const data = await api('/api/conversations', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify(payload)
+      body: JSON.stringify({ title: 'New chat', workdir: pickerSelectedPath })
     });
     currentId = data.conversation.id;
     closeCreateModal();
@@ -3031,33 +2496,21 @@ async function createConversationConfirmed() {
 
 async function openConversation(id, updateList = true) {
   const input = document.getElementById('input');
+  closeTaskStackModal();
   if (currentId && input) {
     conversationDrafts[currentId] = input.value;
   }
   currentId = id;
   const data = await api('/api/conversations/' + id);
   currentConversation = data.conversation;
-  const currentMessageCount = normalizeMessageCount(currentConversation && currentConversation.messages && currentConversation.messages.length);
-  conversationMessageUnread[id] = false;
-  lastSeenMessageCountByConversation[id] = currentMessageCount;
-  clearPendingNotificationsForConversation(id);
   input.value = conversationDrafts[currentId] || '';
   renderConversation(currentConversation);
   renderPendingTaskRefs();
   renderCurrentConversationStatus();
   refreshComposerControls();
-  const statusLower = String(currentConversation.status || '').toLowerCase();
-  const lockedSession = ['running', 'debugging'].includes(statusLower);
-  document.getElementById('delete-btn').disabled = lockedSession;
-  document.getElementById('compact-btn').disabled = lockedSession;
+  document.getElementById('delete-btn').disabled = currentConversation.status === 'running';
   document.getElementById('run-task-btn').disabled = false;
   document.getElementById('refresh-task-btn').disabled = false;
-  document.getElementById('task-status-filter').disabled = false;
-  document.getElementById('mark-read-btn').disabled = false;
-  if (isNarrowScreen()) {
-    setSidebarHiddenMobile(true);
-  }
-  syncMobileLayoutState();
   await loadTasksForCurrentConversation(true);
   if (currentView === 'yaml') {
     await loadYamlFileListForCurrentConversation(true);
@@ -3073,7 +2526,7 @@ function isCanceledTaskStatus(status) {
 }
 
 function taskDisplayStatus(status) {
-  return String(status || 'unknown');
+  return isCanceledTaskStatus(status) ? '[removed]' : String(status || 'unknown');
 }
 
 function taskStatusClass(status) {
@@ -3099,29 +2552,26 @@ function conversationHasJob(jobId) {
   return currentConversation.job_ids.includes(String(jobId || ''));
 }
 
-function renderSystemTaskCard(job, removedFromConversation = false) {
+function renderSystemTaskCard(job, forceCanceled = false) {
   const jobId = String((job && job.job_id) || 'unknown');
   const statusRaw = String((job && job.status) || 'unknown');
-  const statusDisplayRaw = String((job && job.display_status) || statusRaw || 'unknown');
-  const effectiveStatusRaw = removedFromConversation ? 'removed' : statusRaw;
-  const status = removedFromConversation ? '[removed]' : taskDisplayStatus(statusDisplayRaw);
+  const effectiveStatusRaw = forceCanceled ? 'canceled' : statusRaw;
+  const status = taskDisplayStatus(effectiveStatusRaw);
   const args = String((job && job.zhh_args) || '');
   const nickname = String((job && job.nickname) || '').trim();
   const createdAt = String((job && job.created_at) || '-');
-  const runBtnDisabled = (!currentId || removedFromConversation) ? 'disabled' : '';
+  const runBtnDisabled = !currentId ? 'disabled' : '';
   const statusLower = String(effectiveStatusRaw || '').toLowerCase();
-  const canCancel = !removedFromConversation && (statusLower === 'running' || statusLower === 'starting');
-  const canResume = !removedFromConversation && ['failed', 'error', 'timeout', 'aborted'].includes(statusLower);
-  const canRemove = !removedFromConversation && !['running', 'starting', 'queued', 'pending'].includes(statusLower);
+  const canCancel = statusLower === 'running' || statusLower === 'starting';
+  const canRemove = !['running', 'starting', 'queued', 'pending'].includes(statusLower);
+  const canceled = forceCanceled || isCanceledTaskStatus(effectiveStatusRaw);
 
-  const actionsHtml = removedFromConversation
+  const actionsHtml = canceled
     ? `<div class="task-meta" style="margin-top:8px;">${escapeHtml(jobId)} is removed</div>`
     : `
       <div class="task-actions">
         <button ${runBtnDisabled} onclick="addTaskReference('${escapeHtml(jobId)}')">Reference</button>
         <button ${runBtnDisabled} onclick="viewTaskLog('${escapeHtml(jobId)}')">Log</button>
-        <button ${runBtnDisabled} onclick="openTaskWandb('${escapeHtml(jobId)}')">Wandb</button>
-        ${canResume ? `<button ${runBtnDisabled} onclick="resumeTask('${escapeHtml(jobId)}')">Resume</button>` : ''}
         ${canCancel ? `<button ${runBtnDisabled} onclick="cancelTask('${escapeHtml(jobId)}')">Cancel</button>` : ''}
         ${canRemove ? `<button ${runBtnDisabled} onclick="removeTask('${escapeHtml(jobId)}')">Remove</button>` : ''}
       </div>
@@ -3146,19 +2596,8 @@ function renderConversation(conv) {
   document.getElementById('title').textContent = basenameFromPath(conv.cwd) || conv.title || 'Untitled';
   const summary = conversationSummariesById[conv.id] || { id: conv.id, status: conv.status };
   const statusText = effectiveConversationStatus(summary);
-  const modelText = String(
-    (conv && conv.current_model)
-    || (summary && summary.current_model)
-    || (runtimeModelPolicy && runtimeModelPolicy.effective_model)
-    || DEFAULT_MODEL
-    || 'default'
-  );
-  document.getElementById('meta').textContent = `${statusText} · model=${modelText} · ${conv.cwd}`;
+  document.getElementById('meta').textContent = `${statusText} · ${conv.cwd}`;
   const messages = document.getElementById('messages');
-  const prevScrollTop = messages.scrollTop;
-  const prevScrollHeight = messages.scrollHeight;
-  const prevBottomGap = prevScrollHeight - prevScrollTop;
-  const wasNearBottom = (prevScrollHeight - (prevScrollTop + messages.clientHeight)) <= 80;
   messages.innerHTML = '';
   if (!conv.messages || !conv.messages.length) {
     messages.innerHTML = '<div class="empty">No messages yet.</div>';
@@ -3166,9 +2605,6 @@ function renderConversation(conv) {
     for (const m of conv.messages) {
       const wrap = document.createElement('div');
       wrap.className = 'msg ' + m.role;
-      if (m && m.role === 'system' && m.system_event === 'agent_action_run_job') {
-        wrap.classList.add('action-msg');
-      }
       const refSources = (m && typeof m.task_ref_sources === 'object' && m.task_ref_sources) ? m.task_ref_sources : {};
       const refs = (m.task_refs || []).map(jobId => {
         const sourceRaw = refSources ? refSources[jobId] : '';
@@ -3180,10 +2616,7 @@ function renderConversation(conv) {
           </div>
         `;
       }).join(' ');
-      const systemTaskRun = m
-        && m.role === 'system'
-        && (m.system_event === 'task_run' || m.system_event === 'task_resume')
-        && m.job_id;
+      const systemTaskRun = m && m.role === 'system' && m.system_event === 'task_run' && m.job_id;
       let systemTaskCardHtml = '';
       if (systemTaskRun) {
         const synced = getCurrentTaskById(m.job_id);
@@ -3211,11 +2644,7 @@ function renderConversation(conv) {
       messages.appendChild(wrap);
     }
   }
-  if (wasNearBottom) {
-    messages.scrollTop = messages.scrollHeight;
-  } else {
-    messages.scrollTop = Math.max(0, messages.scrollHeight - prevBottomGap);
-  }
+  messages.scrollTop = messages.scrollHeight;
 }
 
 function renderPendingTaskRefs() {
@@ -3272,23 +2701,21 @@ function basenameFromPath(path) {
 function resetConversationView() {
   currentId = null;
   currentConversation = null;
+  taskStackGroups = [];
+  closeTaskStackModal();
   document.getElementById('title').textContent = 'No conversation selected';
   document.getElementById('meta').textContent = 'Create a new session first.';
   document.getElementById('messages').innerHTML = '<div class="empty">No conversation selected.</div>';
   document.getElementById('tasks-list').innerHTML = '<div class="empty">No conversation selected.</div>';
   document.getElementById('input').value = '';
   refreshComposerControls();
-  document.getElementById('compact-btn').disabled = true;
   document.getElementById('delete-btn').disabled = true;
   document.getElementById('run-task-btn').disabled = true;
   document.getElementById('refresh-task-btn').disabled = true;
-  document.getElementById('task-status-filter').disabled = true;
-  document.getElementById('mark-read-btn').disabled = true;
   renderYamlUnavailable('No conversation selected.');
   renderKaUnavailable('No conversation selected.');
   renderPendingTaskRefs();
   renderCurrentConversationStatus();
-  syncMobileLayoutState();
 }
 
 async function deleteCurrentConversation() {
@@ -3304,7 +2731,6 @@ async function deleteCurrentConversation() {
   const deletingId = currentId;
   try {
     document.getElementById('delete-btn').disabled = true;
-    document.getElementById('compact-btn').disabled = true;
     setStatus('Deleting session...', 'busy');
     await api(`/api/conversations/${deletingId}`, { method: 'DELETE' });
     delete conversationDrafts[deletingId];
@@ -3318,36 +2744,9 @@ async function deleteCurrentConversation() {
     setStatus('Session deleted.', 'success');
   } catch (err) {
     if (currentConversation) {
-      const statusLower = String(currentConversation.status || '').toLowerCase();
-      const lockedSession = ['running', 'debugging'].includes(statusLower);
-      document.getElementById('delete-btn').disabled = lockedSession;
-      document.getElementById('compact-btn').disabled = lockedSession;
+      document.getElementById('delete-btn').disabled = currentConversation.status === 'running';
     }
     setStatus('Delete failed: ' + err.message, 'error');
-  }
-}
-
-async function compactCurrentConversation() {
-  if (!currentId) return;
-  const ok = confirm('Compact this conversation context now? This will reset session context and keep only a summary for subsequent turns.');
-  if (!ok) return;
-  const compactId = currentId;
-  try {
-    document.getElementById('compact-btn').disabled = true;
-    setStatus('Compacting conversation context...', 'busy', compactId);
-    await api(`/api/conversations/${compactId}/compact`, { method: 'POST' });
-    await loadConversations(compactId);
-    if (currentId === compactId) {
-      await openConversation(compactId, false);
-    }
-    setStatus('Conversation compacted.', 'success', compactId);
-  } catch (err) {
-    setStatus('Compaction failed: ' + err.message, 'error', compactId);
-  } finally {
-    if (currentConversation && currentId === compactId) {
-      const statusLower = String(currentConversation.status || '').toLowerCase();
-      document.getElementById('compact-btn').disabled = ['running', 'debugging'].includes(statusLower);
-    }
   }
 }
 
@@ -3417,12 +2816,156 @@ async function sendMessage() {
     sendingConversationIds.delete(targetId);
     refreshComposerControls();
     if (currentConversation) {
-      const statusLower = String(currentConversation.status || '').toLowerCase();
-      const lockedSession = ['running', 'debugging'].includes(statusLower);
-      document.getElementById('delete-btn').disabled = lockedSession;
-      document.getElementById('compact-btn').disabled = lockedSession;
+      document.getElementById('delete-btn').disabled = currentConversation.status === 'running';
     }
   }
+}
+
+function taskLineageParent(job) {
+  if (!job || typeof job !== 'object') return { parentJobId: '', edgeType: '' };
+  const resumeFrom = String(job.resume_from_job_id || '').trim();
+  if (resumeFrom) return { parentJobId: resumeFrom, edgeType: 'resume' };
+  const autoFixFrom = String(job.auto_fix_from_job_id || '').trim();
+  if (autoFixFrom) return { parentJobId: autoFixFrom, edgeType: 'auto_fix' };
+  const nickname = String(job.nickname || '').trim();
+  const match = nickname.match(/^auto\s*fix\s*from\s+([^\s]+)$/i);
+  if (match && match[1]) return { parentJobId: String(match[1]).trim(), edgeType: 'auto_fix' };
+  return { parentJobId: '', edgeType: '' };
+}
+
+function edgePriority(edgeType) {
+  if (edgeType === 'resume') return 0;
+  if (edgeType === 'auto_fix') return 1;
+  return 2;
+}
+
+function isSyntheticStackTag(nickname) {
+  const text = String(nickname || '').trim();
+  if (!text) return true;
+  if (/^auto\s*fix\s*from\s+/i.test(text)) return true;
+  if (/^resume\s*[\u00B7.\-]/i.test(text)) return true;
+  return false;
+}
+
+function resolveStackDisplayTag(group, displayJobId) {
+  const items = Array.isArray(group && group.items) ? group.items : [];
+  const byId = new Map(items.map((job) => [String((job && job.job_id) || ''), job]));
+  let cursor = String(displayJobId || '').trim();
+  const seen = new Set();
+  while (cursor && !seen.has(cursor)) {
+    seen.add(cursor);
+    const current = byId.get(cursor);
+    if (!current) break;
+    const parent = String((current && current._lineage_parent_job_id) || '').trim();
+    if (!parent || !byId.has(parent)) {
+      const rootTag = String((current && current.nickname) || '').trim();
+      return isSyntheticStackTag(rootTag) ? '' : rootTag;
+    }
+    cursor = parent;
+  }
+  return '';
+}
+
+function buildTaskStackGroups(items) {
+  const list = Array.isArray(items) ? items : [];
+  const byId = new Map();
+  const rankById = new Map();
+  const relationById = new Map();
+  for (const [idx, raw] of list.entries()) {
+    if (!raw || typeof raw !== 'object') continue;
+    const jobId = String(raw.job_id || '').trim();
+    if (!jobId) continue;
+    byId.set(jobId, { ...raw });
+    rankById.set(jobId, idx);
+    relationById.set(jobId, taskLineageParent(raw));
+  }
+
+  function rootKeyFor(jobId) {
+    let cursor = String(jobId || '').trim();
+    const seen = new Set();
+    while (cursor && !seen.has(cursor)) {
+      seen.add(cursor);
+      const rel = relationById.get(cursor) || { parentJobId: '' };
+      const parent = String(rel.parentJobId || '').trim();
+      if (!parent) return `job:${cursor}`;
+      if (!byId.has(parent)) return `ghost:${parent}`;
+      cursor = parent;
+    }
+    return `job:${jobId}`;
+  }
+
+  const groupsByKey = new Map();
+  for (const jobId of byId.keys()) {
+    const key = rootKeyFor(jobId);
+    if (!groupsByKey.has(key)) groupsByKey.set(key, []);
+    groupsByKey.get(key).push(jobId);
+  }
+
+  const groups = [];
+  for (const [groupKey, ids] of groupsByKey.entries()) {
+    const idSet = new Set(ids);
+    const childrenByParent = new Map();
+    for (const id of ids) {
+      const rel = relationById.get(id) || { parentJobId: '', edgeType: '' };
+      const parent = String(rel.parentJobId || '').trim();
+      if (!parent || !idSet.has(parent)) continue;
+      if (!childrenByParent.has(parent)) childrenByParent.set(parent, []);
+      childrenByParent.get(parent).push({ childId: id, edgeType: String(rel.edgeType || '') });
+    }
+
+    function chooseLeaf(startId) {
+      let current = startId;
+      const seen = new Set();
+      while (current && !seen.has(current)) {
+        seen.add(current);
+        const children = childrenByParent.get(current) || [];
+        if (!children.length) break;
+        children.sort((a, b) => {
+          const edgeCmp = edgePriority(a.edgeType) - edgePriority(b.edgeType);
+          if (edgeCmp !== 0) return edgeCmp;
+          return (rankById.get(a.childId) ?? Number.MAX_SAFE_INTEGER)
+            - (rankById.get(b.childId) ?? Number.MAX_SAFE_INTEGER);
+        });
+        current = children[0].childId;
+      }
+      return current;
+    }
+
+    const roots = ids.filter((id) => {
+      const rel = relationById.get(id) || { parentJobId: '' };
+      const parent = String(rel.parentJobId || '').trim();
+      return !parent || !idSet.has(parent);
+    });
+    const rootIds = roots.length ? roots : ids;
+
+    let displayJobId = '';
+    let displayRank = Number.MAX_SAFE_INTEGER;
+    for (const rootId of rootIds) {
+      const leaf = chooseLeaf(rootId);
+      const rank = rankById.get(leaf) ?? Number.MAX_SAFE_INTEGER;
+      if (rank < displayRank) {
+        displayRank = rank;
+        displayJobId = leaf;
+      }
+    }
+    if (!displayJobId && ids.length) {
+      displayJobId = ids.slice().sort((a, b) => (rankById.get(a) ?? 0) - (rankById.get(b) ?? 0))[0];
+      displayRank = rankById.get(displayJobId) ?? Number.MAX_SAFE_INTEGER;
+    }
+
+    const jobsSorted = ids.map((id) => {
+      const job = { ...(byId.get(id) || {}) };
+      const rel = relationById.get(id) || { parentJobId: '', edgeType: '' };
+      job._lineage_parent_job_id = String(rel.parentJobId || '');
+      job._lineage_edge_type = String(rel.edgeType || '');
+      return job;
+    }).sort((a, b) => (rankById.get(String(a.job_id || '')) ?? 0) - (rankById.get(String(b.job_id || '')) ?? 0));
+
+    groups.push({ key: groupKey, ids, items: jobsSorted, displayJobId, displayRank });
+  }
+
+  groups.sort((a, b) => a.displayRank - b.displayRank);
+  return groups;
 }
 
 function renderTasks(items, conversationId = currentId) {
@@ -3452,32 +2995,25 @@ function renderTasks(items, conversationId = currentId) {
     return;
   }
   const root = document.getElementById('tasks-list');
-  const sourceItems = Array.isArray(items) ? items : [];
-  const filterValue = String(taskStatusFilter || 'all').toLowerCase();
-  const filteredItems = sourceItems.filter(job => {
-    if (!job || filterValue === 'all') return true;
-    const status = String(job.status || '').toLowerCase();
-    const displayStatus = String(job.display_status || status || '').toLowerCase();
-    if (filterValue === 'creating') return displayStatus === 'creating';
-    if (filterValue === 'error') return ['error', 'failed', 'timeout', 'aborted'].includes(status);
-    if (filterValue === 'canceled') return ['canceled', 'cancelled'].includes(status);
-    return status === filterValue;
-  });
-
-  if (!filteredItems.length) {
+  taskStackGroups = buildTaskStackGroups(items || []);
+  if (!taskStackGroups.length) {
     root.innerHTML = '<div class="empty">No tasks in this conversation yet.</div>';
     return;
   }
 
   root.innerHTML = '';
-  for (const [jobIndex, job] of filteredItems.entries()) {
+  for (const [groupIndex, group] of taskStackGroups.entries()) {
+    const displayJob = (group.items || []).find(x => String((x && x.job_id) || '') === String(group.displayJobId || '')) || null;
+    const job = displayJob || (group.items && group.items[0]) || null;
+    if (!job) continue;
     const div = document.createElement('div');
-    div.className = 'task-item';
+    const stackSize = Array.isArray(group.items) ? group.items.length : 0;
+    div.className = stackSize > 1 ? 'task-item task-stack' : 'task-item';
     const jobId = String(job.job_id || 'unknown');
     const status = job.status || 'unknown';
-    const displayStatus = job.display_status || status;
     const args = job.zhh_args || '';
-    const nickname = (job.nickname || '').trim();
+    const jobNickname = (job.nickname || '').trim();
+    const nickname = stackSize > 1 ? resolveStackDisplayTag(group, jobId) : jobNickname;
     const createdAt = job.created_at || '-';
     const runBtnDisabled = !currentId ? 'disabled' : '';
     const canCancel = status === 'running' || status === 'starting';
@@ -3491,26 +3027,33 @@ function renderTasks(items, conversationId = currentId) {
         ? '<span class="task-alert failed" title="Task failed">!</span>'
         : '<span class="task-alert" title="Task update"></span>')
       : '';
+    const stackBadgeHtml = stackSize > 1
+      ? `<span class="task-stack-badge" title="Contains ${stackSize} linked jobs">Stack ${stackSize}</span>`
+      : '';
+    const stackHistoryBtn = stackSize > 1
+      ? `<button type="button" onclick="openTaskStackModal(${groupIndex})">History</button>`
+      : '';
     div.innerHTML = `
       <div class="task-top">
         <div class="task-id">
           <span class="task-id-main">${escapeHtml(jobId)}</span>
           ${nickname ? `<span class="task-tag nickname">🏷 ${escapeHtml(nickname)}</span>` : ''}
+          ${stackBadgeHtml}
           ${taskAlertHtml}
         </div>
-        <div class="task-status ${taskStatusClass(status)}">${escapeHtml(displayStatus)}</div>
+        <div class="task-status ${taskStatusClass(status)}">${escapeHtml(status)}</div>
       </div>
       <div class="task-meta">args: ${escapeHtml(args)} · created: ${escapeHtml(createdAt)}</div>
       <div class="task-actions">
-        <button type="button" class="task-nickname-btn" data-task-index="${jobIndex}">Nickname</button>
+        <button type="button" class="task-nickname-btn" data-job-id="${escapeHtml(jobId)}">Nickname</button>
         <button ${runBtnDisabled} onclick="addTaskReference('${escapeHtml(jobId)}')">Reference</button>
         <button ${runBtnDisabled} onclick="viewTaskLog('${escapeHtml(jobId)}')">Log</button>
-        <button ${runBtnDisabled} onclick="openTaskWandb('${escapeHtml(jobId)}')">Wandb</button>
+        ${stackHistoryBtn}
         ${canResume ? `<button ${runBtnDisabled} onclick="resumeTask('${escapeHtml(jobId)}')">Resume</button>` : ''}
         ${canCancel ? `<button ${runBtnDisabled} onclick="cancelTask('${escapeHtml(jobId)}')">Cancel</button>` : ''}
         ${canRemove ? `<button ${runBtnDisabled} onclick="removeTask('${escapeHtml(jobId)}')">Remove</button>` : ''}
       </div>
-      <div class="task-nickname-editor" data-task-index="${jobIndex}">
+      <div class="task-nickname-editor" data-job-id="${escapeHtml(jobId)}">
         <input type="text" class="task-nickname-input" maxlength="80" placeholder="Task nickname" />
         <button type="button" class="task-nickname-save-btn">Save</button>
         <button type="button" class="task-nickname-cancel-btn">Cancel</button>
@@ -3522,7 +3065,7 @@ function renderTasks(items, conversationId = currentId) {
     const nicknameSaveBtn = div.querySelector('.task-nickname-save-btn');
     const nicknameCancelBtn = div.querySelector('.task-nickname-cancel-btn');
 
-    if (nicknameInput) nicknameInput.value = nickname;
+    if (nicknameInput) nicknameInput.value = jobNickname;
 
     if (nicknameBtn && nicknameEditor && nicknameInput) {
       nicknameBtn.addEventListener('click', () => {
@@ -3534,13 +3077,13 @@ function renderTasks(items, conversationId = currentId) {
 
     if (nicknameSaveBtn && nicknameInput && nicknameEditor) {
       nicknameSaveBtn.addEventListener('click', async () => {
-        await saveTaskNicknameByIndex(jobIndex, nicknameInput.value);
+        await saveTaskNickname(jobId, nicknameInput.value);
       });
     }
 
     if (nicknameCancelBtn && nicknameInput && nicknameEditor) {
       nicknameCancelBtn.addEventListener('click', () => {
-        nicknameInput.value = nickname;
+        nicknameInput.value = jobNickname;
         nicknameEditor.style.display = 'none';
       });
     }
@@ -3549,23 +3092,13 @@ function renderTasks(items, conversationId = currentId) {
       nicknameInput.addEventListener('keydown', async (event) => {
         if (event.key === 'Enter') {
           event.preventDefault();
-          await saveTaskNicknameByIndex(jobIndex, nicknameInput.value);
+          await saveTaskNickname(jobId, nicknameInput.value);
         }
       });
     }
 
     root.appendChild(div);
   }
-}
-
-async function saveTaskNicknameByIndex(index, nicknameValue) {
-  const task = currentTasks[index] || {};
-  const jobId = String(task.job_id || '').trim();
-  if (!jobId) {
-    setStatus('Task id missing, cannot set nickname.', 'error');
-    return;
-  }
-  await saveTaskNickname(jobId, nicknameValue);
 }
 
 async function saveTaskNickname(jobId, nicknameValue) {
@@ -3605,8 +3138,6 @@ async function loadTasksForCurrentConversation(silent = false) {
   const targetId = currentId;
   if (!targetId) {
     document.getElementById('tasks-list').innerHTML = '<div class="empty">No conversation selected.</div>';
-    document.getElementById('task-status-filter').disabled = true;
-    document.getElementById('mark-read-btn').disabled = true;
     return;
   }
   try {
@@ -3646,8 +3177,6 @@ async function runTaskForCurrentConversation(argsOverride = null, conversationId
       ? document.getElementById('task-args').value.trim()
       : String(argsOverride);
     document.getElementById('run-task-btn').disabled = true;
-    document.getElementById('task-status-filter').disabled = true;
-    document.getElementById('mark-read-btn').disabled = true;
     setStatus('Creating task in /run...', 'busy', targetId);
     const runData = await api(`/api/conversations/${targetId}/tasks/run`, {
       method: 'POST',
@@ -3667,14 +3196,87 @@ async function runTaskForCurrentConversation(argsOverride = null, conversationId
     return null;
   } finally {
     document.getElementById('run-task-btn').disabled = !currentId;
-    document.getElementById('task-status-filter').disabled = !currentId;
-    document.getElementById('mark-read-btn').disabled = !currentId;
     refreshComposerControls();
   }
 }
 
 async function runTaskQuickFromChat() {
   await runTaskForCurrentConversation('');
+}
+
+async function handleAutoIterateButton() {
+  const targetId = currentId;
+  if (!targetId) return;
+  const summary = conversationSummariesById[targetId] || {};
+  if (summary.auto_iterating) {
+    await stopAutoIteration();
+    return;
+  }
+  await startAutoIteration();
+}
+
+async function startAutoIteration() {
+  const targetId = currentId;
+  const input = document.getElementById('input');
+  const firstText = String((input && input.value) || '').trim();
+  if (!targetId) return;
+  if (!firstText) {
+    setStatus('Auto iterate requires message text in the input box.', 'error');
+    return;
+  }
+  const summary = conversationSummariesById[targetId] || {};
+  if (summary.auto_iterating) {
+    setStatus('Auto iterate is already running for this conversation.', 'busy');
+    return;
+  }
+
+  try {
+    setStatus('Starting backend auto iterate...', 'busy', targetId);
+    await api(`/api/conversations/${targetId}/auto-iterate/start`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ text: firstText, max_rounds: 8 })
+    });
+
+    conversationDrafts[targetId] = '';
+    if (currentId === targetId && input) {
+      input.value = '';
+    }
+    await loadConversations(targetId);
+    if (currentId === targetId) {
+      await openConversation(targetId, false);
+    }
+    setStatus('Auto iterate running in backend.', 'success', targetId);
+  } catch (err) {
+    setStatus('Auto iterate failed: ' + (err && err.message ? err.message : String(err)), 'error', targetId);
+  }
+  refreshComposerControls();
+}
+
+async function stopAutoIteration() {
+  const targetId = currentId;
+  if (!targetId) return;
+  try {
+    setStatus('Stopping auto iterate...', 'busy', targetId);
+    if (conversationSummariesById[targetId]) {
+      conversationSummariesById[targetId].status = 'stopping';
+      conversationSummariesById[targetId].auto_iterating = true;
+    }
+    refreshComposerControls();
+    renderCurrentConversationStatus();
+    await api(`/api/conversations/${targetId}/auto-iterate/stop`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+    });
+    await loadConversations(targetId);
+    if (currentId === targetId) {
+      await openConversation(targetId, false);
+    }
+    setStatus('Stop signal sent for auto iterate.', 'success', targetId);
+  } catch (err) {
+    setStatus('Stop auto iterate failed: ' + (err && err.message ? err.message : String(err)), 'error', targetId);
+  }
+  refreshComposerControls();
 }
 
 async function cancelTask(jobId) {
@@ -3688,49 +3290,6 @@ async function cancelTask(jobId) {
     setStatus('Task cancelled.', 'success');
   } catch (err) {
     setStatus('Cancel failed: ' + err.message, 'error');
-  }
-}
-
-async function resumeTask(jobId) {
-  if (!currentId || !jobId) return;
-  try {
-    setStatus('Resuming task...', 'busy');
-    await api(`/api/conversations/${currentId}/tasks/${jobId}/resume`, { method: 'POST' });
-    await loadConversations(currentId);
-    await loadTasksForCurrentConversation();
-    pollTaskNotifications();
-    setStatus('Task resumed as a new job.', 'success');
-  } catch (err) {
-    setStatus('Resume failed: ' + err.message, 'error');
-  }
-}
-
-async function markAllTasksRead() {
-  if (!currentId) return;
-  try {
-    setStatus('Marking all tasks as read...', 'busy');
-    await api(`/api/conversations/${currentId}/tasks/mark-all-read`, { method: 'POST' });
-    if (currentConversation && currentConversation.task_meta) {
-      for (const key of Object.keys(currentConversation.task_meta)) {
-        const entry = currentConversation.task_meta[key];
-        if (!entry || typeof entry !== 'object') continue;
-        entry.unread = false;
-        entry.alert_kind = '';
-      }
-    }
-    await loadTasksForCurrentConversation();
-    pollTaskNotifications();
-    setStatus('All task notifications marked as read.', 'success');
-  } catch (err) {
-    setStatus('Mark-all-read failed: ' + err.message, 'error');
-  }
-}
-
-function applyTaskStatusFilter() {
-  const el = document.getElementById('task-status-filter');
-  taskStatusFilter = String((el && el.value) || 'all').toLowerCase();
-  if (currentId) {
-    renderTasks(currentTasks || [], currentId);
   }
 }
 
@@ -3766,28 +3325,6 @@ async function viewTaskLog(jobId) {
     setStatus('Log fetched.', 'success');
   } catch (err) {
     setStatus('Fetch log failed: ' + err.message, 'error');
-  }
-}
-
-async function openTaskWandb(jobId) {
-  if (!currentId || !jobId) return;
-  try {
-    setStatus('Resolving wandb link...', 'busy');
-    const data = await api(`/api/conversations/${currentId}/tasks/${jobId}/wandb`);
-    const url = String((data && data.wandb_url) || '').trim();
-    if (!url) {
-      throw new Error('wandb link not found');
-    }
-    window.open(url, '_blank', 'noopener,noreferrer');
-    if (currentConversation && currentConversation.task_meta && currentConversation.task_meta[jobId]) {
-      currentConversation.task_meta[jobId].unread = false;
-      currentConversation.task_meta[jobId].alert_kind = '';
-    }
-    await loadTasksForCurrentConversation();
-    pollTaskNotifications();
-    setStatus('Opened wandb link.', 'success');
-  } catch (err) {
-    setStatus('Open wandb failed: ' + err.message, 'error');
   }
 }
 
@@ -3844,7 +3381,6 @@ function shortJobId(jobId) {
 }
 
 bootstrapConversations();
-window.addEventListener('resize', syncMobileLayoutState);
 document.addEventListener('visibilitychange', () => {
   if (!document.hidden) {
     pollTaskNotifications();
