@@ -610,6 +610,17 @@ body {
   font-weight: 700;
   flex-shrink: 0;
 }
+#compact-btn {
+  border: 1px solid rgba(125, 171, 255, .34);
+  background: rgba(97, 153, 255, .14);
+  color: #b9d4ff;
+  border-radius: 10px;
+  padding: 10px 12px;
+  cursor: pointer;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+#compact-btn:disabled,
 #delete-btn:disabled {
   opacity: .5;
   cursor: default;
@@ -1447,6 +1458,9 @@ button:disabled {
   #delete-btn {
     width: 100%;
   }
+  #compact-btn {
+    width: 100%;
+  }
   .task-top {
     flex-direction: column;
     align-items: flex-start;
@@ -1475,6 +1489,7 @@ button:disabled {
         <div id="title">No conversation selected</div>
         <div id="meta">Create a new session first.</div>
       </div>
+      <button id="compact-btn" onclick="compactCurrentConversation()" disabled>Compact</button>
       <button id="delete-btn" onclick="deleteCurrentConversation()" disabled>Delete session</button>
     </div>
     <div id="view-tabs">
@@ -2586,7 +2601,7 @@ async function openConversation(id, updateList = true) {
   renderPendingTaskRefs();
   renderCurrentConversationStatus();
   refreshComposerControls();
-  document.getElementById('delete-btn').disabled = currentConversation.status === 'running';
+  refreshSessionActionButtons();
   document.getElementById('run-task-btn').disabled = false;
   document.getElementById('refresh-task-btn').disabled = false;
   await loadTasksForCurrentConversation(true);
@@ -2777,6 +2792,21 @@ function basenameFromPath(path) {
   return parts[parts.length - 1] || cleaned;
 }
 
+function refreshSessionActionButtons() {
+  const compactBtn = document.getElementById('compact-btn');
+  const deleteBtn = document.getElementById('delete-btn');
+  if (!compactBtn || !deleteBtn) return;
+  if (!currentConversation) {
+    compactBtn.disabled = true;
+    deleteBtn.disabled = true;
+    return;
+  }
+  const status = String(currentConversation.status || '').toLowerCase();
+  const locked = status === 'running' || status === 'debugging';
+  compactBtn.disabled = locked;
+  deleteBtn.disabled = locked;
+}
+
 function resetConversationView() {
   currentId = null;
   currentConversation = null;
@@ -2788,6 +2818,7 @@ function resetConversationView() {
   document.getElementById('tasks-list').innerHTML = '<div class="empty">No conversation selected.</div>';
   document.getElementById('input').value = '';
   refreshComposerControls();
+  document.getElementById('compact-btn').disabled = true;
   document.getElementById('delete-btn').disabled = true;
   document.getElementById('run-task-btn').disabled = true;
   document.getElementById('refresh-task-btn').disabled = true;
@@ -2809,6 +2840,7 @@ async function deleteCurrentConversation() {
 
   const deletingId = currentId;
   try {
+    document.getElementById('compact-btn').disabled = true;
     document.getElementById('delete-btn').disabled = true;
     setStatus('Deleting session...', 'busy');
     await api(`/api/conversations/${deletingId}`, { method: 'DELETE' });
@@ -2823,9 +2855,33 @@ async function deleteCurrentConversation() {
     setStatus('Session deleted.', 'success');
   } catch (err) {
     if (currentConversation) {
-      document.getElementById('delete-btn').disabled = currentConversation.status === 'running';
+      refreshSessionActionButtons();
     }
     setStatus('Delete failed: ' + err.message, 'error');
+  }
+}
+
+async function compactCurrentConversation() {
+  if (!currentId) return;
+  if (!confirm('Compact this conversation context now? This resets cursor session context and keeps a memory summary.')) {
+    return;
+  }
+  try {
+    document.getElementById('compact-btn').disabled = true;
+    setStatus('Compacting context...', 'busy');
+    const data = await api(`/api/conversations/${currentId}/compact`, { method: 'POST' });
+    if (data && data.conversation) {
+      currentConversation = data.conversation;
+      renderConversation(currentConversation);
+      renderCurrentConversationStatus();
+    }
+    await loadConversations(currentId);
+    setStatus('Compaction completed.', 'success');
+  } catch (err) {
+    setStatus('Compaction failed: ' + err.message, 'error');
+  } finally {
+    refreshSessionActionButtons();
+    refreshComposerControls();
   }
 }
 
@@ -2894,9 +2950,7 @@ async function sendMessage() {
   } finally {
     sendingConversationIds.delete(targetId);
     refreshComposerControls();
-    if (currentConversation) {
-      document.getElementById('delete-btn').disabled = currentConversation.status === 'running';
-    }
+    refreshSessionActionButtons();
   }
 }
 

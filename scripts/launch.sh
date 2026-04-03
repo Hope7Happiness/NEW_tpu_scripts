@@ -408,7 +408,7 @@ while_run(){
                 #     run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
                 #     && ret=0 || ret=$?
                 #     echo "[Debug] Re-run (for segfault) returned $ret"
-                elif grep -q "(core dumped)" $LOG_DIR/output.log || grep -q "Command execution on worker 0 failed with exit status 134" $LOG_DIR/output.log || grep -q "UNKNOWN: TPU initialization failed:" $LOG_DIR/output.log; then
+                elif grep -q "(core dumped)" $LOG_DIR/output.log || grep -q "Command execution on worker 0 failed with exit status 134" $LOG_DIR/output.log || grep -q "UNKNOWN: TPU initialization failed:" $LOG_DIR/output.log || grep -q "ABORTED: The TPU is already in use by process" $LOG_DIR/output.log; then
                     echo -e "\033[33m[Info] Our job is killed by others. Will change card and re-run...\033[0m"
                     deregister_tpu $VM_NAME $ZONE
                     ret=42
