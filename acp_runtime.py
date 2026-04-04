@@ -204,9 +204,7 @@ def _build_prompt_with_mode(text: str, mode: str) -> str:
 def _build_cli_command(
     agent_path: str,
     session_id: str,
-    text: str,
     model_id: str | None,
-    mode: str,
     force_allow: bool,
 ) -> list[str]:
     cmd = [agent_path]
@@ -217,10 +215,10 @@ def _build_cli_command(
     if model_id:
         cmd.extend(["--model", model_id])
     max_turns = _max_turns_value()
-    prompt_text = _build_prompt_with_mode(text, mode)
     cmd.extend([
         "-p",
-        prompt_text,
+        "--input-format",
+        "text",
         "--output-format",
         "stream-json",
         "--verbose",
@@ -246,11 +244,10 @@ def _run_cli_prompt(
     cmd = _build_cli_command(
         agent_path=agent_path,
         session_id=session_id,
-        text=text,
         model_id=model_id,
-        mode=mode,
         force_allow=force_allow,
     )
+    prompt_text = _build_prompt_with_mode(text, mode)
 
     env = dict(os.environ)
     env.setdefault("NO_COLOR", "1")
@@ -259,12 +256,24 @@ def _run_cli_prompt(
         cmd,
         cwd=cwd,
         text=True,
+        stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         env=env,
         bufsize=1,
     )
     canceler.attach(proc)
+
+    try:
+        if proc.stdin is not None:
+            proc.stdin.write(prompt_text)
+            if not prompt_text.endswith("\n"):
+                proc.stdin.write("\n")
+            proc.stdin.close()
+            proc.stdin = None
+    except Exception:
+        canceler.close()
+        raise RuntimeError("failed to send prompt to Claude Code process")
 
     started_at = time.monotonic()
     init_session_id = str(session_id or "").strip()
