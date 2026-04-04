@@ -50,6 +50,13 @@ def conversation_summary(conv: dict, workdir_base_fn) -> dict:
     last_message = str(last_message_obj.get("content") or "")
     last_message_role = str(last_message_obj.get("role") or "")
     last_message_created_at = last_message_obj.get("created_at")
+    llm_model = str(conv.get("llm_model") or "opus").strip() or "opus"
+    llm_effort = str(conv.get("llm_effort") or "high").strip() or "high"
+    current_model = str(conv.get("current_model") or llm_model).strip() or llm_model
+    current_effort = str(conv.get("current_effort") or llm_effort).strip() or llm_effort
+    current_context_tokens = conv.get("current_context_tokens")
+    current_context_window = conv.get("current_context_window")
+
     return {
         "id": conv["id"],
         "title": conv.get("title") or "Untitled",
@@ -72,7 +79,12 @@ def conversation_summary(conv: dict, workdir_base_fn) -> dict:
         "last_message_created_at": last_message_created_at,
         "last_error": str(conv.get("last_error") or ""),
         "auto_iterate_last_error": "",
-        "current_model": str(conv.get("current_model") or ""),
+        "llm_model": llm_model,
+        "llm_effort": llm_effort,
+        "current_model": current_model,
+        "current_effort": current_effort,
+        "current_context_tokens": current_context_tokens,
+        "current_context_window": current_context_window,
     }
 
 
@@ -135,6 +147,8 @@ def create_conversation_record(
     mode: str,
     cursor_session_id: str | None,
     utc_now_fn,
+    llm_model: str = "opus",
+    llm_effort: str = "high",
 ) -> dict:
     conversation_id = str(uuid.uuid4())
     now = utc_now_fn()
@@ -149,6 +163,10 @@ def create_conversation_record(
         "updated_at": now,
         "messages": [],
         "job_ids": [],
+        "llm_model": str(llm_model or "opus").strip() or "opus",
+        "llm_effort": str(llm_effort or "high").strip() or "high",
+        "current_model": str(llm_model or "opus").strip() or "opus",
+        "current_effort": str(llm_effort or "high").strip() or "high",
     }
     with store_lock:
         data = load_store(store_path)

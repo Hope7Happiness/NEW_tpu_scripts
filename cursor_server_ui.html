@@ -29,6 +29,11 @@
 }
 
 * { box-sizing: border-box; }
+html, body {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: hidden;
+}
 body {
   margin: 0;
   background: radial-gradient(1200px 600px at 22% -20%, #1a2a44 0%, transparent 58%), var(--bg);
@@ -46,6 +51,7 @@ body {
   flex-direction: column;
   min-height: 0;
   box-shadow: inset -1px 0 0 rgba(255, 255, 255, .02);
+  min-width: 0;
 }
 #sidebar .head {
   padding: 16px;
@@ -164,6 +170,7 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
 }
 #view-tabs {
   display: flex;
@@ -221,14 +228,43 @@ body {
   justify-content: space-between;
   gap: 16px;
 }
+#topbar-info {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+#title-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
 #title {
   font-size: 15px;
   font-weight: 700;
+}
+#session-llm {
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  border: 1px solid rgba(125, 171, 255, .34);
+  background: rgba(97, 153, 255, .12);
+  color: #b9d4ff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
 }
 #meta {
   margin-top: 4px;
   font-size: 12px;
   color: var(--muted);
+  word-break: break-word;
+}
+#topbar-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 #messages {
   flex: 1;
@@ -1501,6 +1537,9 @@ button:disabled {
   #composer {
     flex-direction: column;
   }
+  #view-tabs {
+    flex-wrap: wrap;
+  }
   #quick-actions {
     width: 100%;
     flex-direction: row;
@@ -1549,11 +1588,20 @@ button:disabled {
     flex-direction: column;
     align-items: flex-start;
   }
+  #topbar-actions {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
   #delete-btn {
     width: 100%;
   }
   #compact-btn {
     width: 100%;
+  }
+  .bubble {
+    max-width: 100%;
   }
   .task-top {
     flex-direction: column;
@@ -1580,12 +1628,17 @@ button:disabled {
 
   <main id="main">
     <div id="topbar">
-      <div>
-        <div id="title">No conversation selected</div>
+      <div id="topbar-info">
+        <div id="title-row">
+          <div id="title">No conversation selected</div>
+          <div id="session-llm">model: opus · effort: high</div>
+        </div>
         <div id="meta">Create a new session first.</div>
       </div>
-      <button id="compact-btn" onclick="compactCurrentConversation()" disabled>Compact</button>
-      <button id="delete-btn" onclick="deleteCurrentConversation()" disabled>Delete session</button>
+      <div id="topbar-actions">
+        <button id="compact-btn" onclick="compactCurrentConversation()" disabled>Compact</button>
+        <button id="delete-btn" onclick="deleteCurrentConversation()" disabled>Delete session</button>
+      </div>
     </div>
     <div id="view-tabs">
       <button id="tab-chat" class="tab-btn active" onclick="switchTab('chat')">Chat</button>
@@ -1787,6 +1840,10 @@ const WORKDIR_ROOT = '__WORKDIR_ROOT__';
 const DEFAULT_MODEL = '__DEFAULT_MODEL__';
 const CONFIGURED_MODEL = '__CONFIGURED_MODEL__';
 const FILESYSTEM_ROOT = '/';
+const DEFAULT_SESSION_MODEL = '__DEFAULT_SESSION_MODEL__';
+const DEFAULT_SESSION_EFFORT = '__DEFAULT_SESSION_EFFORT__';
+const ALLOWED_SESSION_MODELS = ['opus', 'sonnet', 'haiku'];
+const ALLOWED_SESSION_EFFORTS = ['low', 'medium', 'high', 'max'];
 let runtimeModelPolicy = {
   configured_model: CONFIGURED_MODEL || 'default',
   effective_model: DEFAULT_MODEL || CONFIGURED_MODEL || 'default',
@@ -1797,6 +1854,59 @@ let runtimeModelPolicy = {
 let createModalMode = 'directory';
 let pickerCurrentPath = WORKDIR_ROOT;
 let pickerSelectedPath = WORKDIR_ROOT;
+
+function conversationSessionModel(conversation) {
+  const raw = String((conversation && (conversation.llm_model || conversation.current_model)) || '').trim().toLowerCase();
+  return ALLOWED_SESSION_MODELS.includes(raw) ? raw : DEFAULT_SESSION_MODEL;
+}
+
+function conversationSessionEffort(conversation) {
+  const raw = String((conversation && (conversation.llm_effort || conversation.current_effort)) || '').trim().toLowerCase();
+  return ALLOWED_SESSION_EFFORTS.includes(raw) ? raw : DEFAULT_SESSION_EFFORT;
+}
+
+function conversationContextTokens(conversation) {
+  const raw = Number(conversation && conversation.current_context_tokens);
+  if (!Number.isFinite(raw) || raw < 0) return null;
+  return Math.floor(raw);
+}
+
+function conversationContextWindow(conversation) {
+  const raw = Number(conversation && conversation.current_context_window);
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  return Math.floor(raw);
+}
+
+function formatTokenCount(value) {
+  const n = Number(value || 0);
+  if (!Number.isFinite(n) || n < 0) return '0';
+  if (n >= 1000000) return `${(n / 1000000).toFixed(1)}m`;
+  if (n >= 1000) return `${(n / 1000).toFixed(1)}k`;
+  return String(Math.floor(n));
+}
+
+function conversationContextText(conversation) {
+  const used = conversationContextTokens(conversation);
+  const windowSize = conversationContextWindow(conversation);
+  if (used === null || windowSize === null || windowSize <= 0) return '';
+  const pct = Math.max(0, Math.min(100, (used / windowSize) * 100));
+  return `${formatTokenCount(used)}/${formatTokenCount(windowSize)} (${pct.toFixed(1)}%)`;
+}
+
+function renderSessionBadge(conversation) {
+  const badge = document.getElementById('session-llm');
+  if (!badge) return;
+  if (!conversation) {
+    badge.textContent = `model: ${DEFAULT_SESSION_MODEL} · effort: ${DEFAULT_SESSION_EFFORT}`;
+    return;
+  }
+  const model = conversationSessionModel(conversation);
+  const effort = conversationSessionEffort(conversation);
+  const context = conversationContextText(conversation);
+  badge.textContent = context
+    ? `model: ${model} · effort: ${effort} · ctx: ${context}`
+    : `model: ${model} · effort: ${effort}`;
+}
 
 function applyStatusToUI(text, kind = 'normal') {
   const el = document.getElementById('status');
@@ -3082,9 +3192,12 @@ function renderConversationList(items) {
     li.onclick = () => openConversation(item.id);
     const alertHtml = renderConversationAlertHtml(item);
     const statusText = effectiveConversationStatus(item);
+    const modelText = conversationSessionModel(item);
+    const effortText = conversationSessionEffort(item);
+    const contextText = conversationContextText(item);
     li.innerHTML = `
       <div class="conv-title">${escapeHtml(item.workdir_base || basenameFromPath(item.cwd) || item.title || 'Untitled')}${alertHtml}</div>
-      <div class="conv-meta">${escapeHtml(statusText)} · ${item.message_count} msgs · ${item.task_count || 0} tasks</div>
+      <div class="conv-meta">${escapeHtml(statusText)} · ${item.message_count} msgs · ${item.task_count || 0} tasks · ${escapeHtml(modelText)}/${escapeHtml(effortText)}${contextText ? ` · ctx ${escapeHtml(contextText)}` : ''}</div>
       <div class="conv-path">${escapeHtml(item.cwd || '')}</div>
     `;
     list.appendChild(li);
@@ -3494,6 +3607,7 @@ function renderSystemTaskCard(job, removedFromConversation = false) {
 function renderConversation(conv, options = {}) {
   const preserveScrollPosition = options.preserveScrollPosition !== false;
   document.getElementById('title').textContent = basenameFromPath(conv.cwd) || conv.title || 'Untitled';
+  renderSessionBadge(conv);
   const summary = conversationSummariesById[conv.id] || { id: conv.id, status: conv.status };
   const statusText = effectiveConversationStatus(summary);
   const modelText = String(
@@ -3647,6 +3761,7 @@ function resetConversationView() {
   taskStackGroups = [];
   closeTaskStackModal();
   document.getElementById('title').textContent = 'No conversation selected';
+  renderSessionBadge(null);
   document.getElementById('meta').textContent = 'Create a new session first.';
   document.getElementById('messages').innerHTML = '<div class="empty">No conversation selected.</div>';
   document.getElementById('tasks-list').innerHTML = '<div class="empty">No conversation selected.</div>';

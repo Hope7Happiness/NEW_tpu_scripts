@@ -130,6 +130,10 @@ ZHH_SERVER_URL = str(
   or "http://localhost:8080"
 ).strip()
 UI_TEMPLATE_PATH = APP_ROOT / "cursor_server_ui.html"
+SESSION_DEFAULT_MODEL = "opus"
+SESSION_DEFAULT_EFFORT = "high"
+ALLOWED_SESSION_MODELS = {"opus", "sonnet", "haiku"}
+ALLOWED_SESSION_EFFORTS = {"low", "medium", "high", "max"}
 
 app = Flask(__name__)
 
@@ -1249,7 +1253,14 @@ def delete_conversation(conversation_id: str) -> dict | None:
   return delete_conversation_impl(STORE_PATH, store_lock, conversation_locks, conversation_id)
 
 
-def create_conversation_record(title: str, cwd: str, mode: str, cursor_session_id: str | None) -> dict:
+def create_conversation_record(
+  title: str,
+  cwd: str,
+  mode: str,
+  cursor_session_id: str | None,
+  llm_model: str = SESSION_DEFAULT_MODEL,
+  llm_effort: str = SESSION_DEFAULT_EFFORT,
+) -> dict:
   return create_conversation_record_impl(
     STORE_PATH,
     store_lock,
@@ -1258,6 +1269,8 @@ def create_conversation_record(title: str, cwd: str, mode: str, cursor_session_i
     mode,
     cursor_session_id,
     utc_now,
+    llm_model,
+    llm_effort,
   )
 
 
@@ -1350,6 +1363,36 @@ def build_prompt_with_memory(conv: dict, user_text: str) -> str:
     "[Current user request]\n"
     f"{text}"
   )
+
+
+def resolve_session_model(raw_model: str | None) -> str:
+  model = str(raw_model or "").strip().lower()
+  if model in ALLOWED_SESSION_MODELS:
+    return model
+  return SESSION_DEFAULT_MODEL
+
+
+def resolve_session_effort(raw_effort: str | None) -> str:
+  effort = str(raw_effort or "").strip().lower()
+  if effort in ALLOWED_SESSION_EFFORTS:
+    return effort
+  return SESSION_DEFAULT_EFFORT
+
+
+def parse_session_setting_command(text: str) -> tuple[str, str] | tuple[None, None]:
+  raw = str(text or "").strip()
+  if not raw.startswith("/"):
+    return None, None
+  parts = raw.split()
+  if len(parts) != 2:
+    return None, None
+  command = str(parts[0] or "").strip().lower()
+  value = str(parts[1] or "").strip().lower()
+  if command == "/model":
+    return "model", value
+  if command == "/effort":
+    return "effort", value
+  return None, None
 
 
 def record_run_job(conversation_id: str, run_data: dict, *, auto_run_by_agent: bool = False) -> str | None:
@@ -1490,7 +1533,14 @@ def api_create_conversation():
       return jsonify({"conversation": conversation_summary(existing), "detail": existing, "reused": True})
 
     title = workdir_base(cwd)
-    record = create_conversation_record(title, cwd, mode, None)
+    record = create_conversation_record(
+      title,
+      cwd,
+      mode,
+      None,
+      llm_model=SESSION_DEFAULT_MODEL,
+      llm_effort=SESSION_DEFAULT_EFFORT,
+    )
     return jsonify({"conversation": conversation_summary(record), "detail": record, "reused": False})
 
 
@@ -1987,6 +2037,51 @@ def api_send_message(conversation_id: str):
   if not conv:
     return jsonify({"error": "not found"}), 404
 
+  lowered_text = text.strip().lower()
+  if lowered_text.startswith("/model") or lowered_text.startswith("/effort"):
+    if len(text.split()) != 2:
+      return jsonify({"error": "invalid setting command. use /model <opus|sonnet|haiku> or /effort <low|medium|high|max>"}), 400
+
+  setting_key, setting_value = parse_session_setting_command(text)
+  if setting_key is not None:
+    status = str(conv.get("status") or "").strip().lower()
+    if status in {"running", "debugging"}:
+      return jsonify({"error": "session setting update is unavailable while agent is running"}), 409
+
+    if setting_key == "model":
+      normalized = str(setting_value or "").strip().lower()
+      if normalized not in ALLOWED_SESSION_MODELS:
+        return jsonify({"error": "invalid model. allowed: opus, sonnet, haiku"}), 400
+
+      append_message(conversation_id, "user", text)
+      append_message(conversation_id, "assistant", f"Model updated to `{normalized}` for this session.")
+      updated = update_conversation(conversation_id, lambda c: c.update({
+        "llm_model": normalized,
+        "current_model": normalized,
+      }))
+      return jsonify({
+        "conversation": updated,
+        "assistant": f"Model updated to `{normalized}` for this session.",
+        "setting": {"key": "model", "value": normalized},
+      }), 200
+
+    if setting_key == "effort":
+      normalized = str(setting_value or "").strip().lower()
+      if normalized not in ALLOWED_SESSION_EFFORTS:
+        return jsonify({"error": "invalid effort. allowed: low, medium, high, max"}), 400
+
+      append_message(conversation_id, "user", text)
+      append_message(conversation_id, "assistant", f"Effort updated to `{normalized}` for this session.")
+      updated = update_conversation(conversation_id, lambda c: c.update({
+        "llm_effort": normalized,
+        "current_effort": normalized,
+      }))
+      return jsonify({
+        "conversation": updated,
+        "assistant": f"Effort updated to `{normalized}` for this session.",
+        "setting": {"key": "effort", "value": normalized},
+      }), 200
+
   conv_job_ids = set(conv.get("job_ids", []) or [])
   invalid_refs = [ref for ref in normalized_refs if ref not in conv_job_ids]
   if invalid_refs:
@@ -1999,6 +2094,8 @@ def api_send_message(conversation_id: str):
     return jsonify({"error": "conversation busy"}), 409
 
   try:
+    session_model = resolve_session_model(conv.get("llm_model"))
+    session_effort = resolve_session_effort(conv.get("llm_effort"))
     reset_agent_activity(conversation_id, "Prompt sent to Claude Code.")
     update_conversation(conversation_id, lambda c: c.update({"status": "running"}))
 
@@ -2025,19 +2122,29 @@ def api_send_message(conversation_id: str):
       mode=conv.get("mode", "agent"),
       text=prompt_text,
       cursor_session_id=conv.get("cursor_session_id"),
+      preferred_model=session_model,
+      effort=session_effort,
       on_progress_event=lambda event: record_agent_event(conversation_id, event),
     )
 
     model_used = str(result.get("model") or "").strip()
-    if not conv.get("cursor_session_id") or model_used:
-      def set_runtime_metadata(c: dict):
-        if not c.get("cursor_session_id"):
-          c["cursor_session_id"] = result["cursor_session_id"]
-        if model_used:
-          c["current_model"] = model_used
-        if c.get("memory_summary_pending"):
-          c["memory_summary_pending"] = False
-      update_conversation(conversation_id, set_runtime_metadata)
+    effort_used = resolve_session_effort(result.get("effort") or session_effort)
+    context_tokens = result.get("context_tokens")
+    context_window = result.get("context_window")
+    def set_runtime_metadata(c: dict):
+      if not c.get("cursor_session_id"):
+        c["cursor_session_id"] = result["cursor_session_id"]
+      c["llm_model"] = resolve_session_model(c.get("llm_model") or session_model)
+      c["llm_effort"] = resolve_session_effort(c.get("llm_effort") or session_effort)
+      c["current_model"] = model_used or session_model
+      c["current_effort"] = effort_used
+      if isinstance(context_tokens, int) and context_tokens >= 0:
+        c["current_context_tokens"] = context_tokens
+      if isinstance(context_window, int) and context_window > 0:
+        c["current_context_window"] = context_window
+      if c.get("memory_summary_pending"):
+        c["memory_summary_pending"] = False
+    update_conversation(conversation_id, set_runtime_metadata)
 
     assistant_raw_text = result["text"] or f"[No text returned; stopReason={result['stop_reason']}]"
     assistant_text, should_run_job = extract_run_job_action(assistant_raw_text, run_action_nonce)
@@ -2085,6 +2192,8 @@ def index():
   policy = get_model_policy_status()
   html = UI_TEMPLATE_PATH.read_text(encoding="utf-8")
   html = html.replace("__WORKDIR_ROOT__", str(WORKDIR_ROOT))
+  html = html.replace("__DEFAULT_SESSION_MODEL__", SESSION_DEFAULT_MODEL)
+  html = html.replace("__DEFAULT_SESSION_EFFORT__", SESSION_DEFAULT_EFFORT)
   html = html.replace("__DEFAULT_MODEL__", str(policy.get("effective_model") or "default"))
   html = html.replace("__CONFIGURED_MODEL__", str(policy.get("configured_model") or "default"))
   return html, 200, {

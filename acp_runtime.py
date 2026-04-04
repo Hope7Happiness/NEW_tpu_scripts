@@ -166,6 +166,51 @@ def _max_turns_value() -> int:
     return value if value > 0 else 50
 
 
+def _safe_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(str(value).strip())
+    except Exception:
+        return None
+    if parsed < 0:
+        return 0
+    return parsed
+
+
+def _extract_context_stats(result_payload: dict) -> tuple[int | None, int | None]:
+    usage_raw = result_payload.get("usage") if isinstance(result_payload, dict) else {}
+    usage = usage_raw if isinstance(usage_raw, dict) else {}
+
+    input_tokens = _safe_int(usage.get("input_tokens"))
+    if input_tokens is None:
+        input_tokens = _safe_int(usage.get("inputTokens"))
+
+    cache_read_tokens = _safe_int(usage.get("cache_read_input_tokens"))
+    if cache_read_tokens is None:
+        cache_read_tokens = _safe_int(usage.get("cacheReadInputTokens"))
+
+    cache_creation_tokens = _safe_int(usage.get("cache_creation_input_tokens"))
+    if cache_creation_tokens is None:
+        cache_creation_tokens = _safe_int(usage.get("cacheCreationInputTokens"))
+
+    pieces = [v for v in (input_tokens, cache_read_tokens, cache_creation_tokens) if v is not None]
+    context_tokens = sum(pieces) if pieces else None
+
+    context_window: int | None = None
+    model_usage_raw = result_payload.get("modelUsage") if isinstance(result_payload, dict) else {}
+    model_usage = model_usage_raw if isinstance(model_usage_raw, dict) else {}
+    for value in model_usage.values():
+        if not isinstance(value, dict):
+            continue
+        candidate = _safe_int(value.get("contextWindow"))
+        if candidate is not None and candidate > 0:
+            context_window = candidate
+            break
+
+    return context_tokens, context_window
+
+
 class CLIPromptCanceler:
     def __init__(self):
         self._proc: subprocess.Popen[str] | None = None
@@ -205,6 +250,7 @@ def _build_cli_command(
     agent_path: str,
     session_id: str,
     model_id: str | None,
+    effort: str | None,
     force_allow: bool,
 ) -> list[str]:
     cmd = [agent_path]
@@ -214,6 +260,8 @@ def _build_cli_command(
         cmd.extend(["--resume", session_id])
     if model_id:
         cmd.extend(["--model", model_id])
+    if effort:
+        cmd.extend(["--effort", effort])
     max_turns = _max_turns_value()
     cmd.extend([
         "-p",
@@ -236,6 +284,7 @@ def _run_cli_prompt(
     timeout: float,
     cancel_event: threading.Event | None,
     model_id: str | None,
+    effort: str | None,
     mode: str,
     force_allow: bool,
     canceler: CLIPromptCanceler,
@@ -245,6 +294,7 @@ def _run_cli_prompt(
         agent_path=agent_path,
         session_id=session_id,
         model_id=model_id,
+        effort=effort,
         force_allow=force_allow,
     )
     prompt_text = _build_prompt_with_mode(text, mode)
@@ -346,12 +396,16 @@ def _run_cli_prompt(
     final_model = str(init_model or model_id or "").strip() or "opus"
     stop_reason = str(result_payload.get("subtype") or result_payload.get("stop_reason") or "success")
     result_text = str(result_payload.get("result") or "").strip()
+    context_tokens, context_window = _extract_context_stats(result_payload)
 
     return {
         "cursor_session_id": final_session_id,
         "text": result_text,
         "stop_reason": stop_reason,
         "model": final_model,
+        "effort": str(effort or "").strip(),
+        "context_tokens": context_tokens,
+        "context_window": context_window,
     }
 
 
@@ -362,11 +416,14 @@ def acp_prompt_session(
     text: str,
     cursor_session_id: str | None = None,
     timeout: float = 0.0,
+    preferred_model: str | None = None,
+    effort: str | None = None,
     cancel_event: threading.Event | None = None,
     on_client_ready: Callable[[CLIPromptCanceler], None] | None = None,
     on_progress_event: Callable[[dict], None] | None = None,
 ) -> dict:
-    configured_model = _first_nonempty_env(["CLAUDE_CODE_MODEL", "CURSOR_CLI_MODEL"], default="opus")
+    configured_model = str(preferred_model or "").strip() or _first_nonempty_env(["CLAUDE_CODE_MODEL", "CURSOR_CLI_MODEL"], default="opus")
+    configured_effort = str(effort or "").strip().lower() or None
     model_id = _limit_fallback_model() if _is_force_auto_active() else configured_model
     force_allow_env = _first_nonempty_env(["CLAUDE_CODE_BYPASS_PERMISSIONS", "CURSOR_CLI_FORCE_ALLOW"], default="1").lower()
     force_allow = force_allow_env not in {"0", "false", "no", "off"}
@@ -387,6 +444,7 @@ def acp_prompt_session(
             timeout=timeout,
             cancel_event=cancel_event,
             model_id=model_id,
+            effort=configured_effort,
             mode=normalized_mode,
             force_allow=force_allow,
             canceler=canceler,
@@ -416,6 +474,7 @@ def acp_prompt_session(
                     timeout=timeout,
                     cancel_event=cancel_event,
                     model_id=candidate,
+                    effort=configured_effort,
                     mode=normalized_mode,
                     force_allow=force_allow,
                     canceler=canceler,
