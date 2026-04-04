@@ -3094,6 +3094,7 @@ function renderSystemTaskCard(job, removedFromConversation = false) {
   const runBtnDisabled = (!currentId || removedFromConversation) ? 'disabled' : '';
   const statusLower = String(effectiveStatusRaw || '').toLowerCase();
   const canCancel = !removedFromConversation && (statusLower === 'running' || statusLower === 'starting');
+  const canMarkError = !removedFromConversation && ['running', 'starting', 'queued', 'pending'].includes(statusLower);
   const canRemove = !removedFromConversation && !['running', 'starting', 'queued', 'pending'].includes(statusLower);
 
   const actionsHtml = removedFromConversation
@@ -3103,6 +3104,7 @@ function renderSystemTaskCard(job, removedFromConversation = false) {
         <button ${runBtnDisabled} onclick="addTaskReference('${escapeHtml(jobId)}')">Reference</button>
         <button ${runBtnDisabled} onclick="viewTaskLog('${escapeHtml(jobId)}')">Log</button>
         <button ${runBtnDisabled} onclick="openTaskWandb('${escapeHtml(jobId)}')">Wandb</button>
+        ${canMarkError ? `<button ${runBtnDisabled} onclick="markTaskAsError('${escapeHtml(jobId)}')">Mark Error</button>` : ''}
         ${canCancel ? `<button ${runBtnDisabled} onclick="cancelTask('${escapeHtml(jobId)}')">Cancel</button>` : ''}
         ${canRemove ? `<button ${runBtnDisabled} onclick="removeTask('${escapeHtml(jobId)}')">Remove</button>` : ''}
       </div>
@@ -3454,6 +3456,24 @@ function resolveStackDisplayTag(group, displayJobId) {
   return '';
 }
 
+function resolveStackRootJobId(group, displayJobId) {
+  const items = Array.isArray(group && group.items) ? group.items : [];
+  const byId = new Map(items.map((job) => [String((job && job.job_id) || ''), job]));
+  let cursor = String(displayJobId || '').trim();
+  const seen = new Set();
+  while (cursor && !seen.has(cursor)) {
+    seen.add(cursor);
+    const current = byId.get(cursor);
+    if (!current) break;
+    const parent = String((current && current._lineage_parent_job_id) || '').trim();
+    if (!parent || !byId.has(parent)) {
+      return cursor;
+    }
+    cursor = parent;
+  }
+  return String(displayJobId || '').trim();
+}
+
 function buildTaskStackGroups(items) {
   const list = Array.isArray(items) ? items : [];
   const byId = new Map();
@@ -3602,10 +3622,14 @@ function renderTasks(items, conversationId = currentId) {
     const args = job.zhh_args || '';
     const jobNickname = (job.nickname || '').trim();
     const nickname = stackSize > 1 ? resolveStackDisplayTag(group, jobId) : jobNickname;
+    const nicknameTargetJobId = stackSize > 1 ? resolveStackRootJobId(group, jobId) : jobId;
+    const nicknameTargetJob = (group.items || []).find(x => String((x && x.job_id) || '') === nicknameTargetJobId) || job;
+    const nicknameTargetValue = String((nicknameTargetJob && nicknameTargetJob.nickname) || '').trim();
     const createdAt = job.created_at || '-';
     const runBtnDisabled = !currentId ? 'disabled' : '';
-    const canCancel = status === 'running' || status === 'starting';
     const statusLower = String(status).toLowerCase();
+    const canCancel = status === 'running' || status === 'starting';
+    const canMarkError = ['running', 'starting', 'queued', 'pending'].includes(statusLower);
     const canResume = ['failed', 'error', 'timeout', 'aborted'].includes(statusLower);
     const canRemove = !['running', 'starting', 'queued', 'pending'].includes(statusLower);
     const unread = !!job.unread;
@@ -3633,16 +3657,17 @@ function renderTasks(items, conversationId = currentId) {
       </div>
       <div class="task-meta">args: ${escapeHtml(args)} · created: ${escapeHtml(createdAt)}</div>
       <div class="task-actions">
-        <button type="button" class="task-nickname-btn" data-job-id="${escapeHtml(jobId)}">Nickname</button>
+        <button type="button" class="task-nickname-btn" data-job-id="${escapeHtml(nicknameTargetJobId)}">Nickname</button>
         <button ${runBtnDisabled} onclick="addTaskReference('${escapeHtml(jobId)}')">Reference</button>
         <button ${runBtnDisabled} onclick="viewTaskLog('${escapeHtml(jobId)}')">Log</button>
         <button ${runBtnDisabled} onclick="openTaskWandb('${escapeHtml(jobId)}')">Wandb</button>
         ${stackHistoryBtn}
         ${canResume ? `<button ${runBtnDisabled} onclick="resumeTask('${escapeHtml(jobId)}')">Resume</button>` : ''}
+        ${canMarkError ? `<button ${runBtnDisabled} onclick="markTaskAsError('${escapeHtml(jobId)}')">Mark Error</button>` : ''}
         ${canCancel ? `<button ${runBtnDisabled} onclick="cancelTask('${escapeHtml(jobId)}')">Cancel</button>` : ''}
         ${canRemove ? `<button ${runBtnDisabled} onclick="removeTask('${escapeHtml(jobId)}')">Remove</button>` : ''}
       </div>
-      <div class="task-nickname-editor" data-job-id="${escapeHtml(jobId)}">
+      <div class="task-nickname-editor" data-job-id="${escapeHtml(nicknameTargetJobId)}">
         <input type="text" class="task-nickname-input" maxlength="80" placeholder="Task nickname" />
         <button type="button" class="task-nickname-save-btn">Save</button>
         <button type="button" class="task-nickname-cancel-btn">Cancel</button>
@@ -3654,7 +3679,7 @@ function renderTasks(items, conversationId = currentId) {
     const nicknameSaveBtn = div.querySelector('.task-nickname-save-btn');
     const nicknameCancelBtn = div.querySelector('.task-nickname-cancel-btn');
 
-    if (nicknameInput) nicknameInput.value = jobNickname;
+    if (nicknameInput) nicknameInput.value = nicknameTargetValue;
 
     if (nicknameBtn && nicknameEditor && nicknameInput) {
       nicknameBtn.addEventListener('click', () => {
@@ -3666,13 +3691,13 @@ function renderTasks(items, conversationId = currentId) {
 
     if (nicknameSaveBtn && nicknameInput && nicknameEditor) {
       nicknameSaveBtn.addEventListener('click', async () => {
-        await saveTaskNickname(jobId, nicknameInput.value);
+        await saveTaskNickname(nicknameTargetJobId, nicknameInput.value);
       });
     }
 
     if (nicknameCancelBtn && nicknameInput && nicknameEditor) {
       nicknameCancelBtn.addEventListener('click', () => {
-        nicknameInput.value = jobNickname;
+        nicknameInput.value = nicknameTargetValue;
         nicknameEditor.style.display = 'none';
       });
     }
@@ -3681,7 +3706,7 @@ function renderTasks(items, conversationId = currentId) {
       nicknameInput.addEventListener('keydown', async (event) => {
         if (event.key === 'Enter') {
           event.preventDefault();
-          await saveTaskNickname(jobId, nicknameInput.value);
+          await saveTaskNickname(nicknameTargetJobId, nicknameInput.value);
         }
       });
     }
@@ -3831,6 +3856,20 @@ async function cancelTask(jobId) {
     setStatus('Task cancelled.', 'success');
   } catch (err) {
     setStatus('Cancel failed: ' + err.message, 'error');
+  }
+}
+
+async function markTaskAsError(jobId) {
+  if (!currentId || !jobId) return;
+  if (!confirm(`Mark running task ${jobId} as error and cancel upstream job?`)) return;
+  try {
+    setStatus('Marking task as error...', 'busy');
+    await api(`/api/conversations/${currentId}/tasks/${jobId}/mark-error`, { method: 'POST' });
+    await loadTasksForCurrentConversation();
+    pollTaskNotifications();
+    setStatus('Task marked as error and cancel requested.', 'success');
+  } catch (err) {
+    setStatus('Mark as error failed: ' + err.message, 'error');
   }
 }
 

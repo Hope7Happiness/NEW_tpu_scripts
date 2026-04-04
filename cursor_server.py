@@ -1213,6 +1213,22 @@ def mark_task_status(conversation_id: str, job_id: str, status: str) -> None:
   update_conversation(conversation_id, updater)
 
 
+def mark_task_error_forced(conversation_id: str, job_id: str) -> None:
+  def updater(c: dict):
+    task_meta = c.setdefault("task_meta", {})
+    entry = task_meta.get(job_id)
+    if not isinstance(entry, dict):
+      entry = {}
+    else:
+      entry = dict(entry)
+    entry["last_status"] = "error"
+    entry["force_error"] = True
+    entry["updated_at"] = utc_now()
+    task_meta[job_id] = entry
+
+  update_conversation(conversation_id, updater)
+
+
 def list_conversations() -> list[dict]:
   return list_conversations_impl(STORE_PATH, store_lock, conversation_summary)
 
@@ -1587,6 +1603,43 @@ def api_cancel_task(conversation_id: str, job_id: str):
   if status_code in {200, 404}:
     mark_task_status(conversation_id, job_id, "canceled")
   return jsonify(payload), status_code
+
+
+@app.route("/api/conversations/<conversation_id>/tasks/<job_id>/mark-error", methods=["POST"])
+def api_mark_task_error(conversation_id: str, job_id: str):
+  conv = get_conversation(conversation_id)
+  if not conv:
+    return jsonify({"error": "not found"}), 404
+
+  job_ids = conv.get("job_ids", []) or []
+  if job_id not in job_ids:
+    return jsonify({"error": "job does not belong to this conversation"}), 404
+
+  status = _resolve_job_status(conv, job_id)
+  if not is_running_like_task_status(status):
+    return jsonify({"error": f"task status is {status}, only running-like tasks can be marked as error"}), 409
+
+  mark_task_error_forced(conversation_id, job_id)
+  snapshot_task_log_before_cancel(conversation_id, job_id)
+  cancel_status, cancel_payload = zhh_request(ZHH_SERVER_URL, "POST", f"/cancel/{job_id}")
+
+  if cancel_status in {200, 404}:
+    return jsonify({
+      "conversation_id": conversation_id,
+      "job_id": job_id,
+      "status": "error",
+      "cancel_status": cancel_status,
+      "cancel_payload": cancel_payload,
+    }), 200
+
+  return jsonify({
+    "conversation_id": conversation_id,
+    "job_id": job_id,
+    "status": "error",
+    "cancel_status": cancel_status,
+    "cancel_payload": cancel_payload,
+    "error": f"marked as error locally, but upstream cancel failed with {cancel_status}",
+  }), 502
 
 
 @app.route("/api/conversations/<conversation_id>/tasks/<job_id>/resume", methods=["POST"])

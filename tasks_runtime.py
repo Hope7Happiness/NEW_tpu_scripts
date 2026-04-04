@@ -73,7 +73,8 @@ def get_conversation_jobs(zhh_server_url: str, conversation: dict) -> list[dict]
 
     ordered = []
     for job_id in reversed(job_ids):
-        meta = task_meta.get(job_id) if isinstance(task_meta.get(job_id), dict) else {}
+        raw_meta = task_meta.get(job_id)
+        meta = raw_meta if isinstance(raw_meta, dict) else {}
         nickname = ""
         if meta:
             nickname = str(meta.get("nickname") or "").strip()
@@ -84,6 +85,8 @@ def get_conversation_jobs(zhh_server_url: str, conversation: dict) -> list[dict]
             item = dict(by_id[job_id])
             item["nickname"] = nickname
             live_status = str(item.get("status") or "").strip().lower()
+            if isinstance(meta, dict) and bool(meta.get("force_error")):
+                item["status"] = "error"
             if cached_status and _is_local_cancel_like(cached_status) and _is_running_like_status(live_status):
                 item["status"] = cached_status
             elif (not item.get("status") or live_status == "unknown") and cached_status:
@@ -93,6 +96,7 @@ def get_conversation_jobs(zhh_server_url: str, conversation: dict) -> list[dict]
                     "resume_from_job_id",
                     "resume_log_path",
                     "auto_fix_from_job_id",
+                    "force_error",
                 ):
                     value = meta.get(key)
                     if value is not None and value != "":
@@ -116,6 +120,7 @@ def get_conversation_jobs(zhh_server_url: str, conversation: dict) -> list[dict]
                 "resume_from_job_id",
                 "resume_log_path",
                 "auto_fix_from_job_id",
+                "force_error",
             ):
                 if meta and meta.get(key):
                     item[key] = meta.get(key)
