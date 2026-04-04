@@ -112,8 +112,8 @@ auto_select(){
 
         # or, if the lock file (shared across group) exists, skip
         group_lock_file="/kmh-nfs-ssd-us-mount/code/qiao/tpu_lock/*_${vm_name}_*"
-        # get the actual file
-        actual_lock_file=$(ls $group_lock_file 2>/dev/null || true)
+        # get the actual file, if many files match, get the latest one
+        actual_lock_file=$(ls $group_lock_file 2>/dev/null | tail -n 1 || true)
         if [ -f "$actual_lock_file" ]; then
             # if the actual lock file exists, and the name isn't zak
             # if [[ ! "$actual_lock_file" =~ "zak" ]]; then
