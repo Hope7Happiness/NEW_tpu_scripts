@@ -31,6 +31,7 @@ class AutoFixCoordinator:
         agent_path_getter: Callable[[], str],
         trigger_run_job: Callable[[str, bool], tuple[str | None, str | None]],
         utc_now: Callable[[], float],
+        report_agent_event: Callable[[str, dict], None] | None = None,
     ):
         self.get_conversation = get_conversation
         self.get_conversation_lock = get_conversation_lock
@@ -45,6 +46,7 @@ class AutoFixCoordinator:
         self.agent_path_getter = agent_path_getter
         self.trigger_run_job = trigger_run_job
         self.utc_now = utc_now
+        self.report_agent_event = report_agent_event
 
         self._store_lock = threading.Lock()
         self._threads: dict[str, threading.Thread] = {}
@@ -220,27 +222,51 @@ class AutoFixCoordinator:
                     },
                 )
 
+                reporter = self.report_agent_event
                 result = self.acp_prompt_session(
                     agent_path=self.agent_path_getter(),
                     cwd=latest["cwd"],
                     mode=latest.get("mode", "agent"),
                     text=prompt_text,
                     cursor_session_id=latest.get("cursor_session_id"),
+                    preferred_model=str(latest.get("llm_model") or "").strip() or None,
+                    effort=str(latest.get("llm_effort") or "high").strip().lower() or "high",
+                    on_progress_event=(
+                        (lambda event: reporter(conversation_id, event))
+                        if reporter is not None
+                        else None
+                    ),
                     cancel_event=cancel_event,
                     on_client_ready=lambda canceler: self._register_canceler(conversation_id, canceler),
                 )
                 self._clear_canceler(conversation_id)
 
                 model_used = str(result.get("model") or "").strip()
-                if (not latest.get("cursor_session_id")) or model_used:
-                    def set_runtime_metadata(c: dict):
-                        if not c.get("cursor_session_id"):
-                            c["cursor_session_id"] = result["cursor_session_id"]
-                        if model_used:
-                            c["current_model"] = model_used
-                        if c.get("memory_summary_pending"):
-                            c["memory_summary_pending"] = False
-                    self.update_conversation(conversation_id, set_runtime_metadata)
+                effort_used = str(result.get("effort") or latest.get("llm_effort") or "").strip().lower()
+                context_tokens = result.get("context_tokens")
+                context_window = result.get("context_window")
+                def set_runtime_metadata(c: dict):
+                    if not c.get("cursor_session_id"):
+                        c["cursor_session_id"] = result["cursor_session_id"]
+                    if c.get("llm_model"):
+                        c["llm_model"] = str(c.get("llm_model")).strip().lower()
+                    else:
+                        c["llm_model"] = "opus"
+                    if c.get("llm_effort"):
+                        c["llm_effort"] = str(c.get("llm_effort")).strip().lower()
+                    else:
+                        c["llm_effort"] = "high"
+                    if model_used:
+                        c["current_model"] = model_used
+                    if effort_used:
+                        c["current_effort"] = effort_used
+                    if isinstance(context_tokens, int) and context_tokens >= 0:
+                        c["current_context_tokens"] = context_tokens
+                    if isinstance(context_window, int) and context_window > 0:
+                        c["current_context_window"] = context_window
+                    if c.get("memory_summary_pending"):
+                        c["memory_summary_pending"] = False
+                self.update_conversation(conversation_id, set_runtime_metadata)
 
                 assistant_raw = result["text"] or f"[No text returned; stopReason={result['stop_reason']}]"
                 assistant_cleaned, should_run_job = extract_run_job_action(assistant_raw, run_action_nonce)

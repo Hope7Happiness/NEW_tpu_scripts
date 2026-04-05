@@ -275,7 +275,7 @@ show_all_tpu_status(){
             continue
         fi
 
-        # grep log dir: --workdir=/kmh-nfs-us-mount/staging/siri/mf_rev/launch_20250917_203208_gitfd6ce86_f72f4085/logs/log1_20250917_203225_9912f3e1/output.log
+        # grep log dir: --workdir=/kmh-nfs-us-mount/staging/<WHO>/mf_rev/launch_20250917_203208_gitfd6ce86_f72f4085/logs/log1_20250917_203225_9912f3e1/output.log
         log_file="$workdir/output.log"
 
         raw_status=$(cat $SSCRIPT_HOME/$raw_vm_name/status 2>/dev/null || echo "UNKNOWN")

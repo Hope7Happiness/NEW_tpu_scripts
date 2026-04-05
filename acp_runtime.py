@@ -11,6 +11,24 @@ from pathlib import Path
 from typing import Callable
 
 
+def _first_nonempty_env(keys: list[str], default: str = "") -> str:
+    for key in keys:
+        value = str(os.environ.get(key) or "").strip()
+        if value:
+            return value
+    return str(default or "").strip()
+
+
+def _compact_error_detail(text: str, limit: int = 900) -> str:
+    raw = str(text or "").strip()
+    if not raw:
+        return "unknown error"
+    compact = re.sub(r"\s+", " ", raw)
+    if len(compact) <= limit:
+        return compact
+    return compact[: limit - 3] + "..."
+
+
 def _is_usage_limit_error(message: str) -> bool:
     text = str(message or "").lower()
     if not text:
@@ -19,6 +37,7 @@ def _is_usage_limit_error(message: str) -> bool:
         "hit your usage limit",
         "usage limit",
         "spend limit",
+        "rate limit",
         "switch to a different model",
     ]
     return any(sig in text for sig in signals)
@@ -98,10 +117,11 @@ def note_usage_limit_error(message: str) -> bool:
 
 
 def get_model_policy_status() -> dict:
-    configured_model = str(os.environ.get("CURSOR_CLI_MODEL") or "default").strip() or "default"
+    configured_model = _first_nonempty_env(["CLAUDE_CODE_MODEL", "CURSOR_CLI_MODEL"], default="opus") or "opus"
     until = _forced_auto_until_date()
     active = _is_force_auto_active()
-    effective_model = "auto" if active else configured_model
+    fallback_model = _limit_fallback_model()
+    effective_model = fallback_model if active else configured_model
     days_remaining = 0
     force_until_text = ""
     if until is not None:
@@ -117,11 +137,78 @@ def get_model_policy_status() -> dict:
 
 
 def _fallback_models_from_env() -> list[str]:
-    raw = str(os.environ.get("CURSOR_CLI_FALLBACK_MODELS") or "auto,composer").strip()
+    raw = _first_nonempty_env(["CLAUDE_CODE_FALLBACK_MODELS", "CURSOR_CLI_FALLBACK_MODELS"], default="sonnet,haiku")
     if not raw:
-        return ["auto", "composer"]
+        return ["sonnet", "haiku"]
     values = [item.strip() for item in raw.split(",") if item.strip()]
-    return values or ["auto", "composer"]
+    return values or ["sonnet", "haiku"]
+
+
+def _limit_fallback_model() -> str:
+    preferred = _first_nonempty_env(
+        ["CLAUDE_CODE_LIMIT_FALLBACK_MODEL", "CLAUDE_CODE_FORCE_FALLBACK_MODEL"],
+        default="",
+    )
+    if preferred:
+        return preferred
+    fallbacks = _fallback_models_from_env()
+    if fallbacks:
+        return fallbacks[0]
+    return "sonnet"
+
+
+def _max_turns_value() -> int:
+    raw = _first_nonempty_env(["CLAUDE_CODE_MAX_TURNS", "CURSOR_CLI_MAX_TURNS"], default="50")
+    try:
+        value = int(raw)
+    except Exception:
+        return 50
+    return value if value > 0 else 50
+
+
+def _safe_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        parsed = int(str(value).strip())
+    except Exception:
+        return None
+    if parsed < 0:
+        return 0
+    return parsed
+
+
+def _extract_context_stats(result_payload: dict) -> tuple[int | None, int | None]:
+    usage_raw = result_payload.get("usage") if isinstance(result_payload, dict) else {}
+    usage = usage_raw if isinstance(usage_raw, dict) else {}
+
+    input_tokens = _safe_int(usage.get("input_tokens"))
+    if input_tokens is None:
+        input_tokens = _safe_int(usage.get("inputTokens"))
+
+    cache_read_tokens = _safe_int(usage.get("cache_read_input_tokens"))
+    if cache_read_tokens is None:
+        cache_read_tokens = _safe_int(usage.get("cacheReadInputTokens"))
+
+    cache_creation_tokens = _safe_int(usage.get("cache_creation_input_tokens"))
+    if cache_creation_tokens is None:
+        cache_creation_tokens = _safe_int(usage.get("cacheCreationInputTokens"))
+
+    pieces = [v for v in (input_tokens, cache_read_tokens, cache_creation_tokens) if v is not None]
+    context_tokens = sum(pieces) if pieces else None
+
+    context_window: int | None = None
+    model_usage_raw = result_payload.get("modelUsage") if isinstance(result_payload, dict) else {}
+    model_usage = model_usage_raw if isinstance(model_usage_raw, dict) else {}
+    for value in model_usage.values():
+        if not isinstance(value, dict):
+            continue
+        candidate = _safe_int(value.get("contextWindow"))
+        if candidate is not None and candidate > 0:
+            context_window = candidate
+            break
+
+    return context_tokens, context_window
 
 
 class CLIPromptCanceler:
@@ -149,34 +236,44 @@ class CLIPromptCanceler:
                     pass
 
 
-def _create_chat_session(agent_path: str, cwd: str, timeout: float) -> str:
-    result = subprocess.run(
-        [agent_path, "create-chat"],
-        cwd=cwd,
-        text=True,
-        capture_output=True,
-        timeout=timeout,
-        check=False,
-    )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()
-        raise RuntimeError(f"create-chat failed ({result.returncode}): {detail}")
-    session_id = (result.stdout or "").strip().splitlines()
-    if not session_id:
-        raise RuntimeError("create-chat returned empty session id")
-    return session_id[-1].strip()
+def _build_prompt_with_mode(text: str, mode: str) -> str:
+    normalized_mode = str(mode or "agent").strip().lower()
+    base = str(text or "")
+    if normalized_mode == "ask":
+        return "[Run mode: ask]\nRespond concisely and focus on direct answers.\n\n" + base
+    if normalized_mode == "plan":
+        return "[Run mode: plan]\nProvide a concrete implementation plan before coding.\n\n" + base
+    return base
 
 
-def _parse_json_result(stdout_text: str) -> dict:
-    lines = [line.strip() for line in str(stdout_text or "").splitlines() if line.strip()]
-    for line in reversed(lines):
-        try:
-            payload = json.loads(line)
-        except Exception:
-            continue
-        if isinstance(payload, dict) and payload.get("type") == "result":
-            return payload
-    raise RuntimeError(f"agent did not return JSON result. stdout={stdout_text[-500:]}")
+def _build_cli_command(
+    agent_path: str,
+    session_id: str,
+    model_id: str | None,
+    effort: str | None,
+    force_allow: bool,
+) -> list[str]:
+    cmd = [agent_path]
+    if force_allow:
+        cmd.extend(["--permission-mode", "bypassPermissions"])
+    if session_id:
+        cmd.extend(["--resume", session_id])
+    if model_id:
+        cmd.extend(["--model", model_id])
+    if effort:
+        cmd.extend(["--effort", effort])
+    max_turns = _max_turns_value()
+    cmd.extend([
+        "-p",
+        "--input-format",
+        "text",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+        "--max-turns",
+        str(max_turns),
+    ])
+    return cmd
 
 
 def _run_cli_prompt(
@@ -187,25 +284,23 @@ def _run_cli_prompt(
     timeout: float,
     cancel_event: threading.Event | None,
     model_id: str | None,
+    effort: str | None,
     mode: str,
     force_allow: bool,
     canceler: CLIPromptCanceler,
+    on_progress_event: Callable[[dict], None] | None = None,
 ) -> dict:
-    cmd = [
-        agent_path,
-        "--print",
-        "--output-format",
-        "json",
-        "--trust",
-        "--resume",
-        session_id,
-    ]
-    if force_allow:
-        cmd.append("--force")
-    if mode in {"plan", "ask"}:
-        cmd.extend(["--mode", mode])
-    if model_id:
-        cmd.extend(["--model", model_id])
+    cmd = _build_cli_command(
+        agent_path=agent_path,
+        session_id=session_id,
+        model_id=model_id,
+        effort=effort,
+        force_allow=force_allow,
+    )
+    prompt_text = _build_prompt_with_mode(text, mode)
+
+    env = dict(os.environ)
+    env.setdefault("NO_COLOR", "1")
 
     proc = subprocess.Popen(
         cmd,
@@ -214,41 +309,103 @@ def _run_cli_prompt(
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
+        env=env,
+        bufsize=1,
     )
     canceler.attach(proc)
 
     try:
         if proc.stdin is not None:
-            proc.stdin.write(text)
-            if not text.endswith("\n"):
+            proc.stdin.write(prompt_text)
+            if not prompt_text.endswith("\n"):
                 proc.stdin.write("\n")
             proc.stdin.close()
             proc.stdin = None
     except Exception:
         canceler.close()
-        raise RuntimeError("failed to send prompt to agent process")
+        raise RuntimeError("failed to send prompt to Claude Code process")
 
-    while proc.poll() is None:
+    started_at = time.monotonic()
+    init_session_id = str(session_id or "").strip()
+    init_model = str(model_id or "").strip()
+    result_payload: dict | None = None
+    raw_tail: list[str] = []
+
+    while True:
+        if timeout and timeout > 0 and (time.monotonic() - started_at) > timeout:
+            canceler.close()
+            raise RuntimeError("session/prompt timed out")
         if cancel_event is not None and cancel_event.is_set():
             canceler.close()
             raise InterruptedError("session/prompt canceled")
-        time.sleep(0.1)
 
-    stdout_text = proc.stdout.read() if proc.stdout is not None else ""
+        line = proc.stdout.readline() if proc.stdout is not None else ""
+        if not line:
+            if proc.poll() is not None:
+                break
+            time.sleep(0.05)
+            continue
+
+        stripped = line.strip()
+        if stripped:
+            raw_tail.append(stripped)
+            if len(raw_tail) > 200:
+                raw_tail = raw_tail[-200:]
+
+        try:
+            event = json.loads(stripped)
+        except Exception:
+            continue
+
+        if not isinstance(event, dict):
+            continue
+
+        if on_progress_event is not None:
+            try:
+                on_progress_event(event)
+            except Exception:
+                pass
+
+        etype = str(event.get("type") or "").strip().lower()
+        subtype = str(event.get("subtype") or "").strip().lower()
+        if etype == "system" and subtype == "init":
+            sid = str(event.get("session_id") or "").strip()
+            if sid:
+                init_session_id = sid
+            model_name = str(event.get("model") or "").strip()
+            if model_name:
+                init_model = model_name
+        elif etype == "result":
+            result_payload = event
+
     stderr_text = proc.stderr.read() if proc.stderr is not None else ""
-    if proc.returncode != 0:
-        detail = (stderr_text or stdout_text or "").strip()
-        raise RuntimeError(f"session/prompt failed ({proc.returncode}): {detail}")
+    return_code = proc.wait()
 
-    payload = _parse_json_result(stdout_text)
-    if bool(payload.get("is_error")):
-        detail = str(payload.get("result") or payload.get("error") or "unknown error").strip()
+    if result_payload is None:
+        if return_code != 0:
+            detail = _compact_error_detail(stderr_text or "\n".join(raw_tail[-40:]) or "unknown error")
+            raise RuntimeError(f"session/prompt failed ({return_code}): {detail}")
+        detail = _compact_error_detail(stderr_text or "\n".join(raw_tail[-40:]) or "no result event")
+        raise RuntimeError(f"session/prompt failed: {detail}")
+
+    if bool(result_payload.get("is_error")):
+        detail = _compact_error_detail(str(result_payload.get("result") or result_payload.get("error") or "unknown error"))
         raise RuntimeError(f"session/prompt failed (result error): {detail}")
+
+    final_session_id = str(result_payload.get("session_id") or init_session_id or session_id or "").strip()
+    final_model = str(init_model or model_id or "").strip() or "opus"
+    stop_reason = str(result_payload.get("subtype") or result_payload.get("stop_reason") or "success")
+    result_text = str(result_payload.get("result") or "").strip()
+    context_tokens, context_window = _extract_context_stats(result_payload)
+
     return {
-        "cursor_session_id": str(payload.get("session_id") or session_id),
-        "text": str(payload.get("result") or "").strip(),
-        "stop_reason": str(payload.get("subtype") or "success"),
-        "model": str(model_id or "default").strip() or "default",
+        "cursor_session_id": final_session_id,
+        "text": result_text,
+        "stop_reason": stop_reason,
+        "model": final_model,
+        "effort": str(effort or "").strip(),
+        "context_tokens": context_tokens,
+        "context_window": context_window,
     }
 
 
@@ -259,17 +416,19 @@ def acp_prompt_session(
     text: str,
     cursor_session_id: str | None = None,
     timeout: float = 0.0,
+    preferred_model: str | None = None,
+    effort: str | None = None,
     cancel_event: threading.Event | None = None,
     on_client_ready: Callable[[CLIPromptCanceler], None] | None = None,
+    on_progress_event: Callable[[dict], None] | None = None,
 ) -> dict:
-    configured_model = str(os.environ.get("CURSOR_CLI_MODEL") or "").strip() or None
-    model_id = "auto" if _is_force_auto_active() else configured_model
-    force_allow_env = str(os.environ.get("CURSOR_CLI_FORCE_ALLOW", "1")).strip().lower()
+    configured_model = str(preferred_model or "").strip() or _first_nonempty_env(["CLAUDE_CODE_MODEL", "CURSOR_CLI_MODEL"], default="opus")
+    configured_effort = str(effort or "").strip().lower() or None
+    model_id = _limit_fallback_model() if _is_force_auto_active() else configured_model
+    force_allow_env = _first_nonempty_env(["CLAUDE_CODE_BYPASS_PERMISSIONS", "CURSOR_CLI_FORCE_ALLOW"], default="1").lower()
     force_allow = force_allow_env not in {"0", "false", "no", "off"}
     resolved_cwd = str(Path(cwd).expanduser())
     session_id = str(cursor_session_id or "").strip()
-    if not session_id:
-        session_id = _create_chat_session(agent_path, resolved_cwd, timeout=120.0)
 
     canceler = CLIPromptCanceler()
     if on_client_ready is not None:
@@ -285,9 +444,11 @@ def acp_prompt_session(
             timeout=timeout,
             cancel_event=cancel_event,
             model_id=model_id,
+            effort=configured_effort,
             mode=normalized_mode,
             force_allow=force_allow,
             canceler=canceler,
+            on_progress_event=on_progress_event,
         )
     except RuntimeError as exc:
         err_text = str(exc)
@@ -313,9 +474,11 @@ def acp_prompt_session(
                     timeout=timeout,
                     cancel_event=cancel_event,
                     model_id=candidate,
+                    effort=configured_effort,
                     mode=normalized_mode,
                     force_allow=force_allow,
                     canceler=canceler,
+                    on_progress_event=on_progress_event,
                 )
             except RuntimeError:
                 continue

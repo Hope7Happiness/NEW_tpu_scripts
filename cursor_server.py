@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-cursor_server.py — HTTP chat UI backed by Cursor ACP sessions.
+cursor_server.py — HTTP chat UI backed by Claude Code sessions.
 
-This server creates its own Cursor sessions via `agent acp` and stores the
-mapping between UI conversations and Cursor `sessionId`s. It does not depend on
+This server drives Claude Code CLI sessions per conversation and stores the
+mapping between UI conversations and resumed session IDs. It does not depend on
 any pre-existing tmux windows.
 
 Usage:
@@ -21,6 +21,7 @@ import subprocess
 import threading
 import time
 import uuid
+import getpass
 from pathlib import Path
 
 from flask import Flask, jsonify, request, send_from_directory
@@ -56,16 +57,27 @@ APP_ROOT = Path(__file__).parent.absolute()
 CONFIG_PATH = APP_ROOT / "config.json"
 WANDB_URL_PATTERN = re.compile(r"https?://(?:[A-Za-z0-9-]+\.)*wandb\.(?:ai|me)/[^\s\"'<>())]+")
 COMPLETION_DIAGNOSIS_RULE_VERSION = 2
+CURCHAT_USER = str(os.environ.get("CURCHAT_USER") or os.environ.get("WHO") or getpass.getuser()).strip()
+os.environ.setdefault("CURCHAT_USER", CURCHAT_USER)
+
+
+def _default_user_code_root() -> Path:
+  candidate = Path(f"/kmh-nfs-ssd-us-mount/code/{CURCHAT_USER}").expanduser()
+  if candidate.exists() and candidate.is_dir():
+    return candidate.resolve()
+  return APP_ROOT.parent
 
 
 def load_ui_config() -> dict:
+  default_code_root = _default_user_code_root()
   defaults = {
     "host": "0.0.0.0",
     "port": 7860,
-    "workdir_root": str(APP_ROOT.parent),
-    "default_cwd": str(APP_ROOT),
-    "agent_path": str(Path.home() / ".local/bin/agent"),
+    "workdir_root": str(default_code_root),
+    "default_cwd": str(default_code_root),
+    "agent_path": "claude",
     "store_file": "cursor_sessions.json",
+    "task_server_url": "http://localhost:8080",
   }
 
   if not CONFIG_PATH.exists():
@@ -102,13 +114,26 @@ def config_path_value(value: str | Path, fallback: Path) -> Path:
 
 DEFAULT_HOST = str(UI_CONFIG.get("host") or "0.0.0.0")
 DEFAULT_PORT = int(os.environ.get("CURSOR_SERVER_PORT", str(UI_CONFIG.get("port") or 7860)))
-DEFAULT_AGENT = os.environ.get("CURSOR_AGENT_PATH", str(UI_CONFIG.get("agent_path") or (Path.home() / ".local/bin/agent")))
+DEFAULT_AGENT = (
+  os.environ.get("CLAUDE_CODE_PATH")
+  or os.environ.get("CURSOR_AGENT_PATH")
+  or str(UI_CONFIG.get("agent_path") or "claude")
+)
 store_file = Path(str(UI_CONFIG.get("store_file") or "cursor_sessions.json"))
 STORE_PATH = store_file if store_file.is_absolute() else (APP_ROOT / store_file)
 DEFAULT_CWD = str(config_path_value(UI_CONFIG.get("default_cwd") or APP_ROOT, APP_ROOT))
 WORKDIR_ROOT = config_path_value(UI_CONFIG.get("workdir_root") or APP_ROOT.parent, APP_ROOT.parent)
-ZHH_SERVER_URL = "http://localhost:8080"
+ZHH_SERVER_URL = str(
+  os.environ.get("CURCHAT_TASK_SERVER_URL")
+  or os.environ.get("ZHH_SERVER_URL")
+  or UI_CONFIG.get("task_server_url")
+  or "http://localhost:8080"
+).strip()
 UI_TEMPLATE_PATH = APP_ROOT / "cursor_server_ui.html"
+SESSION_DEFAULT_MODEL = "opus"
+SESSION_DEFAULT_EFFORT = "high"
+ALLOWED_SESSION_MODELS = {"opus", "sonnet", "haiku"}
+ALLOWED_SESSION_EFFORTS = {"low", "medium", "high", "max"}
 
 app = Flask(__name__)
 
@@ -124,6 +149,256 @@ except Exception:
 
 def utc_now() -> float:
     return time.time()
+
+
+agent_activity_lock = threading.Lock()
+agent_activity_by_conversation: dict[str, dict] = {}
+
+
+def _new_activity_entry(text: str, kind: str = "info") -> dict:
+  return {
+    "id": str(uuid.uuid4()),
+    "text": str(text or "").strip(),
+    "kind": str(kind or "info").strip() or "info",
+    "created_at": utc_now(),
+  }
+
+
+def reset_agent_activity(conversation_id: str, seed_text: str | None = None) -> None:
+  target_id = str(conversation_id or "").strip()
+  if not target_id:
+    return
+  entries: list[dict] = []
+  if seed_text:
+    entries.append(_new_activity_entry(seed_text, "info"))
+  with agent_activity_lock:
+    agent_activity_by_conversation[target_id] = {
+      "conversation_id": target_id,
+      "running": True,
+      "updated_at": utc_now(),
+      "entries": entries,
+    }
+
+
+def append_agent_activity(conversation_id: str, text: str, kind: str = "info") -> None:
+  target_id = str(conversation_id or "").strip()
+  content = str(text or "").strip()
+  if not target_id or not content:
+    return
+
+  with agent_activity_lock:
+    payload = agent_activity_by_conversation.get(target_id)
+    if not isinstance(payload, dict):
+      payload = {
+        "conversation_id": target_id,
+        "running": True,
+        "updated_at": utc_now(),
+        "entries": [],
+      }
+
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+      entries = []
+
+    if entries:
+      last = entries[-1]
+      if isinstance(last, dict) and str(last.get("text") or "").strip() == content:
+        payload["updated_at"] = utc_now()
+        payload["entries"] = entries
+        payload["running"] = True
+        agent_activity_by_conversation[target_id] = payload
+        return
+
+    entries.append(_new_activity_entry(content, kind))
+    if len(entries) > 240:
+      entries = entries[-240:]
+
+    payload["entries"] = entries
+    payload["running"] = True
+    payload["updated_at"] = utc_now()
+    agent_activity_by_conversation[target_id] = payload
+
+
+def finish_agent_activity(conversation_id: str, error_text: str | None = None) -> None:
+  target_id = str(conversation_id or "").strip()
+  if not target_id:
+    return
+  with agent_activity_lock:
+    payload = agent_activity_by_conversation.get(target_id)
+    if not isinstance(payload, dict):
+      payload = {
+        "conversation_id": target_id,
+        "running": False,
+        "updated_at": utc_now(),
+        "entries": [],
+      }
+    payload["running"] = False
+    payload["updated_at"] = utc_now()
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+      entries = []
+    if error_text:
+      compact = str(error_text).strip().replace("\n", " ")
+      if len(compact) > 360:
+        compact = compact[:357] + "..."
+      entries.append(_new_activity_entry(compact, "error"))
+      if len(entries) > 240:
+        entries = entries[-240:]
+    payload["entries"] = entries
+    agent_activity_by_conversation[target_id] = payload
+
+
+def clear_agent_activity(conversation_id: str) -> None:
+  target_id = str(conversation_id or "").strip()
+  if not target_id:
+    return
+  with agent_activity_lock:
+    agent_activity_by_conversation.pop(target_id, None)
+
+
+def _brief_agent_tool_input(payload: dict) -> str:
+  if not isinstance(payload, dict):
+    return ""
+  for key in ("command", "file_path", "description", "prompt", "query", "pattern", "url"):
+    value = payload.get(key)
+    if value is None:
+      continue
+    text = str(value).strip().replace("\n", " ")
+    if not text:
+      continue
+    if len(text) > 140:
+      text = text[:137] + "..."
+    return text
+  return ""
+
+
+def _format_agent_event_lines(event: dict) -> list[tuple[str, str]]:
+  if not isinstance(event, dict):
+    return []
+  etype = str(event.get("type") or "").strip().lower()
+  subtype = str(event.get("subtype") or "").strip().lower()
+  lines: list[tuple[str, str]] = []
+
+  if etype == "system" and subtype == "init":
+    model = str(event.get("model") or "").strip() or "unknown"
+    sid = str(event.get("session_id") or "").strip()
+    sid_short = sid[:12] if sid else "-"
+    lines.append((f"Session ready · model={model} · id={sid_short}", "info"))
+    return lines
+
+  if etype == "system" and subtype == "task_started":
+    desc = str(event.get("description") or "").strip()
+    if desc:
+      lines.append((f"Task started: {desc}", "info"))
+      return lines
+
+  if etype == "system" and subtype == "task_progress":
+    tool = str(event.get("last_tool_name") or "").strip()
+    desc = str(event.get("description") or "").strip()
+    if tool and desc:
+      lines.append((f"[{tool}] {desc}", "info"))
+      return lines
+    if desc:
+      lines.append((desc, "info"))
+      return lines
+
+  if etype == "system" and subtype == "task_notification":
+    status = str(event.get("status") or "").strip() or "unknown"
+    summary = str(event.get("summary") or event.get("description") or "").strip() or "task"
+    kind = "success" if status.lower() == "completed" else "warn"
+    lines.append((f"Task {status}: {summary}", kind))
+    return lines
+
+  if etype == "assistant":
+    message_raw = event.get("message")
+    message: dict = message_raw if isinstance(message_raw, dict) else {}
+    content_raw = message.get("content")
+    blocks = content_raw if isinstance(content_raw, list) else []
+    for block in blocks:
+      if not isinstance(block, dict):
+        continue
+      block_type = str(block.get("type") or "").strip().lower()
+      if block_type == "tool_use":
+        name = str(block.get("name") or "").strip() or "tool"
+        input_raw = block.get("input")
+        input_payload: dict = input_raw if isinstance(input_raw, dict) else {}
+        detail = _brief_agent_tool_input(input_payload)
+        if detail:
+          lines.append((f"Tool {name}: {detail}", "info"))
+        else:
+          lines.append((f"Tool {name}", "info"))
+    return lines
+
+  if etype == "user":
+    message_raw = event.get("message")
+    message: dict = message_raw if isinstance(message_raw, dict) else {}
+    content_raw = message.get("content")
+    blocks = content_raw if isinstance(content_raw, list) else []
+    for block in blocks:
+      if not isinstance(block, dict):
+        continue
+      if str(block.get("type") or "").strip().lower() != "tool_result":
+        continue
+      if bool(block.get("is_error")):
+        content = block.get("content")
+        text = str(content or "").strip().replace("\n", " ")
+        if len(text) > 150:
+          text = text[:147] + "..."
+        if text:
+          lines.append((f"Tool error: {text}", "error"))
+    return lines
+
+  if etype == "rate_limit_event":
+    info_raw = event.get("rate_limit_info")
+    info: dict = info_raw if isinstance(info_raw, dict) else {}
+    status = str(info.get("status") or "").strip()
+    if status and status.lower() != "allowed":
+      lines.append((f"Rate limit: {status}", "warn"))
+    return lines
+
+  if etype == "result":
+    is_error = bool(event.get("is_error"))
+    if is_error:
+      detail = str(event.get("result") or "").strip()
+      if len(detail) > 160:
+        detail = detail[:157] + "..."
+      lines.append((f"Run failed: {detail or 'unknown error'}", "error"))
+    else:
+      lines.append(("Run completed", "success"))
+    return lines
+
+  return lines
+
+
+def record_agent_event(conversation_id: str, event: dict) -> None:
+  for text, kind in _format_agent_event_lines(event):
+    append_agent_activity(conversation_id, text, kind)
+  if isinstance(event, dict) and str(event.get("type") or "").strip().lower() == "result":
+    finish_agent_activity(conversation_id)
+
+
+def get_agent_activity_payload(conversation_id: str, limit: int = 120) -> dict:
+  target_id = str(conversation_id or "").strip()
+  with agent_activity_lock:
+    payload = agent_activity_by_conversation.get(target_id)
+    if not isinstance(payload, dict):
+      return {
+        "conversation_id": target_id,
+        "running": False,
+        "updated_at": utc_now(),
+        "entries": [],
+      }
+    entries = payload.get("entries")
+    if not isinstance(entries, list):
+      entries = []
+    safe_limit = max(1, min(int(limit or 120), 400))
+    sliced = entries[-safe_limit:]
+    return {
+      "conversation_id": target_id,
+      "running": bool(payload.get("running")),
+      "updated_at": payload.get("updated_at"),
+      "entries": sliced,
+    }
 
 
 def normalize_workdir(workdir: str) -> Path:
@@ -978,7 +1253,14 @@ def delete_conversation(conversation_id: str) -> dict | None:
   return delete_conversation_impl(STORE_PATH, store_lock, conversation_locks, conversation_id)
 
 
-def create_conversation_record(title: str, cwd: str, mode: str, cursor_session_id: str | None) -> dict:
+def create_conversation_record(
+  title: str,
+  cwd: str,
+  mode: str,
+  cursor_session_id: str | None,
+  llm_model: str = SESSION_DEFAULT_MODEL,
+  llm_effort: str = SESSION_DEFAULT_EFFORT,
+) -> dict:
   return create_conversation_record_impl(
     STORE_PATH,
     store_lock,
@@ -987,6 +1269,8 @@ def create_conversation_record(title: str, cwd: str, mode: str, cursor_session_i
     mode,
     cursor_session_id,
     utc_now,
+    llm_model,
+    llm_effort,
   )
 
 
@@ -1023,6 +1307,15 @@ def append_message(conversation_id: str, role: str, content: str, extra: dict | 
 
 def _compact_text_line(text: str, limit: int = 220) -> str:
   value = re.sub(r"\s+", " ", str(text or "").strip())
+  if len(value) <= limit:
+    return value
+  return value[: limit - 3] + "..."
+
+
+def _compact_error_text(text: str, limit: int = 1200) -> str:
+  value = re.sub(r"\s+", " ", str(text or "").strip())
+  if not value:
+    return "unknown error"
   if len(value) <= limit:
     return value
   return value[: limit - 3] + "..."
@@ -1070,6 +1363,36 @@ def build_prompt_with_memory(conv: dict, user_text: str) -> str:
     "[Current user request]\n"
     f"{text}"
   )
+
+
+def resolve_session_model(raw_model: str | None) -> str:
+  model = str(raw_model or "").strip().lower()
+  if model in ALLOWED_SESSION_MODELS:
+    return model
+  return SESSION_DEFAULT_MODEL
+
+
+def resolve_session_effort(raw_effort: str | None) -> str:
+  effort = str(raw_effort or "").strip().lower()
+  if effort in ALLOWED_SESSION_EFFORTS:
+    return effort
+  return SESSION_DEFAULT_EFFORT
+
+
+def parse_session_setting_command(text: str) -> tuple[str, str] | tuple[None, None]:
+  raw = str(text or "").strip()
+  if not raw.startswith("/"):
+    return None, None
+  parts = raw.split()
+  if len(parts) != 2:
+    return None, None
+  command = str(parts[0] or "").strip().lower()
+  value = str(parts[1] or "").strip().lower()
+  if command == "/model":
+    return "model", value
+  if command == "/effort":
+    return "effort", value
+  return None, None
 
 
 def record_run_job(conversation_id: str, run_data: dict, *, auto_run_by_agent: bool = False) -> str | None:
@@ -1135,6 +1458,7 @@ AUTO_FIX_COORDINATOR = AutoFixCoordinator(
   agent_path_getter=lambda: AGENT_PATH,
   trigger_run_job=trigger_run_job_for_conversation,
   utc_now=utc_now,
+  report_agent_event=lambda conversation_id, event: record_agent_event(conversation_id, event),
 )
 
 
@@ -1209,7 +1533,14 @@ def api_create_conversation():
       return jsonify({"conversation": conversation_summary(existing), "detail": existing, "reused": True})
 
     title = workdir_base(cwd)
-    record = create_conversation_record(title, cwd, mode, None)
+    record = create_conversation_record(
+      title,
+      cwd,
+      mode,
+      None,
+      llm_model=SESSION_DEFAULT_MODEL,
+      llm_effort=SESSION_DEFAULT_EFFORT,
+    )
     return jsonify({"conversation": conversation_summary(record), "detail": record, "reused": False})
 
 
@@ -1229,6 +1560,15 @@ def api_get_conversation(conversation_id: str):
     if not conv:
         return jsonify({"error": "not found"}), 404
     return jsonify({"conversation": conv, "summary": conversation_summary(conv)})
+
+
+@app.route("/api/conversations/<conversation_id>/activity", methods=["GET"])
+def api_get_conversation_activity(conversation_id: str):
+    conv = get_conversation(conversation_id)
+    if not conv:
+      return jsonify({"error": "not found"}), 404
+    limit = _safe_positive_int(request.args.get("limit", "120"), default=120)
+    return jsonify(get_agent_activity_payload(conversation_id, limit=limit))
 
 
 @app.route("/api/conversations/<conversation_id>", methods=["DELETE"])
@@ -1252,6 +1592,7 @@ def api_delete_conversation(conversation_id: str):
   deleted = delete_conversation(conversation_id)
   if not deleted:
     return jsonify({"error": "not found"}), 404
+  clear_agent_activity(conversation_id)
 
   return jsonify({
     "deleted": True,
@@ -1696,6 +2037,51 @@ def api_send_message(conversation_id: str):
   if not conv:
     return jsonify({"error": "not found"}), 404
 
+  lowered_text = text.strip().lower()
+  if lowered_text.startswith("/model") or lowered_text.startswith("/effort"):
+    if len(text.split()) != 2:
+      return jsonify({"error": "invalid setting command. use /model <opus|sonnet|haiku> or /effort <low|medium|high|max>"}), 400
+
+  setting_key, setting_value = parse_session_setting_command(text)
+  if setting_key is not None:
+    status = str(conv.get("status") or "").strip().lower()
+    if status in {"running", "debugging"}:
+      return jsonify({"error": "session setting update is unavailable while agent is running"}), 409
+
+    if setting_key == "model":
+      normalized = str(setting_value or "").strip().lower()
+      if normalized not in ALLOWED_SESSION_MODELS:
+        return jsonify({"error": "invalid model. allowed: opus, sonnet, haiku"}), 400
+
+      append_message(conversation_id, "user", text)
+      append_message(conversation_id, "assistant", f"Model updated to `{normalized}` for this session.")
+      updated = update_conversation(conversation_id, lambda c: c.update({
+        "llm_model": normalized,
+        "current_model": normalized,
+      }))
+      return jsonify({
+        "conversation": updated,
+        "assistant": f"Model updated to `{normalized}` for this session.",
+        "setting": {"key": "model", "value": normalized},
+      }), 200
+
+    if setting_key == "effort":
+      normalized = str(setting_value or "").strip().lower()
+      if normalized not in ALLOWED_SESSION_EFFORTS:
+        return jsonify({"error": "invalid effort. allowed: low, medium, high, max"}), 400
+
+      append_message(conversation_id, "user", text)
+      append_message(conversation_id, "assistant", f"Effort updated to `{normalized}` for this session.")
+      updated = update_conversation(conversation_id, lambda c: c.update({
+        "llm_effort": normalized,
+        "current_effort": normalized,
+      }))
+      return jsonify({
+        "conversation": updated,
+        "assistant": f"Effort updated to `{normalized}` for this session.",
+        "setting": {"key": "effort", "value": normalized},
+      }), 200
+
   conv_job_ids = set(conv.get("job_ids", []) or [])
   invalid_refs = [ref for ref in normalized_refs if ref not in conv_job_ids]
   if invalid_refs:
@@ -1708,6 +2094,9 @@ def api_send_message(conversation_id: str):
     return jsonify({"error": "conversation busy"}), 409
 
   try:
+    session_model = resolve_session_model(conv.get("llm_model"))
+    session_effort = resolve_session_effort(conv.get("llm_effort"))
+    reset_agent_activity(conversation_id, "Prompt sent to Claude Code.")
     update_conversation(conversation_id, lambda c: c.update({"status": "running"}))
 
     refs_payload: list[dict] = []
@@ -1733,18 +2122,29 @@ def api_send_message(conversation_id: str):
       mode=conv.get("mode", "agent"),
       text=prompt_text,
       cursor_session_id=conv.get("cursor_session_id"),
+      preferred_model=session_model,
+      effort=session_effort,
+      on_progress_event=lambda event: record_agent_event(conversation_id, event),
     )
 
     model_used = str(result.get("model") or "").strip()
-    if not conv.get("cursor_session_id") or model_used:
-      def set_runtime_metadata(c: dict):
-        if not c.get("cursor_session_id"):
-          c["cursor_session_id"] = result["cursor_session_id"]
-        if model_used:
-          c["current_model"] = model_used
-        if c.get("memory_summary_pending"):
-          c["memory_summary_pending"] = False
-      update_conversation(conversation_id, set_runtime_metadata)
+    effort_used = resolve_session_effort(result.get("effort") or session_effort)
+    context_tokens = result.get("context_tokens")
+    context_window = result.get("context_window")
+    def set_runtime_metadata(c: dict):
+      if not c.get("cursor_session_id"):
+        c["cursor_session_id"] = result["cursor_session_id"]
+      c["llm_model"] = resolve_session_model(c.get("llm_model") or session_model)
+      c["llm_effort"] = resolve_session_effort(c.get("llm_effort") or session_effort)
+      c["current_model"] = model_used or session_model
+      c["current_effort"] = effort_used
+      if isinstance(context_tokens, int) and context_tokens >= 0:
+        c["current_context_tokens"] = context_tokens
+      if isinstance(context_window, int) and context_window > 0:
+        c["current_context_window"] = context_window
+      if c.get("memory_summary_pending"):
+        c["memory_summary_pending"] = False
+    update_conversation(conversation_id, set_runtime_metadata)
 
     assistant_raw_text = result["text"] or f"[No text returned; stopReason={result['stop_reason']}]"
     assistant_text, should_run_job = extract_run_job_action(assistant_raw_text, run_action_nonce)
@@ -1769,6 +2169,7 @@ def api_send_message(conversation_id: str):
 
     maybe_autoname(conversation_id)
     updated = update_conversation(conversation_id, lambda c: c.update({"status": "idle"}))
+    finish_agent_activity(conversation_id)
     return jsonify({
       "conversation": updated,
       "assistant": assistant_text,
@@ -1776,9 +2177,10 @@ def api_send_message(conversation_id: str):
       "triggered_job_id": triggered_job,
     })
   except Exception as e:
-    err_text = str(e).strip() or f"{type(e).__name__}: unknown error"
+    err_text = _compact_error_text(str(e).strip() or f"{type(e).__name__}: unknown error")
     note_usage_limit_error(err_text)
     update_conversation(conversation_id, lambda c: c.update({"status": "error", "last_error": err_text}))
+    finish_agent_activity(conversation_id, f"Run failed: {err_text}")
     return jsonify({"error": err_text}), 500
   finally:
     lock.release()
@@ -1790,6 +2192,8 @@ def index():
   policy = get_model_policy_status()
   html = UI_TEMPLATE_PATH.read_text(encoding="utf-8")
   html = html.replace("__WORKDIR_ROOT__", str(WORKDIR_ROOT))
+  html = html.replace("__DEFAULT_SESSION_MODEL__", SESSION_DEFAULT_MODEL)
+  html = html.replace("__DEFAULT_SESSION_EFFORT__", SESSION_DEFAULT_EFFORT)
   html = html.replace("__DEFAULT_MODEL__", str(policy.get("effective_model") or "default"))
   html = html.replace("__CONFIGURED_MODEL__", str(policy.get("configured_model") or "default"))
   return html, 200, {
@@ -1862,7 +2266,7 @@ def bootstrap_model_policy_from_store() -> None:
 def main():
     global SERVER_CWD, AGENT_PATH
 
-    parser = argparse.ArgumentParser(description="Cursor ACP conversation server")
+    parser = argparse.ArgumentParser(description="CurChat conversation server (Claude Code backbone)")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--cwd", default=DEFAULT_CWD, help="Default working directory for new sessions")
@@ -1870,15 +2274,30 @@ def main():
     args = parser.parse_args()
 
     SERVER_CWD = str(Path(args.cwd).expanduser())
-    AGENT_PATH = str(Path(args.agent_path).expanduser())
+    requested_agent = str(args.agent_path or "").strip()
+    requested_path = Path(requested_agent).expanduser()
+    if requested_path.is_absolute() or "/" in requested_agent:
+      AGENT_PATH = str(requested_path)
+    else:
+      AGENT_PATH = requested_agent
 
-    print("Cursor ACP server")
+    resolved_agent = ""
+    if Path(AGENT_PATH).exists():
+      resolved_agent = AGENT_PATH
+    else:
+      resolved_agent = shutil.which(AGENT_PATH) or ""
+    if resolved_agent:
+      AGENT_PATH = resolved_agent
+
+    print("CurChat server (Claude Code)")
+    print(f"curchat user: {CURCHAT_USER}")
     print(f"agent path : {AGENT_PATH}")
     print(f"default cwd: {SERVER_CWD}")
     print(f"store file : {STORE_PATH}")
+    print(f"task server: {ZHH_SERVER_URL}")
     print(f"url        : http://{args.host}:{args.port}")
 
-    if not Path(AGENT_PATH).exists():
+    if not AGENT_PATH or not Path(AGENT_PATH).exists():
         raise SystemExit(f"agent not found: {AGENT_PATH}")
     if not Path(SERVER_CWD).exists():
         raise SystemExit(f"cwd does not exist: {SERVER_CWD}")

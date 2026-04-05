@@ -24,7 +24,7 @@ zone_to_gs_name(){
 
 ckpt_to_gs(){
     path=$1
-    # path: /kmh-nfs-us-mount/staging/siri/PROJECT/other_parts
+    # path: /kmh-nfs-us-mount/staging/<WHO>/PROJECT/other_parts
     # output: gs://kmh-gcp-us-central2/qiao_zhicheng_hanhong_files/PROJECT/other_parts
 
     if [ -z "$WHO" ]; then

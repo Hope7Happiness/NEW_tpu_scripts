@@ -1,30 +1,68 @@
-# NEW: UI server
+# CurChat Quick Start
 
-The repository now includes a web UI server for conversation + task orchestration.
+CurChat is a web UI for multi-session Claude Code development + auto experiment iteration.
 
-## Start UI server
+## 0) Prerequisites
 
-1. Edit `config.json` (same directory as `cursor_server.py`) to set defaults:
-    - `ui_server.port`
-    - `ui_server.workdir_root`
-    - `ui_server.default_cwd`
-    - `ui_server.agent_path` (defaults to `~/.local/bin/agent`)
+- Python 3.9+
+- `tmux`
+- `curl`
+- Claude Code CLI (`claude`) installed and logged in
+- Node.js runtime new enough for Claude Code CLI (old Node like v12 will fail)
 
-2. Start server:
+## 1) Set runtime identity (required)
 
-    ```bash
-    python3 cursor_server.py
-    ```
+CurChat now uses `CURCHAT_USER` as the canonical username for repo/staging paths.
 
-3. Open browser at:
+```bash
+export CURCHAT_USER=<your_username>
+```
 
-    ```text
-    http://127.0.0.1:<port>
-    ```
+Backward compatibility:
+- Existing scripts still read `WHO`; if `WHO` is unset, they will fallback to `CURCHAT_USER`.
+
+## 2) Choose ports and set task server URL
+
+If default ports are occupied, pick your own ports:
+
+```bash
+export TASK_PORT=18080
+export CURCHAT_PORT=17860
+export CURCHAT_TASK_SERVER_URL="http://127.0.0.1:${TASK_PORT}"
+```
+
+## 3) Start task server (`server.py`)
+
+```bash
+python3 server.py --host 127.0.0.1 --port "${TASK_PORT}"
+```
+
+## 4) Start CurChat UI server (`cursor_server.py`)
+
+```bash
+python3 cursor_server.py --host 0.0.0.0 --port "${CURCHAT_PORT}" --agent-path claude --cwd .
+```
+
+Optional config file defaults are in `config.json` (`ui_server.port`, `ui_server.task_server_url`, `ui_server.workdir_root`, `ui_server.default_cwd`, `ui_server.agent_path`).
+
+## 5) Open frontend in browser
+
+Local machine:
+
+```text
+http://127.0.0.1:<CURCHAT_PORT>
+```
+
+With the example above:
+
+```text
+http://127.0.0.1:17860
+```
 
 Notes:
-- Upstream task service is fixed to `http://localhost:8080`.
-- You can still override port with env `CURSOR_SERVER_PORT` or CLI `--port`.
+- UI server port can also be overridden with env `CURSOR_SERVER_PORT` or CLI `--port`.
+- Task server URL can also be overridden with env `CURCHAT_TASK_SERVER_URL`.
+- For remote devices (phone/tablet), run UI with `--host 0.0.0.0` and use the machine IP/Tailscale IP.
 
 # 🚀 New TPU Scripts
 
@@ -52,12 +90,12 @@ TODO List:
     ```shell
     Traceback (most recent call last):
     ...
-    File "/kmh-nfs-ssd-us-mount/code/siri/google-cloud-sdk/lib/googlecloudsdk/
+    File "/kmh-nfs-ssd-us-mount/code/<CURCHAT_USER>/google-cloud-sdk/lib/googlecloudsdk/
     command_lib/util/ssh/ssh.py", line 1986, in Run
         raise CommandError(args[0], return_code=status)
     googlecloudsdk.command_lib.util.ssh.ssh.CommandError: [/usr/bin/ssh] exited
     with return code [255].
-    [Error] Job failed. Check logs in /kmh-nfs-ssd-us-mount/staging/siri/.../output.log
+    [Error] Job failed. Check logs in /kmh-nfs-ssd-us-mount/staging/<CURCHAT_USER>/.../output.log
     [Error] Job failed, first wait for a moment (feel free to ^C if you are here)...
     [INFO] Checking TPU status...
     [Info] Card is PREEMPTED, will re-apply and re-run.
@@ -74,7 +112,7 @@ TODO List:
     --config.logging.wandb_notes=sanity check... ? (y/N) y
     [INFO] staging files
     TPU is already in use. If you want to persist, use `zhh k` and try again.
-    [Info] Queued job /kmh-nfs-ssd-us-mount/staging/siri/...
+    [Info] Queued job /kmh-nfs-ssd-us-mount/staging/<CURCHAT_USER>/...
     /launch_20251102_183108_gitd0c7f12_0df5780d
     at 20251102_183118. Now, the program will stuck, which is EXPECTED. If you want to 
     dequeue, just press Ctrl+C.
