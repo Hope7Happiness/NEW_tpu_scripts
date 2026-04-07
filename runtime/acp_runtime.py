@@ -104,7 +104,7 @@ def _is_usage_limit_error(message: str) -> bool:
 
 
 USAGE_LIMIT_DATE_PATTERN = re.compile(r"ends on\s+(\d{1,2}/\d{1,2}/\d{4})", re.IGNORECASE)
-MODEL_FALLBACK_STATE_PATH = Path(__file__).with_name("model_fallback_state.json")
+MODEL_FALLBACK_STATE_PATH = Path(__file__).resolve().parent.parent / "data" / "model_fallback_state.json"
 _MODEL_STATE_LOCK = threading.Lock()
 
 

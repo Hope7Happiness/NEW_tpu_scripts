@@ -17,7 +17,7 @@ CODE_HOME="/kmh-nfs-ssd-us-mount/code/siri"
 
 # hint: ZHH_SCRIPT_ROOT will be defined in main.sh
 semail(){
-    python3 $ZHH_SCRIPT_ROOT/pemail.py "$@" || echo -e "\033[33m[Warning] Failed to send email.\033[0m"
+    python3 $ZHH_SCRIPT_ROOT/tools/pemail.py "$@" || echo -e "\033[33m[Warning] Failed to send email.\033[0m"
 }
 
 VM_UNFOUND_ERROR="\033[31m[Internal Error] VM_NAME is not set. Contact admin.\033[0m"

@@ -1,6 +1,6 @@
 set -euo pipefail
 
-FIFO=./myfifo
+FIFO=../myfifo
 [[ -p $FIFO ]] || mkfifo $FIFO
 
 role=${1:-}

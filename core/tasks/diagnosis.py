@@ -5,7 +5,7 @@ from pathlib import Path
 from core.config import COMPLETION_DIAGNOSIS_RULE_VERSION, ZHH_SERVER_URL
 from core.utils import utc_now, _tail_text_file, has_error_signature_in_log
 from core.conversation import update_conversation
-from tasks_runtime import fetch_task_output_log_path, fetch_task_log_payload, fetch_task_reference_payload
+from runtime.tasks_runtime import fetch_task_output_log_path, fetch_task_log_payload, fetch_task_reference_payload
 
 
 def diagnose_completed_jobs_once(conversation_id: str, conv: dict, jobs: list[dict]) -> tuple[dict, list[dict]]:

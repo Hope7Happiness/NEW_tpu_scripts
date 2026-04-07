@@ -5,7 +5,7 @@ from pathlib import Path
 
 from core.config import ZHH_SERVER_URL
 from core.utils import _tail_text_file, _extract_wandb_url_from_text, _extract_wandb_url_from_file
-from tasks_runtime import fetch_task_reference_payload, fetch_task_output_log_path, zhh_request
+from runtime.tasks_runtime import fetch_task_reference_payload, fetch_task_output_log_path, zhh_request
 from core.utils import utc_now
 from core.conversation import get_conversation, update_conversation
 

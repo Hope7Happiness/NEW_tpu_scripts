@@ -97,7 +97,7 @@ ZHH_SERVER_URL = str(
     or UI_CONFIG.get("task_server_url")
     or "http://localhost:8080"
 ).strip()
-UI_TEMPLATE_PATH = APP_ROOT / "cursor_server_ui.html"
+UI_TEMPLATE_PATH = APP_ROOT / "ui" / "index.html"
 
 # 会话默认设置
 ALLOWED_SESSION_MODELS = {"opus", "sonnet", "haiku", "composer-2", "composer-2-fast"}

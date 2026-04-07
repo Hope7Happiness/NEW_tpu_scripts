@@ -13,7 +13,7 @@ from core.conversation import (
 )
 from core.activity import get_agent_activity_payload
 from core.tasks import clear_all_task_unread_alerts
-from auto_fix_runtime import AutoFixCoordinator
+from runtime.auto_fix_runtime import AutoFixCoordinator
 
 
 def register_conversation_routes(app, get_agent_path_func, auto_fix_coordinator: AutoFixCoordinator):

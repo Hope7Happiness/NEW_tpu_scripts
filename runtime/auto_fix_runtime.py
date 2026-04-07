@@ -4,14 +4,14 @@ import threading
 import time
 from typing import Any, Callable
 
-from agent_action_protocol import (
+from runtime.agent_action_protocol import (
     build_auto_fix_prompt,
     extract_give_up_fix_action,
     extract_run_job_action,
     new_action_nonce,
     with_run_job_skill_instruction,
 )
-from tasks_runtime import build_prompt_with_task_refs
+from runtime.tasks_runtime import build_prompt_with_task_refs
 
 
 class AutoFixCoordinator:

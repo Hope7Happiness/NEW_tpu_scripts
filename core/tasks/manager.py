@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from core.config import ZHH_SERVER_URL
-from tasks_runtime import get_conversation_jobs as get_conversation_jobs_runtime
+from runtime.tasks_runtime import get_conversation_jobs as get_conversation_jobs_runtime
 
 
 def get_conversation_jobs(conversation: dict) -> list[dict]:

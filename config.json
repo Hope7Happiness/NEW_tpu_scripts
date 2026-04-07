@@ -6,6 +6,6 @@
     "workdir_root": null,
     "default_cwd": null,
     "agent_path": "npx -y node@20 /kmh-nfs-ssd-us-mount/code/siri/Anyclaude/dist/cli.js --dangerously-skip-permissions",
-    "store_file": "cursor_sessions.json"
+    "store_file": "data/cursor_sessions.json"
   }
 }

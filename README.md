@@ -37,10 +37,10 @@ export CURCHAT_TASK_SERVER_URL="http://127.0.0.1:${TASK_PORT}"
 python3 server.py --host 127.0.0.1 --port "${TASK_PORT}"
 ```
 
-## 4) Start CurChat UI server (`cursor_server.py`)
+## 4) Start CurChat UI server (`cursor_server_refactored.py`)
 
 ```bash
-python3 cursor_server.py --host 0.0.0.0 --port "${CURCHAT_PORT}" --agent-path claude --cwd .
+python3 cursor_server_refactored.py --host 0.0.0.0 --port "${CURCHAT_PORT}" --agent-path claude --cwd .
 ```
 
 Optional config file defaults are in `config.json` (`ui_server.port`, `ui_server.task_server_url`, `ui_server.workdir_root`, `ui_server.default_cwd`, `ui_server.agent_path`).
@@ -121,7 +121,7 @@ TODO List:
 ## 🔨 Setting Up
 
 - Setup [common.sh](/scripts/common.sh). 
-- Setup `./secret.json`. It should be in the format
+- Setup `./tools/secret.json`. It should be in the format
     ```json
     {
         "sender": "YOUR GMAIL ADDRESS",

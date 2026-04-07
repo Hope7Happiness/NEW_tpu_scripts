@@ -18,9 +18,9 @@ from core.conversation import (
 from core.conversation.store import append_message
 from core.activity import reset_agent_activity, finish_agent_activity, record_agent_event
 from core.tasks import get_conversation_jobs, diagnose_completed_jobs_once, update_task_alert_state
-from agent_action_protocol import extract_run_job_action, new_action_nonce, with_run_job_skill_instruction
-from acp_runtime import acp_prompt_session, note_usage_limit_error
-from tasks_runtime import build_prompt_with_task_refs
+from runtime.agent_action_protocol import extract_run_job_action, new_action_nonce, with_run_job_skill_instruction
+from runtime.acp_runtime import acp_prompt_session, note_usage_limit_error
+from runtime.tasks_runtime import build_prompt_with_task_refs
 
 
 def register_agent_routes(app, auto_fix_coordinator=None, get_agent_path_func=None):
@@ -238,5 +238,5 @@ def register_agent_routes(app, auto_fix_coordinator=None, get_agent_path_func=No
 
     @app.route("/api/runtime/model-policy", methods=["GET"])
     def api_model_policy():
-        from acp_runtime import get_model_policy_status
+        from runtime.acp_runtime import get_model_policy_status
         return jsonify(get_model_policy_status())

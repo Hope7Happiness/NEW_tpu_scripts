@@ -49,7 +49,7 @@ app = Flask(__name__)
 
 # Configuration
 SCRIPT_ROOT = Path(__file__).parent.absolute()
-DEFAULT_JOBS_FILE = SCRIPT_ROOT / "jobs.json"
+DEFAULT_JOBS_FILE = SCRIPT_ROOT / "data" / "jobs.json"
 SERVER_PORT = int(os.environ.get("ZHH_SERVER_PORT", "8080"))
 ACTIVE_SERVER_PORT = SERVER_PORT
 CURCHAT_USER = str(os.environ.get("CURCHAT_USER") or os.environ.get("WHO") or getpass.getuser()).strip()

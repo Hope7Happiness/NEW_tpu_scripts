@@ -39,11 +39,11 @@ from routes.tasks import register_task_routes
 from routes.agent import register_agent_routes
 
 # 导入外部模块
-from yaml_editor_api import register_ka_editor_routes, register_yaml_editor_routes
-from auto_fix_runtime import AutoFixCoordinator
-from acp_runtime import acp_prompt_session, get_model_policy_status, note_usage_limit_error
-from agent_action_protocol import extract_run_job_action, new_action_nonce, with_run_job_skill_instruction
-from tasks_runtime import zhh_request, build_prompt_with_task_refs
+from runtime.yaml_editor_api import register_ka_editor_routes, register_yaml_editor_routes
+from runtime.auto_fix_runtime import AutoFixCoordinator
+from runtime.acp_runtime import acp_prompt_session, get_model_policy_status, note_usage_limit_error
+from runtime.agent_action_protocol import extract_run_job_action, new_action_nonce, with_run_job_skill_instruction
+from runtime.tasks_runtime import zhh_request, build_prompt_with_task_refs
 
 # 全局变量（将在main中初始化）
 SERVER_CWD = DEFAULT_CWD
@@ -97,28 +97,30 @@ def serve_ui_asset(filename: str):
     requested = Path(filename)
     if requested.suffix.lower() not in allowed_suffixes:
         return {"error": "unsupported asset type"}, 404
-    asset_path = (APP_ROOT / requested).resolve()
+    asset_root = APP_ROOT / "ui" / "assets"
+    asset_path = (asset_root / requested).resolve()
     try:
-        asset_path.relative_to(APP_ROOT)
+        asset_path.relative_to(asset_root)
     except ValueError:
         return {"error": "invalid asset path"}, 404
     if not asset_path.exists() or not asset_path.is_file():
         return {"error": "asset not found"}, 404
-    return send_from_directory(APP_ROOT, str(requested))
+    return send_from_directory(asset_root, str(requested))
 
 
 @app.route("/favicon.ico")
 def favicon_alias():
     """favicon别名"""
-    favicon_path = APP_ROOT / "favicon.ico"
+    assets_root = APP_ROOT / "ui" / "assets"
+    favicon_path = assets_root / "favicon.ico"
     if favicon_path.exists() and favicon_path.is_file():
-        return send_from_directory(APP_ROOT, "favicon.ico")
-    icon_path = APP_ROOT / "curchat-64.png"
+        return send_from_directory(assets_root, "favicon.ico")
+    icon_path = assets_root / "curchat-64.png"
     if icon_path.exists() and icon_path.is_file():
-        return send_from_directory(APP_ROOT, "curchat-64.png")
-    icon_path = APP_ROOT / "curchat.png"
+        return send_from_directory(assets_root, "curchat-64.png")
+    icon_path = assets_root / "curchat.png"
     if icon_path.exists() and icon_path.is_file():
-        return send_from_directory(APP_ROOT, "curchat.png")
+        return send_from_directory(assets_root, "curchat.png")
     return {"error": "favicon not found"}, 404
 
 
