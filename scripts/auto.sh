@@ -139,6 +139,17 @@ auto_select(){
             # fi
         fi
 
+        # or, if already exist python scripts running: two cases, python *.py or python -m xxx
+        hash_tag=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 6 | head -n 1)
+        has_script=$(
+            $CUSTOM_GCLOUD_EXE compute tpus tpu-vm ssh $vm_name --zone $zone --command "ps -ef | grep python | grep '\.py' | grep -v $hash_tag" 2>/dev/null; \
+            $CUSTOM_GCLOUD_EXE compute tpus tpu-vm ssh $vm_name --zone $zone --command "ps -ef | grep python | grep '\-m' | grep -v $hash_tag" 2>/dev/null
+        )
+        if [ ! -z "$has_script" ]; then
+            echo -e "[WARNING] Found misjudged busy TPU VM $vm_name in zone $zone (running script: $(echo "$has_script" | head -n 1))."
+            continue
+        fi
+
         echo -e "Found TPU VM: \033[32m$vm_name @ $zone\033[0m (type $tpu_cls-$tpu_type)"
         export VM_NAME=$vm_name
         export ZONE=$zone

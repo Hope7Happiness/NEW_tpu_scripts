@@ -166,9 +166,11 @@ deregister_tpu(){
 
     sudo rm -rf $SSCRIPT_HOME/$1
 
-    # also remove lock file
+    # also remove lock files
     vm_name=$1
-    sudo rm -rf "/kmh-nfs-ssd-us-mount/code/qiao/tpu_lock/zak_${vm_name}_*"
+    sudo find /kmh-nfs-ssd-us-mount/code/qiao/tpu_lock -maxdepth 1 -type f -name "zak_${vm_name}_*" -delete
+    echo remaining locks:
+    ls /kmh-nfs-ssd-us-mount/code/qiao/tpu_lock/ | grep "${vm_name}"
 }
 
 log_tpu_check_result(){

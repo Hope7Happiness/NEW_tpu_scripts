@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import shlex
 import threading
 import time
 from datetime import date, datetime, timedelta
@@ -27,6 +28,65 @@ def _compact_error_detail(text: str, limit: int = 900) -> str:
     if len(compact) <= limit:
         return compact
     return compact[: limit - 3] + "..."
+
+
+def _extract_result_error_detail(result_payload: dict, raw_tail: list[str], stderr_text: str) -> str:
+    candidates: list[str] = []
+
+    for key in ("result", "error", "message", "detail"):
+        value = result_payload.get(key)
+        if value is None:
+            continue
+        text = str(value).strip()
+        if text:
+            candidates.append(text)
+
+    for line in reversed(raw_tail[-80:]):
+        s = str(line or "").strip()
+        if not s:
+            continue
+        try:
+            evt = json.loads(s)
+        except Exception:
+            continue
+        if not isinstance(evt, dict):
+            continue
+
+        evt_error = str(evt.get("error") or "").strip()
+        if evt_error:
+            candidates.append(evt_error)
+
+        message = evt.get("message")
+        if isinstance(message, dict):
+            content = message.get("content")
+            if isinstance(content, list):
+                for block in content:
+                    if not isinstance(block, dict):
+                        continue
+                    if str(block.get("type") or "").strip().lower() != "text":
+                        continue
+                    txt = str(block.get("text") or "").strip()
+                    if txt:
+                        candidates.append(txt)
+
+    if stderr_text and str(stderr_text).strip():
+        candidates.append(str(stderr_text))
+
+    tail_plain = "\n".join([str(x or "").strip() for x in raw_tail[-40:] if str(x or "").strip()])
+    if tail_plain:
+        candidates.append(tail_plain)
+
+    for candidate in candidates:
+        compact = _compact_error_detail(candidate)
+        if compact and compact != "unknown error":
+            return compact
+
+    subtype = str(result_payload.get("subtype") or "").strip()
+    stop_reason = str(result_payload.get("stop_reason") or "").strip()
+    if subtype or stop_reason:
+        return _compact_error_detail(f"subtype={subtype or '-'}, stop_reason={stop_reason or '-'}")
+
+    return _compact_error_detail("")
 
 
 def _is_usage_limit_error(message: str) -> bool:
@@ -117,11 +177,11 @@ def note_usage_limit_error(message: str) -> bool:
 
 
 def get_model_policy_status() -> dict:
-    configured_model = _first_nonempty_env(["CLAUDE_CODE_MODEL", "CURSOR_CLI_MODEL"], default="opus") or "opus"
+    configured_model = _first_nonempty_env(["CLAUDE_CODE_MODEL", "CURSOR_CLI_MODEL", "CURCHAT_DEFAULT_MODEL"], default="composer-2-fast") or "composer-2-fast"
     until = _forced_auto_until_date()
     active = _is_force_auto_active()
     fallback_model = _limit_fallback_model()
-    effective_model = fallback_model if active else configured_model
+    effective_model = fallback_model if _should_force_fallback(configured_model) else configured_model
     days_remaining = 0
     force_until_text = ""
     if until is not None:
@@ -137,11 +197,11 @@ def get_model_policy_status() -> dict:
 
 
 def _fallback_models_from_env() -> list[str]:
-    raw = _first_nonempty_env(["CLAUDE_CODE_FALLBACK_MODELS", "CURSOR_CLI_FALLBACK_MODELS"], default="sonnet,haiku")
+    raw = _first_nonempty_env(["CLAUDE_CODE_FALLBACK_MODELS", "CURSOR_CLI_FALLBACK_MODELS"], default="composer-2-fast,composer-2,sonnet,haiku")
     if not raw:
-        return ["sonnet", "haiku"]
+        return ["composer-2-fast", "composer-2", "sonnet", "haiku"]
     values = [item.strip() for item in raw.split(",") if item.strip()]
-    return values or ["sonnet", "haiku"]
+    return values or ["composer-2-fast", "composer-2", "sonnet", "haiku"]
 
 
 def _limit_fallback_model() -> str:
@@ -154,7 +214,15 @@ def _limit_fallback_model() -> str:
     fallbacks = _fallback_models_from_env()
     if fallbacks:
         return fallbacks[0]
-    return "sonnet"
+    return "composer-2-fast"
+
+
+def _should_force_fallback(configured_model: str) -> bool:
+    model = str(configured_model or "").strip().lower()
+    if not _is_force_auto_active():
+        return False
+    # 仅在默认/Opus链路上启用自动fallback；显式指定composer等模型时不覆盖。
+    return model in {"", "default", "opus", "claude-opus-4", "claude-opus-4-1", "claude-opus-4-6"}
 
 
 def _max_turns_value() -> int:
@@ -253,7 +321,8 @@ def _build_cli_command(
     effort: str | None,
     force_allow: bool,
 ) -> list[str]:
-    cmd = [agent_path]
+    parts = shlex.split(str(agent_path or "").strip())
+    cmd = parts if parts else [str(agent_path or "").strip()]
     if force_allow:
         cmd.extend(["--permission-mode", "bypassPermissions"])
     if session_id:
@@ -389,7 +458,7 @@ def _run_cli_prompt(
         raise RuntimeError(f"session/prompt failed: {detail}")
 
     if bool(result_payload.get("is_error")):
-        detail = _compact_error_detail(str(result_payload.get("result") or result_payload.get("error") or "unknown error"))
+        detail = _extract_result_error_detail(result_payload, raw_tail, stderr_text)
         raise RuntimeError(f"session/prompt failed (result error): {detail}")
 
     final_session_id = str(result_payload.get("session_id") or init_session_id or session_id or "").strip()
@@ -422,9 +491,9 @@ def acp_prompt_session(
     on_client_ready: Callable[[CLIPromptCanceler], None] | None = None,
     on_progress_event: Callable[[dict], None] | None = None,
 ) -> dict:
-    configured_model = str(preferred_model or "").strip() or _first_nonempty_env(["CLAUDE_CODE_MODEL", "CURSOR_CLI_MODEL"], default="opus")
+    configured_model = str(preferred_model or "").strip() or _first_nonempty_env(["CLAUDE_CODE_MODEL", "CURSOR_CLI_MODEL", "CURCHAT_DEFAULT_MODEL"], default="composer-2-fast")
     configured_effort = str(effort or "").strip().lower() or None
-    model_id = _limit_fallback_model() if _is_force_auto_active() else configured_model
+    model_id = _limit_fallback_model() if _should_force_fallback(configured_model) else configured_model
     force_allow_env = _first_nonempty_env(["CLAUDE_CODE_BYPASS_PERMISSIONS", "CURSOR_CLI_FORCE_ALLOW"], default="1").lower()
     force_allow = force_allow_env not in {"0", "false", "no", "off"}
     resolved_cwd = str(Path(cwd).expanduser())

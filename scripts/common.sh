@@ -10,8 +10,8 @@ if [ -z "$CURCHAT_USER" ]; then
     CURCHAT_USER="$(whoami)"
 fi
 export CURCHAT_USER
-export WHO="${WHO:-$CURCHAT_USER}"
-CODE_HOME="/kmh-nfs-ssd-us-mount/code/$CURCHAT_USER"
+# export WHO="${WHO:-$CURCHAT_USER}"
+CODE_HOME="/kmh-nfs-ssd-us-mount/code/siri"
 
 ##### END OF YOUR SETTINGS #####
 
@@ -23,4 +23,4 @@ semail(){
 VM_UNFOUND_ERROR="\033[31m[Internal Error] VM_NAME is not set. Contact admin.\033[0m"
 ZONE_UNFOUND_ERROR="\033[31m[Internal Error] ZONE is not set or incorrect. Contact admin.\033[0m"
 
-CUSTOM_GCLOUD_EXE="$CODE_HOME/google-cloud-sdk/bin/gcloud"
+CUSTOM_GCLOUD_EXE="/kmh-nfs-ssd-us-mount/code/siri/google-cloud-sdk/bin/gcloud"

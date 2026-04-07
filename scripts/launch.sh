@@ -372,8 +372,10 @@ while_run(){
         sleep 60
 
         echo "[INFO] Checking TPU status..."
-        if has_tpu $VM_NAME $ZONE; then
+        # if has tpu and the return code is not 42
+        # if has_tpu $VM_NAME $ZONE; then
         # if ! is_preempted $VM_NAME $ZONE; then
+        if [ $ret -ne 42 ] && has_tpu $VM_NAME $ZONE; then
             # note: better make the code more likely to enter this branch
             # this will avoid infinite loop
 

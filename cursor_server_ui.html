@@ -39,7 +39,8 @@ body {
   background: radial-gradient(1200px 600px at 22% -20%, #1a2a44 0%, transparent 58%), var(--bg);
   color: var(--text);
   font-family: Inter, system-ui, -apple-system, sans-serif;
-  height: 100vh;
+  height: 100dvh;
+  min-height: 100dvh;
   display: grid;
   grid-template-columns: 280px 1fr;
   color-scheme: dark;
@@ -808,6 +809,7 @@ body {
   padding: 12px 14px 16px;
   white-space: pre-wrap;
   word-break: break-word;
+  min-height: 220px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   font-size: 12px;
   line-height: 1.45;
@@ -1517,11 +1519,19 @@ button:disabled {
   body {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;
+    height: 100dvh;
+    min-height: 100dvh;
   }
   #sidebar {
     border-right: 0;
     border-bottom: 1px solid var(--line);
     max-height: 38vh;
+  }
+  body.mobile-sidebar-hidden {
+    grid-template-rows: 1fr;
+  }
+  body.mobile-sidebar-hidden #sidebar {
+    display: none;
   }
   #conv-list {
     display: flex;
@@ -1539,6 +1549,9 @@ button:disabled {
   }
   #view-tabs {
     flex-wrap: wrap;
+  }
+  #toggle-sidebar-btn {
+    display: inline-flex !important;
   }
   #quick-actions {
     width: 100%;
@@ -1568,6 +1581,10 @@ button:disabled {
     margin-left: 0;
     width: 100%;
   }
+}
+
+#toggle-sidebar-btn {
+  display: none;
 }
 
 @media (max-width: 640px) {
@@ -1636,6 +1653,7 @@ button:disabled {
         <div id="meta">Create a new session first.</div>
       </div>
       <div id="topbar-actions">
+        <button id="toggle-sidebar-btn" onclick="toggleMobileSidebar()">Hide sessions</button>
         <button id="compact-btn" onclick="compactCurrentConversation()" disabled>Compact</button>
         <button id="delete-btn" onclick="deleteCurrentConversation()" disabled>Delete session</button>
       </div>
@@ -1804,6 +1822,7 @@ let currentConversation = null;
 let currentView = 'chat';
 let currentTasks = [];
 let taskStatusFilter = 'all';
+let mobileSidebarHidden = false;
 let taskStackGroups = [];
 let conversationDrafts = {};
 let conversationTaskRefs = {};
@@ -1842,7 +1861,7 @@ const CONFIGURED_MODEL = '__CONFIGURED_MODEL__';
 const FILESYSTEM_ROOT = '/';
 const DEFAULT_SESSION_MODEL = '__DEFAULT_SESSION_MODEL__';
 const DEFAULT_SESSION_EFFORT = '__DEFAULT_SESSION_EFFORT__';
-const ALLOWED_SESSION_MODELS = ['opus', 'sonnet', 'haiku'];
+const ALLOWED_SESSION_MODELS = ['composer-2-fast', 'composer-2', 'opus', 'sonnet', 'haiku'];
 const ALLOWED_SESSION_EFFORTS = ['low', 'medium', 'high', 'max'];
 let runtimeModelPolicy = {
   configured_model: CONFIGURED_MODEL || 'default',
@@ -1971,7 +1990,7 @@ function renderModelPolicyBanner() {
     el.textContent = `Model: ${effective} (configured: ${configured})`;
     return;
   }
-  el.textContent = `Model: ${effective} (default: opus)`;
+  el.textContent = `Model: ${effective} (default: ${DEFAULT_SESSION_MODEL})`;
 }
 
 async function refreshModelPolicy() {
@@ -2675,6 +2694,9 @@ async function pollTaskNotifications() {
     updateConversationSnapshots(latest);
     renderConversationList(latest);
     refreshTaskTabAlert();
+    if (currentView === 'tasks' && currentId) {
+      await loadTasksForCurrentConversation(true);
+    }
   } catch (err) {
     console.warn('Task notification poll failed:', err);
   } finally {
@@ -2748,6 +2770,31 @@ function switchTab(view) {
     kaTab.classList.remove('active');
     chatTab.classList.add('active');
   }
+}
+
+function updateMobileSidebarToggle() {
+  const btn = document.getElementById('toggle-sidebar-btn');
+  if (!btn) return;
+  const mobile = window.matchMedia('(max-width: 860px)').matches;
+  btn.style.display = mobile ? 'inline-flex' : 'none';
+  if (!mobile) {
+    document.body.classList.remove('mobile-sidebar-hidden');
+    mobileSidebarHidden = false;
+    btn.textContent = 'Hide sessions';
+    return;
+  }
+  if (mobileSidebarHidden) {
+    document.body.classList.add('mobile-sidebar-hidden');
+    btn.textContent = 'Show sessions';
+  } else {
+    document.body.classList.remove('mobile-sidebar-hidden');
+    btn.textContent = 'Hide sessions';
+  }
+}
+
+function toggleMobileSidebar() {
+  mobileSidebarHidden = !mobileSidebarHidden;
+  updateMobileSidebarToggle();
 }
 
 function renderKaUnavailable(text) {
@@ -3347,11 +3394,12 @@ function openLogModal(jobId, content, source = '') {
   title.textContent = sourceText
     ? `Task Log · ${jobId} · ${sourceText}`
     : `Task Log · ${jobId}`;
-  body.textContent = String(content || '[no log output]');
+  const rawContent = String(content == null ? '' : content);
+  body.textContent = rawContent.trim() ? rawContent : '[no log output]';
   backdrop.classList.add('show');
   const scrollContainer = document.getElementById('log-modal-body');
   if (scrollContainer) {
-    scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    scrollContainer.scrollTop = 0;
   }
 }
 
@@ -4433,10 +4481,18 @@ async function viewTaskLog(jobId) {
   try {
     setStatus('Fetching task log...', 'busy');
     const data = await api(`/api/conversations/${currentId}/tasks/${jobId}/log?lines=400`);
-    const logText = data.log || '[no log output]';
+    const rawLog = String(data && data.log != null ? data.log : '');
+    const sourceText = String((data && data.source) || '-');
+    const pathText = String((data && data.log_path) || '-');
+    const metaLine = `[meta] len=${rawLog.length} source=${sourceText} path=${pathText}`;
+    const logText = rawLog.trim()
+      ? `${metaLine}\n\n${rawLog}`
+      : `${metaLine}\n\n[no log output]`;
     openLogModal(jobId, logText, data.source || '');
+    await api(`/api/conversations/${currentId}/tasks/mark-all-read`, { method: 'POST' });
     await loadTasksForCurrentConversation();
     await loadConversations();
+    refreshTaskTabAlert();
     setStatus('Log fetched.', 'success');
   } catch (err) {
     setStatus('Fetch log failed: ' + err.message, 'error');
@@ -4514,6 +4570,8 @@ function shortJobId(jobId) {
 }
 
 bootstrapConversations();
+updateMobileSidebarToggle();
+window.addEventListener('resize', updateMobileSidebarToggle);
 window.addEventListener('pointerdown', ensureNotificationAudioUnlocked, { passive: true });
 window.addEventListener('keydown', ensureNotificationAudioUnlocked);
 document.addEventListener('visibilitychange', () => {

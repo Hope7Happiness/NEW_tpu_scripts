@@ -108,10 +108,15 @@ check_env(){
     result=$(timeout 60s $CUSTOM_GCLOUD_EXE compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
     --worker=all --command "$ENV_CHECK" 2>&1 || true)
     # first, eliminate module not found
-    if [[ $result == *"No such file"*  || $result == *"ModuleNotFoundError"* ]]; then
-        echo "Environment is not proper setup: Have not mount disk or Cannot find torch/jax. Use \`SCRIPT_DEBUG=1\` for more info."
+    if [[ $result == *"ModuleNotFoundError"* ]]; then
+        echo "Environment is not proper setup: Cannot find torch/jax. Use \`SCRIPT_DEBUG=1\` for more info."
         return 4
     fi
+    if [[ $result == *"No such file"* ]]; then
+        echo "Environment is not proper setup: Have not mount disk. Use \`SCRIPT_DEBUG=1\` for more info."
+        return 4
+    fi
+
     # if not IS_V6, assert miniforge3 is in result
     if [ ! $IS_V6 -eq 1 ]; then
         if [[ $result =~ *"local"* ]]; then
@@ -274,6 +279,7 @@ run_setup_script(){
     if use_v6_script $VM_NAME; then
         gs_str=$(zone_to_gs $ZONE)
         json_file=$(get_service_json)
+        hash_tag=$(cat /dev/urandom | tr -dc 'a-z0-9' | fold -w 6 | head -n 1)
         if use_v5_env $VM_NAME; then
             PIP_INSTALL_STR="
 
@@ -285,9 +291,7 @@ run_setup_script(){
             gcloud auth activate-service-account --key-file=$json_file
 
             # kill all existing gsutil processes
-            # THIS TAG IS USED FOR NOT KILLING ITSELF: TAG0123456
-            sudo pkill -f gsutil || true
-            ps -ef | grep gsutil | grep cp | grep -v TAG0123456 | grep -v grep | awk '{ print \" sudo kill -9 \" \$2 }' | sh || true
+            ps -ef | grep gsutil | grep cp | grep -v $hash_tag | grep -v grep | awk '{ print \" sudo kill -9 \" \$2 }' | sh || true
             ps -ef | grep gsutil || true
 
             /snap/bin/gsutil -m cp -r $gs_str/hanhong/v5_wheels_new.tar.gz ./wheels.tar.gz
@@ -303,8 +307,7 @@ run_setup_script(){
             gcloud auth activate-service-account --key-file=$json_file
 
             # kill all existing gsutil processes
-            # THIS TAG IS USED FOR NOT KILLING ITSELF: TAG0123456
-            ps -ef | grep gsutil | grep cp | grep -v TAG0123456 | grep -v grep | awk '{ print \" sudo kill -9 \" \$2 }' | sh || true
+            ps -ef | grep gsutil | grep cp | grep -v $hash_tag | grep -v grep | awk '{ print \" sudo kill -9 \" \$2 }' | sh || true
             ps -ef | grep gsutil || true
 
             /snap/bin/gsutil -m cp -r $gs_str/hanhong/v6_wheels_jax437.tar.gz ./wheels.tar.gz

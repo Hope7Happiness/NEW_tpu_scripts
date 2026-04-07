@@ -5,7 +5,7 @@
     "task_server_url": "http://localhost:8080",
     "workdir_root": null,
     "default_cwd": null,
-    "agent_path": "claude",
+    "agent_path": "npx -y node@20 /kmh-nfs-ssd-us-mount/code/siri/Anyclaude/dist/cli.js --dangerously-skip-permissions",
     "store_file": "cursor_sessions.json"
   }
 }
