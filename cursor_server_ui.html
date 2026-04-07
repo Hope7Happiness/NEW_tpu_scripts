@@ -708,6 +708,7 @@ body {
   font-weight: 700;
   flex-shrink: 0;
 }
+#toggle-sidebar-btn,
 #compact-btn {
   border: 1px solid rgba(125, 171, 255, .34);
   background: rgba(97, 153, 255, .14);
@@ -718,6 +719,7 @@ body {
   font-weight: 700;
   flex-shrink: 0;
 }
+#toggle-sidebar-btn:disabled,
 #compact-btn:disabled,
 #delete-btn:disabled {
   opacity: .5;
@@ -1516,11 +1518,35 @@ button:disabled {
 }
 
 @media (max-width: 860px) {
+  html,
+  body {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
   body {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;
-    height: 100dvh;
-    min-height: 100dvh;
+    height: 100svh;
+    min-height: 100svh;
+  }
+  #main {
+    min-height: 0;
+    overflow: hidden;
+  }
+  #panel-chat,
+  #panel-tasks,
+  #panel-yaml,
+  #panel-ka {
+    min-height: 0;
+    overflow: hidden;
+  }
+  #messages,
+  #tasks-list,
+  #yaml-editor-wrap,
+  #ka-editor-wrap {
+    min-height: 0;
+    overflow-y: auto;
   }
   #sidebar {
     border-right: 0;
@@ -1608,8 +1634,11 @@ button:disabled {
   #topbar-actions {
     width: 100%;
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 8px;
+  }
+  #toggle-sidebar-btn {
+    width: 100%;
   }
   #delete-btn {
     width: 100%;
@@ -1653,7 +1682,7 @@ button:disabled {
         <div id="meta">Create a new session first.</div>
       </div>
       <div id="topbar-actions">
-        <button id="toggle-sidebar-btn" onclick="toggleMobileSidebar()">Hide sessions</button>
+        <button id="toggle-sidebar-btn" onclick="toggleMobileSidebar()">Hide</button>
         <button id="compact-btn" onclick="compactCurrentConversation()" disabled>Compact</button>
         <button id="delete-btn" onclick="deleteCurrentConversation()" disabled>Delete session</button>
       </div>
@@ -2780,15 +2809,15 @@ function updateMobileSidebarToggle() {
   if (!mobile) {
     document.body.classList.remove('mobile-sidebar-hidden');
     mobileSidebarHidden = false;
-    btn.textContent = 'Hide sessions';
+    btn.textContent = 'Hide';
     return;
   }
   if (mobileSidebarHidden) {
     document.body.classList.add('mobile-sidebar-hidden');
-    btn.textContent = 'Show sessions';
+    btn.textContent = 'Show';
   } else {
     document.body.classList.remove('mobile-sidebar-hidden');
-    btn.textContent = 'Hide sessions';
+    btn.textContent = 'Hide';
   }
 }
 
