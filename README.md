@@ -1,6 +1,6 @@
-# CurChat Quick Start
+# WeCode Quick Start
 
-CurChat is a web UI for multi-session Claude Code development + auto experiment iteration.
+WeCode is a web UI for multi-session Claude Code development + auto experiment iteration.
 
 ## 0) Prerequisites
 
@@ -12,14 +12,14 @@ CurChat is a web UI for multi-session Claude Code development + auto experiment 
 
 ## 1) Set runtime identity (required)
 
-CurChat now uses `CURCHAT_USER` as the canonical username for repo/staging paths.
+WeCode uses `WECODE_USER` as the canonical username for repo/staging paths.
 
 ```bash
-export CURCHAT_USER=<your_username>
+export WECODE_USER=<your_username>
 ```
 
 Backward compatibility:
-- Existing scripts still read `WHO`; if `WHO` is unset, they will fallback to `CURCHAT_USER`.
+- Existing scripts still read `WHO`; if `WHO` is unset, they fall back to `WECODE_USER`.
 
 ## 2) Choose ports and set task server URL
 
@@ -27,9 +27,11 @@ If default ports are occupied, pick your own ports:
 
 ```bash
 export TASK_PORT=18080
-export CURCHAT_PORT=17860
-export CURCHAT_TASK_SERVER_URL="http://127.0.0.1:${TASK_PORT}"
+export WECODE_PORT=17860
+export WECODE_TASK_SERVER_URL="http://127.0.0.1:${TASK_PORT}"
 ```
+
+(You can keep using a shell variable named `WECODE_PORT`. The app reads `WECODE_TASK_SERVER_URL`.)
 
 ## 3) Start task server (`server.py`)
 
@@ -37,10 +39,10 @@ export CURCHAT_TASK_SERVER_URL="http://127.0.0.1:${TASK_PORT}"
 python3 server.py --host 127.0.0.1 --port "${TASK_PORT}"
 ```
 
-## 4) Start CurChat UI server (`cursor_server_refactored.py`)
+## 4) Start WeCode UI server (`cursor_server_refactored.py`)
 
 ```bash
-python3 cursor_server_refactored.py --host 0.0.0.0 --port "${CURCHAT_PORT}" --agent-path claude --cwd .
+python3 cursor_server_refactored.py --host 0.0.0.0 --port "${WECODE_PORT}" --agent-path claude --cwd .
 ```
 
 Optional config file defaults are in `config.json` (`ui_server.port`, `ui_server.task_server_url`, `ui_server.workdir_root`, `ui_server.default_cwd`, `ui_server.agent_path`).
@@ -50,7 +52,7 @@ Optional config file defaults are in `config.json` (`ui_server.port`, `ui_server
 Local machine:
 
 ```text
-http://127.0.0.1:<CURCHAT_PORT>
+http://127.0.0.1:<WECODE_PORT>
 ```
 
 With the example above:
@@ -60,8 +62,8 @@ http://127.0.0.1:17860
 ```
 
 Notes:
-- UI server port can also be overridden with env `CURSOR_SERVER_PORT` or CLI `--port`.
-- Task server URL can also be overridden with env `CURCHAT_TASK_SERVER_URL`.
+- UI server port: env `CURSOR_SERVER_PORT`, or `WECODE_UI_PORT` / `WECODE_PORT`, or CLI `--port`.
+- Task server URL can also be overridden with env `WECODE_TASK_SERVER_URL`.
 - For remote devices (phone/tablet), run UI with `--host 0.0.0.0` and use the machine IP/Tailscale IP.
 
 # 🚀 New TPU Scripts
@@ -90,12 +92,12 @@ TODO List:
     ```shell
     Traceback (most recent call last):
     ...
-    File "/kmh-nfs-ssd-us-mount/code/<CURCHAT_USER>/google-cloud-sdk/lib/googlecloudsdk/
+    File "/kmh-nfs-ssd-us-mount/code/<WECODE_USER>/google-cloud-sdk/lib/googlecloudsdk/
     command_lib/util/ssh/ssh.py", line 1986, in Run
         raise CommandError(args[0], return_code=status)
     googlecloudsdk.command_lib.util.ssh.ssh.CommandError: [/usr/bin/ssh] exited
     with return code [255].
-    [Error] Job failed. Check logs in /kmh-nfs-ssd-us-mount/staging/<CURCHAT_USER>/.../output.log
+    [Error] Job failed. Check logs in /kmh-nfs-ssd-us-mount/staging/<WECODE_USER>/.../output.log
     [Error] Job failed, first wait for a moment (feel free to ^C if you are here)...
     [INFO] Checking TPU status...
     [Info] Card is PREEMPTED, will re-apply and re-run.
@@ -112,7 +114,7 @@ TODO List:
     --config.logging.wandb_notes=sanity check... ? (y/N) y
     [INFO] staging files
     TPU is already in use. If you want to persist, use `zhh k` and try again.
-    [Info] Queued job /kmh-nfs-ssd-us-mount/staging/<CURCHAT_USER>/...
+    [Info] Queued job /kmh-nfs-ssd-us-mount/staging/<WECODE_USER>/...
     /launch_20251102_183108_gitd0c7f12_0df5780d
     at 20251102_183118. Now, the program will stuck, which is EXPECTED. If you want to 
     dequeue, just press Ctrl+C.
@@ -224,7 +226,7 @@ Optional env vars:
 
    ```bash
     zhh qq
-   ```
+    ```
 
 4. deregister a tpu
 
@@ -238,6 +240,6 @@ Optional env vars:
 
 5. Run matmul to keep the TPU alive (only support V6 tpus)
 
-   ```bash
-   zhh mm
-   ```
+    ```bash
+    zhh mm
+    ```

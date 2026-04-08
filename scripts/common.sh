@@ -1,16 +1,16 @@
 ##### YOUR SETTINGS #####
 
 CONDA_PY_PATH="/kmh-nfs-ssd-us-mount/code/hanhong/miniforge3/bin/python3" # your conda python path
-# STAGING_NAME=<CURCHAT_USER> # your stage dir is at /kmh-nfs-ssd-us-mount/staging/<STAGING_NAME> # CURRENT DISABLED
+# STAGING_NAME=<WECODE_USER> # your stage dir is at /kmh-nfs-ssd-us-mount/staging/<STAGING_NAME> # CURRENT DISABLED
 GS_STAGING_NAME=qiao_zhicheng_hanhong_files # your gs staging dir is at gs://kmh-gcp-us-central2/<GS_STAGING_NAME>
 TPU_DEFAULT_NAME=kangyang
 SSCRIPT_HOME=/kmh-nfs-ssd-us-mount/staging/.sscript # the place that stores your tpu infos
-CURCHAT_USER="${CURCHAT_USER:-${WHO:-}}"
-if [ -z "$CURCHAT_USER" ]; then
-    CURCHAT_USER="$(whoami)"
+WECODE_USER="${WECODE_USER:-${CURCHAT_USER:-${WHO:-}}}"
+if [ -z "$WECODE_USER" ]; then
+    WECODE_USER="$(whoami)"
 fi
-export CURCHAT_USER
-# export WHO="${WHO:-$CURCHAT_USER}"
+export WECODE_USER
+# export WHO="${WHO:-$WECODE_USER}"
 CODE_HOME="/kmh-nfs-ssd-us-mount/code/siri"
 
 ##### END OF YOUR SETTINGS #####

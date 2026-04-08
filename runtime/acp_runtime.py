@@ -177,7 +177,7 @@ def note_usage_limit_error(message: str) -> bool:
 
 
 def get_model_policy_status() -> dict:
-    configured_model = _first_nonempty_env(["CLAUDE_CODE_MODEL", "CURSOR_CLI_MODEL", "CURCHAT_DEFAULT_MODEL"], default="composer-2-fast") or "composer-2-fast"
+    configured_model = _first_nonempty_env(["CLAUDE_CODE_MODEL", "CURSOR_CLI_MODEL", "WECODE_DEFAULT_MODEL", "CURCHAT_DEFAULT_MODEL"], default="composer-2-fast") or "composer-2-fast"
     until = _forced_auto_until_date()
     active = _is_force_auto_active()
     fallback_model = _limit_fallback_model()
@@ -491,7 +491,7 @@ def acp_prompt_session(
     on_client_ready: Callable[[CLIPromptCanceler], None] | None = None,
     on_progress_event: Callable[[dict], None] | None = None,
 ) -> dict:
-    configured_model = str(preferred_model or "").strip() or _first_nonempty_env(["CLAUDE_CODE_MODEL", "CURSOR_CLI_MODEL", "CURCHAT_DEFAULT_MODEL"], default="composer-2-fast")
+    configured_model = str(preferred_model or "").strip() or _first_nonempty_env(["CLAUDE_CODE_MODEL", "CURSOR_CLI_MODEL", "WECODE_DEFAULT_MODEL", "CURCHAT_DEFAULT_MODEL"], default="composer-2-fast")
     configured_effort = str(effort or "").strip().lower() or None
     model_id = _limit_fallback_model() if _should_force_fallback(configured_model) else configured_model
     force_allow_env = _first_nonempty_env(["CLAUDE_CODE_BYPASS_PERMISSIONS", "CURSOR_CLI_FORCE_ALLOW"], default="1").lower()

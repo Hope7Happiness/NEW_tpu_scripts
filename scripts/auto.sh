@@ -12,7 +12,7 @@ trap_send_key(){
     trap "$CMD" EXIT
 }
 
-TOU_RESULT_PATH="/kmh-nfs-ssd-us-mount/code/${CURCHAT_USER:-${WHO:-$(whoami)}}/tou_result.txt"
+TOU_RESULT_PATH="/kmh-nfs-ssd-us-mount/code/siri/tou_result.txt"
 
 auto_select(){
     # if 'auto' in VM_NAME

@@ -57,12 +57,19 @@ APP_ROOT = Path(__file__).parent.absolute()
 CONFIG_PATH = APP_ROOT / "config.json"
 WANDB_URL_PATTERN = re.compile(r"https?://(?:[A-Za-z0-9-]+\.)*wandb\.(?:ai|me)/[^\s\"'<>())]+")
 COMPLETION_DIAGNOSIS_RULE_VERSION = 2
-CURCHAT_USER = str(os.environ.get("CURCHAT_USER") or os.environ.get("WHO") or getpass.getuser()).strip()
-os.environ.setdefault("CURCHAT_USER", CURCHAT_USER)
+WECODE_USER = str(
+  os.environ.get("WECODE_USER")
+  or os.environ.get("CURCHAT_USER")
+  or os.environ.get("WHO")
+  or getpass.getuser()
+).strip()
+os.environ.setdefault("WECODE_USER", WECODE_USER)
+os.environ.setdefault("CURCHAT_USER", WECODE_USER)
+CURCHAT_USER = WECODE_USER
 
 
 def _default_user_code_root() -> Path:
-  candidate = Path(f"/kmh-nfs-ssd-us-mount/code/{CURCHAT_USER}").expanduser()
+  candidate = Path(f"/kmh-nfs-ssd-us-mount/code/{WECODE_USER}").expanduser()
   if candidate.exists() and candidate.is_dir():
     return candidate.resolve()
   return APP_ROOT.parent
@@ -124,7 +131,8 @@ STORE_PATH = store_file if store_file.is_absolute() else (APP_ROOT / store_file)
 DEFAULT_CWD = str(config_path_value(UI_CONFIG.get("default_cwd") or APP_ROOT, APP_ROOT))
 WORKDIR_ROOT = config_path_value(UI_CONFIG.get("workdir_root") or APP_ROOT.parent, APP_ROOT.parent)
 ZHH_SERVER_URL = str(
-  os.environ.get("CURCHAT_TASK_SERVER_URL")
+  os.environ.get("WECODE_TASK_SERVER_URL")
+  or os.environ.get("CURCHAT_TASK_SERVER_URL")
   or os.environ.get("ZHH_SERVER_URL")
   or UI_CONFIG.get("task_server_url")
   or "http://localhost:8080"
@@ -2230,12 +2238,12 @@ def favicon_alias():
   favicon_path = APP_ROOT / "favicon.ico"
   if favicon_path.exists() and favicon_path.is_file():
     return send_from_directory(APP_ROOT, "favicon.ico")
-  icon_path = APP_ROOT / "curchat-64.png"
+  icon_path = APP_ROOT / "wecode-64.png"
   if icon_path.exists() and icon_path.is_file():
-    return send_from_directory(APP_ROOT, "curchat-64.png")
-  icon_path = APP_ROOT / "curchat.png"
+    return send_from_directory(APP_ROOT, "wecode-64.png")
+  icon_path = APP_ROOT / "wecode.png"
   if icon_path.exists() and icon_path.is_file():
-    return send_from_directory(APP_ROOT, "curchat.png")
+    return send_from_directory(APP_ROOT, "wecode.png")
   return jsonify({"error": "favicon not found"}), 404
 
 
@@ -2266,7 +2274,7 @@ def bootstrap_model_policy_from_store() -> None:
 def main():
     global SERVER_CWD, AGENT_PATH
 
-    parser = argparse.ArgumentParser(description="CurChat conversation server (Claude Code backbone)")
+    parser = argparse.ArgumentParser(description="WeCode conversation server (Claude Code backbone)")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--cwd", default=DEFAULT_CWD, help="Default working directory for new sessions")
@@ -2289,8 +2297,8 @@ def main():
     if resolved_agent:
       AGENT_PATH = resolved_agent
 
-    print("CurChat server (Claude Code)")
-    print(f"curchat user: {CURCHAT_USER}")
+    print("WeCode server (Claude Code)")
+    print(f"wecode user: {WECODE_USER}")
     print(f"agent path : {AGENT_PATH}")
     print(f"default cwd: {SERVER_CWD}")
     print(f"store file : {STORE_PATH}")

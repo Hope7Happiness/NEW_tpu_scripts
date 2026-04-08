@@ -7,8 +7,7 @@ sudo rm -rf /tmp/wandb || true
 MAX_RETRIES=5
 NFS_SERVER="10.97.81.98:/kmh_nfs_ssd_us"
 MOUNT_POINT="/kmh-nfs-ssd-us-mount"
-TARGET_USER="${CURCHAT_USER:-${WHO:-$(whoami)}}"
-TARGET_DIR="$MOUNT_POINT/code/$TARGET_USER"
+TARGET_DIR="$MOUNT_POINT/code/siri"
 
 sudo mkdir -p "$MOUNT_POINT"
 

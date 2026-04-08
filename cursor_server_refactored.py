@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-cursor_server_refactored.py — 重构后的CurChat服务器主入口
+cursor_server_refactored.py — 重构后的 WeCode 服务器主入口
 
 原cursor_server.py的重构版本，将代码分散到多个模块以提高可维护性。
 功能保持不变，仅进行了代码组织优化。
@@ -26,7 +26,7 @@ from core.config import (
     DEFAULT_HOST, DEFAULT_PORT, DEFAULT_AGENT, DEFAULT_CWD,
     ZHH_SERVER_URL, SESSION_DEFAULT_MODEL, SESSION_DEFAULT_EFFORT,
     ALLOWED_SESSION_MODELS, ALLOWED_SESSION_EFFORTS,
-    AUTO_FIX_SCHEDULER_INTERVAL_SECONDS, CURCHAT_USER
+    AUTO_FIX_SCHEDULER_INTERVAL_SECONDS, WECODE_USER
 )
 
 # 导入核心模块
@@ -115,12 +115,12 @@ def favicon_alias():
     favicon_path = assets_root / "favicon.ico"
     if favicon_path.exists() and favicon_path.is_file():
         return send_from_directory(assets_root, "favicon.ico")
-    icon_path = assets_root / "curchat-64.png"
+    icon_path = assets_root / "wecode-64.png"
     if icon_path.exists() and icon_path.is_file():
-        return send_from_directory(assets_root, "curchat-64.png")
-    icon_path = assets_root / "curchat.png"
+        return send_from_directory(assets_root, "wecode-64.png")
+    icon_path = assets_root / "wecode.png"
     if icon_path.exists() and icon_path.is_file():
-        return send_from_directory(assets_root, "curchat.png")
+        return send_from_directory(assets_root, "wecode.png")
     return {"error": "favicon not found"}, 404
 
 
@@ -161,7 +161,7 @@ def main():
     """主入口函数"""
     global SERVER_CWD, AGENT_PATH
 
-    parser = argparse.ArgumentParser(description="CurChat conversation server (Claude Code backbone) - Refactored")
+    parser = argparse.ArgumentParser(description="WeCode conversation server (Claude Code backbone) - Refactored")
     parser.add_argument("--host", default=DEFAULT_HOST)
     parser.add_argument("--port", type=int, default=DEFAULT_PORT)
     parser.add_argument("--cwd", default=DEFAULT_CWD, help="Default working directory for new sessions")
@@ -197,9 +197,9 @@ def main():
         AGENT_PATH = resolved_agent
 
     print("=" * 60)
-    print("CurChat server (Claude Code) - Refactored")
+    print("WeCode server (Claude Code) - Refactored")
     print("=" * 60)
-    print(f"curchat user: {CURCHAT_USER}")
+    print(f"wecode user: {WECODE_USER}")
     print(f"agent path : {AGENT_PATH}")
     print(f"default cwd: {SERVER_CWD}")
     print(f"store file : {STORE_PATH}")

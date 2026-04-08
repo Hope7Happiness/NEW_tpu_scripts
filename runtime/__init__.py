@@ -1,1 +1,1 @@
-"""Runtime helper modules for CurChat server."""
+"""Runtime helper modules for WeCode server."""
