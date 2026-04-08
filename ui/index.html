@@ -103,11 +103,25 @@ body {
   font-weight: 700;
   box-shadow: 0 6px 16px rgba(77, 163, 255, .35);
 }
-#model-policy {
-  margin: 6px 0 8px;
+#model-policy-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 6px;
+}
+.global-model-label {
   font-size: 11px;
-  line-height: 1.35;
+  line-height: 1.2;
   color: var(--muted);
+}
+#global-agent-model-select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel-soft);
+  color: var(--text);
+  font-size: 12px;
 }
 #conv-list {
   list-style: none;
@@ -242,17 +256,6 @@ body {
 #title {
   font-size: 15px;
   font-weight: 700;
-}
-#session-llm {
-  display: inline-flex;
-  align-items: center;
-  border-radius: 999px;
-  border: 1px solid rgba(125, 171, 255, .34);
-  background: rgba(97, 153, 255, .12);
-  color: #b9d4ff;
-  font-size: 11px;
-  font-weight: 700;
-  padding: 3px 10px;
 }
 #meta {
   margin-top: 4px;
@@ -1570,25 +1573,96 @@ button:disabled {
     min-width: 220px;
     margin-bottom: 0;
   }
+  /* One row for Send + Run + Stop: textarea full width above, buttons share one line */
   #composer {
-    flex-direction: column;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 8px;
+  }
+  #input {
+    flex: 1 1 100%;
+    min-height: 56px;
+    max-height: 140px;
+  }
+  #send-btn {
+    flex: 1 1 0;
+    width: auto;
+    min-width: 0;
+    min-height: 36px;
+    max-height: 40px;
+    font-size: 13px;
+    padding: 0 6px;
+    box-shadow: 0 3px 10px rgba(77, 163, 255, .28);
+  }
+  #quick-actions {
+    flex: 2 1 0;
+    width: auto;
+    min-width: 0;
+    flex-direction: row;
+    gap: 6px;
+  }
+  #quick-actions > button {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: 36px;
+    max-height: 40px;
+    font-size: 11px;
+    padding: 0 4px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  #run-quick-btn {
+    min-height: 36px;
+    max-height: 40px;
+    font-size: 11px;
+  }
+  #auto-iterate-btn {
+    min-height: 36px;
+    max-height: 40px;
+    font-size: 10px;
+  }
+  /* Agent activity: one compact line (latest entry only) */
+  #agent-activity-head {
+    padding: 4px 12px;
+    font-size: 10px;
+  }
+  #agent-activity-list {
+    padding: 4px 12px 5px;
+    max-height: none;
+    display: block;
+    overflow: hidden;
+  }
+  #agent-activity-list .agent-activity-item {
+    display: none;
+  }
+  #agent-activity-list .agent-activity-item:last-child {
+    display: flex;
+    min-height: 0;
+    line-height: 1.25;
+    font-size: 11px;
+  }
+  #agent-activity-list .agent-activity-item:last-child .at-text {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+  }
+  #agent-activity-list .agent-activity-empty {
+    display: block;
+    font-size: 11px;
+    line-height: 1.3;
+    max-height: 1.35em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
   #view-tabs {
     flex-wrap: wrap;
   }
   #toggle-sidebar-btn {
     display: inline-flex !important;
-  }
-  #quick-actions {
-    width: 100%;
-    flex-direction: row;
-  }
-  #quick-actions > button {
-    flex: 1;
-  }
-  #send-btn {
-    width: 100%;
-    min-height: 44px;
   }
   #tasks-toolbar,
   #yaml-toolbar,
@@ -1666,7 +1740,10 @@ button:disabled {
         <span class="brand-mark"><img src="/assets/wecode-180.png?v=5" alt="WeCode"/></span>
         <span class="brand-name">WeCode</span>
       </h1>
-      <div id="model-policy">Model: __DEFAULT_MODEL__</div>
+      <div id="model-policy-row">
+        <label class="global-model-label" for="global-agent-model-select">Agent model (all sessions)</label>
+        <select id="global-agent-model-select" aria-label="Global agent model"></select>
+      </div>
       <button id="new-btn" onclick="createConversation()">+ New conversation</button>
     </div>
     <ul id="conv-list"></ul>
@@ -1677,7 +1754,6 @@ button:disabled {
       <div id="topbar-info">
         <div id="title-row">
           <div id="title">No conversation selected</div>
-          <div id="session-llm">model: opus · effort: high</div>
         </div>
         <div id="meta">Create a new session first.</div>
       </div>
@@ -1888,9 +1964,7 @@ const WORKDIR_ROOT = '__WORKDIR_ROOT__';
 const DEFAULT_MODEL = '__DEFAULT_MODEL__';
 const CONFIGURED_MODEL = '__CONFIGURED_MODEL__';
 const FILESYSTEM_ROOT = '/';
-const DEFAULT_SESSION_MODEL = '__DEFAULT_SESSION_MODEL__';
 const DEFAULT_SESSION_EFFORT = '__DEFAULT_SESSION_EFFORT__';
-const ALLOWED_SESSION_MODELS = ['composer-2-fast', 'composer-2', 'opus', 'sonnet', 'haiku'];
 const ALLOWED_SESSION_EFFORTS = ['low', 'medium', 'high', 'max'];
 let runtimeModelPolicy = {
   configured_model: CONFIGURED_MODEL || 'default',
@@ -1898,15 +1972,15 @@ let runtimeModelPolicy = {
   force_auto_active: false,
   force_auto_until: '',
   force_auto_days_remaining: 0,
+  global_selection_id: '',
+  global_model_label: '',
+  global_cli_model: '',
+  global_llm_provider: '',
 };
+let globalAgentModelSelectBound = false;
 let createModalMode = 'directory';
 let pickerCurrentPath = WORKDIR_ROOT;
 let pickerSelectedPath = WORKDIR_ROOT;
-
-function conversationSessionModel(conversation) {
-  const raw = String((conversation && (conversation.llm_model || conversation.current_model)) || '').trim().toLowerCase();
-  return ALLOWED_SESSION_MODELS.includes(raw) ? raw : DEFAULT_SESSION_MODEL;
-}
 
 function conversationSessionEffort(conversation) {
   const raw = String((conversation && (conversation.llm_effort || conversation.current_effort)) || '').trim().toLowerCase();
@@ -1939,21 +2013,6 @@ function conversationContextText(conversation) {
   if (used === null || windowSize === null || windowSize <= 0) return '';
   const pct = Math.max(0, Math.min(100, (used / windowSize) * 100));
   return `${formatTokenCount(used)}/${formatTokenCount(windowSize)} (${pct.toFixed(1)}%)`;
-}
-
-function renderSessionBadge(conversation) {
-  const badge = document.getElementById('session-llm');
-  if (!badge) return;
-  if (!conversation) {
-    badge.textContent = `model: ${DEFAULT_SESSION_MODEL} · effort: ${DEFAULT_SESSION_EFFORT}`;
-    return;
-  }
-  const model = conversationSessionModel(conversation);
-  const effort = conversationSessionEffort(conversation);
-  const context = conversationContextText(conversation);
-  badge.textContent = context
-    ? `model: ${model} · effort: ${effort} · ctx: ${context}`
-    : `model: ${model} · effort: ${effort}`;
 }
 
 function applyStatusToUI(text, kind = 'normal') {
@@ -1995,33 +2054,6 @@ function renderCurrentConversationStatus() {
   }
 }
 
-function daysLeftText(n) {
-  const v = Number(n || 0);
-  if (!Number.isFinite(v) || v <= 0) return '0 days';
-  if (v === 1) return '1 day';
-  return `${v} days`;
-}
-
-function renderModelPolicyBanner() {
-  const el = document.getElementById('model-policy');
-  if (!el) return;
-  const policy = runtimeModelPolicy || {};
-  const configured = String(policy.configured_model || CONFIGURED_MODEL || 'default');
-  const effective = String(policy.effective_model || configured || 'default');
-  if (policy.force_auto_active) {
-    const until = String(policy.force_auto_until || '').trim();
-    const left = daysLeftText(policy.force_auto_days_remaining);
-    const untilText = until ? `, until ${until}` : '';
-    el.textContent = `Model: ${effective} (fallback active, ${left}${untilText})`;
-    return;
-  }
-  if (configured && configured !== effective) {
-    el.textContent = `Model: ${effective} (configured: ${configured})`;
-    return;
-  }
-  el.textContent = `Model: ${effective} (default: ${DEFAULT_SESSION_MODEL})`;
-}
-
 async function refreshModelPolicy() {
   try {
     const data = await api('/api/runtime/model-policy');
@@ -2034,7 +2066,61 @@ async function refreshModelPolicy() {
   } catch (_) {
     // keep last known value
   }
-  renderModelPolicyBanner();
+}
+
+async function initGlobalAgentModelSelector() {
+  const sel = document.getElementById('global-agent-model-select');
+  if (!sel) return;
+  try {
+    const data = await api('/api/settings/global-agent-model');
+    if (data && data.current && typeof data.current === 'object') {
+      runtimeModelPolicy.global_selection_id = String(data.current.id || '');
+      runtimeModelPolicy.global_model_label = String(data.current.label || '');
+      runtimeModelPolicy.global_cli_model = String(data.current.cli_model || '');
+      runtimeModelPolicy.global_llm_provider = String(data.current.llm_provider || '');
+    }
+    const options = Array.isArray(data.options) ? data.options : [];
+    sel.innerHTML = options.map((o) => {
+      const id = String(o.id || '');
+      const label = String(o.label || id);
+      return `<option value="${escapeHtml(id)}">${escapeHtml(label)}</option>`;
+    }).join('');
+    const cur = String(data.current_id || '').trim();
+    if (cur && options.some((o) => String(o.id) === cur)) {
+      sel.value = cur;
+    } else if (options[0] && options[0].id) {
+      sel.value = String(options[0].id);
+    }
+    if (!globalAgentModelSelectBound) {
+      globalAgentModelSelectBound = true;
+      sel.addEventListener('change', async () => {
+        const id = String(sel.value || '').trim();
+        if (!id) return;
+        try {
+          await api('/api/settings/global-agent-model', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ id }),
+          });
+          await refreshModelPolicy();
+          const snap = Object.values(conversationSummariesById || {});
+          if (snap.length) {
+            renderConversationList(snap);
+          }
+        } catch (err) {
+          console.warn('Global model update failed:', err);
+          applyStatusToUI(err && err.message ? String(err.message) : 'Failed to update model', 'error');
+          try {
+            const curData = await api('/api/settings/global-agent-model');
+            const revert = String(curData.current_id || '').trim();
+            if (revert) sel.value = revert;
+          } catch (_) {}
+        }
+      });
+    }
+  } catch (err) {
+    console.warn('Global model list failed:', err);
+  }
 }
 
 function formatActivityTime(ts) {
@@ -2146,24 +2232,6 @@ function normalizeMessageCount(value) {
   const num = Number(value || 0);
   if (!Number.isFinite(num) || num < 0) return 0;
   return Math.floor(num);
-}
-
-function refreshDocumentTitle() {
-  let count = 0;
-  for (const value of Object.values(notificationPendingByConversation)) {
-    const num = Number(value || 0);
-    if (Number.isFinite(num) && num > 0) count += Math.floor(num);
-  }
-  document.title = count > 0 ? `${count} notifications · ${BASE_DOCUMENT_TITLE}` : BASE_DOCUMENT_TITLE;
-}
-
-function clearPendingNotificationsForConversation(conversationId) {
-  const id = String(conversationId || '').trim();
-  if (!id) return;
-  if (notificationPendingByConversation[id]) {
-    delete notificationPendingByConversation[id];
-    refreshDocumentTitle();
-  }
 }
 
 function ensureNotificationAudioUnlocked() {
@@ -2482,7 +2550,7 @@ function getPendingNotificationCount() {
 
 function refreshDocumentTitle() {
   const count = getPendingNotificationCount();
-  if (count > 0) {
+  if (document.hidden && count > 0) {
     document.title = `${count} notifications · ${BASE_DOCUMENT_TITLE}`;
     return;
   }
@@ -2506,23 +2574,6 @@ function clearAllPendingNotifications() {
 
 function maybeDesktopNotify(title, body, tag) {
   return;
-}
-
-function ensureNotificationPermissions() {
-  unlockNotificationAudio();
-}
-
-function setupNotificationCapabilities() {
-  const unlock = () => ensureNotificationPermissions();
-  window.addEventListener('pointerdown', unlock, { passive: true });
-  window.addEventListener('keydown', unlock, { passive: true });
-  const clearOnForeground = () => {
-    const pageInForeground = document.visibilityState === 'visible' && document.hasFocus();
-    if (!pageInForeground) return;
-    clearAllPendingNotifications();
-  };
-  document.addEventListener('visibilitychange', clearOnForeground);
-  window.addEventListener('focus', clearOnForeground);
 }
 
 function collectNotificationEvents(conversations) {
@@ -2596,12 +2647,13 @@ function dispatchNotificationEvents(events, conversations) {
   for (const event of list) {
     const id = String(event && event.id || '').trim();
     if (!id) continue;
-    notificationPendingByConversation[id] = Number(notificationPendingByConversation[id] || 0) + 1;
+    if (document.hidden) {
+      notificationPendingByConversation[id] = Number(notificationPendingByConversation[id] || 0) + 1;
+    }
   }
   refreshDocumentTitle();
 
-  const pageInForeground = document.visibilityState === 'visible' && document.hasFocus();
-  if (!pageInForeground) {
+  if (!document.hidden) {
     playNotificationSound();
   }
   for (const event of list.slice(0, 3)) {
@@ -2719,7 +2771,7 @@ async function pollTaskNotifications() {
     await refreshModelPolicy();
     const latest = Array.isArray(refreshed.conversations) ? refreshed.conversations : [];
     const events = collectNotificationEvents(latest);
-    dispatchNotificationEvents(events);
+    dispatchNotificationEvents(events, latest);
     updateConversationSnapshots(latest);
     renderConversationList(latest);
     refreshTaskTabAlert();
@@ -2739,7 +2791,8 @@ function startTaskNotificationPolling() {
 }
 
 async function bootstrapConversations() {
-  renderModelPolicyBanner();
+  await initGlobalAgentModelSelector();
+  await refreshModelPolicy();
   await pollTaskNotifications();
   if (!Object.keys(conversationSummariesById || {}).length) {
     await loadConversations();
@@ -3268,12 +3321,11 @@ function renderConversationList(items) {
     li.onclick = () => openConversation(item.id);
     const alertHtml = renderConversationAlertHtml(item);
     const statusText = effectiveConversationStatus(item);
-    const modelText = conversationSessionModel(item);
     const effortText = conversationSessionEffort(item);
     const contextText = conversationContextText(item);
     li.innerHTML = `
       <div class="conv-title">${escapeHtml(item.workdir_base || basenameFromPath(item.cwd) || item.title || 'Untitled')}${alertHtml}</div>
-      <div class="conv-meta">${escapeHtml(statusText)} · ${item.message_count} msgs · ${item.task_count || 0} tasks · ${escapeHtml(modelText)}/${escapeHtml(effortText)}${contextText ? ` · ctx ${escapeHtml(contextText)}` : ''}</div>
+      <div class="conv-meta">${escapeHtml(statusText)} · ${item.message_count} msgs · ${item.task_count || 0} tasks · effort: ${escapeHtml(effortText)}${contextText ? ` · ctx ${escapeHtml(contextText)}` : ''}</div>
       <div class="conv-path">${escapeHtml(item.cwd || '')}</div>
     `;
     list.appendChild(li);
@@ -3684,17 +3736,9 @@ function renderSystemTaskCard(job, removedFromConversation = false) {
 function renderConversation(conv, options = {}) {
   const preserveScrollPosition = options.preserveScrollPosition !== false;
   document.getElementById('title').textContent = basenameFromPath(conv.cwd) || conv.title || 'Untitled';
-  renderSessionBadge(conv);
   const summary = conversationSummariesById[conv.id] || { id: conv.id, status: conv.status };
   const statusText = effectiveConversationStatus(summary);
-  const modelText = String(
-    (conv && conv.current_model)
-    || (summary && summary.current_model)
-    || (runtimeModelPolicy && runtimeModelPolicy.effective_model)
-    || DEFAULT_MODEL
-    || 'default'
-  );
-  document.getElementById('meta').textContent = `${statusText} · model=${modelText} · ${conv.cwd}`;
+  document.getElementById('meta').textContent = `${statusText} · ${conv.cwd}`;
   const messages = document.getElementById('messages');
   const prevScrollTop = messages.scrollTop;
   const prevScrollHeight = messages.scrollHeight;
@@ -3838,7 +3882,6 @@ function resetConversationView() {
   taskStackGroups = [];
   closeTaskStackModal();
   document.getElementById('title').textContent = 'No conversation selected';
-  renderSessionBadge(null);
   document.getElementById('meta').textContent = 'Create a new session first.';
   document.getElementById('messages').innerHTML = '<div class="empty">No conversation selected.</div>';
   document.getElementById('tasks-list').innerHTML = '<div class="empty">No conversation selected.</div>';
@@ -3945,10 +3988,15 @@ async function sendMessage() {
         currentConversation.messages = messages;
         renderConversation(currentConversation);
       }
+      clearAgentActivityPanel('');
     }
     refreshComposerControls();
 
-    clearAgentActivityPanel('Agent is working...');
+    try {
+      await api(`/api/conversations/${targetId}/activity/reset`, { method: 'POST' });
+    } catch (_) {
+      clearAgentActivityPanel('');
+    }
     startAgentActivityPolling(targetId);
     setStatus('Waiting for Claude Code...', 'busy', targetId);
     const data = await api(`/api/conversations/${targetId}/messages`, {
@@ -4604,9 +4652,10 @@ window.addEventListener('resize', updateMobileSidebarToggle);
 window.addEventListener('pointerdown', ensureNotificationAudioUnlocked, { passive: true });
 window.addEventListener('keydown', ensureNotificationAudioUnlocked);
 document.addEventListener('visibilitychange', () => {
-  if (!document.hidden) {
-    pollTaskNotifications();
-  }
+  if (document.hidden) return;
+  clearAllPendingNotifications();
+  refreshDocumentTitle();
+  pollTaskNotifications();
 });
 </script>
 </body>

@@ -1,0 +1,16 @@
+---
+description: After editing this repo's Python/UI server code, restart the local WeCode + ZHH servers for the user.
+alwaysApply: true
+---
+
+# Restart dev servers after code changes
+
+Whenever you finish meaningful edits to the WeCode stack in this repo (`cursor_server_refactored.py`, `server.py`, `routes/`, `core/`, `runtime/`, `ui/index.html`, etc.), **restart the processes the user runs for debugging** (do not touch whatever listens on port **17860** — not theirs).
+
+Default pattern for user `siri` (adjust ports if the user documented otherwise):
+
+1. Stop: `python3 server.py` (task server, often **8080**) and `python3 cursor_server_refactored.py` (UI, often **7861**), owned by the current user.
+2. Start again from repo root `scripts/` with the same `nohup` / flags the user uses (see `logs/zhh_server_restart.log` / `logs/wecode_ui_restart.log` or prior session).
+3. Quick check: `curl http://127.0.0.1:8080/health` and HTTP 200 on the UI port.
+
+If nothing is running, starting them is enough; no need to kill first.

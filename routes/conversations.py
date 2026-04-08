@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from flask import jsonify, request
 
-from core.config import SESSION_DEFAULT_MODEL, SESSION_DEFAULT_EFFORT
+from core.config import SESSION_DEFAULT_EFFORT
+from core.global_agent_model import get_global_cli_model
 from core.utils import utc_now, _safe_positive_int
 from core.workdir import normalize_workdir, workdir_base, create_workdir_by_clone, create_workdir_by_worktree, create_workdir_by_copy, list_workdir_children
 from core.conversation import (
@@ -11,7 +12,7 @@ from core.conversation import (
     create_conversation_record, delete_conversation, update_conversation,
     conversation_summary, maybe_autoname, build_conversation_memory_summary
 )
-from core.activity import get_agent_activity_payload
+from core.activity import get_agent_activity_payload, reset_agent_activity
 from core.tasks import clear_all_task_unread_alerts
 from runtime.auto_fix_runtime import AutoFixCoordinator
 
@@ -67,7 +68,7 @@ def register_conversation_routes(app, get_agent_path_func, auto_fix_coordinator:
         title = workdir_base(cwd)
         record = create_conversation_record(
             title, cwd, mode, None,
-            llm_model=SESSION_DEFAULT_MODEL,
+            llm_model=get_global_cli_model(),
             llm_effort=SESSION_DEFAULT_EFFORT,
         )
         return jsonify({"conversation": conversation_summary(record), "detail": record, "reused": False})
@@ -95,6 +96,14 @@ def register_conversation_routes(app, get_agent_path_func, auto_fix_coordinator:
             return jsonify({"error": "not found"}), 404
         limit = _safe_positive_int(request.args.get("limit", "120"), default=120)
         return jsonify(get_agent_activity_payload(conversation_id, limit=limit))
+
+    @app.route("/api/conversations/<conversation_id>/activity/reset", methods=["POST"])
+    def api_reset_conversation_activity(conversation_id: str):
+        conv = get_conversation(conversation_id)
+        if not conv:
+            return jsonify({"error": "not found"}), 404
+        reset_agent_activity(conversation_id, None)
+        return jsonify({"ok": True})
 
     @app.route("/api/conversations/<conversation_id>", methods=["DELETE"])
     def api_delete_conversation(conversation_id: str):

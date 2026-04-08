@@ -177,7 +177,13 @@ def note_usage_limit_error(message: str) -> bool:
 
 
 def get_model_policy_status() -> dict:
-    configured_model = _first_nonempty_env(["CLAUDE_CODE_MODEL", "CURSOR_CLI_MODEL", "WECODE_DEFAULT_MODEL", "CURCHAT_DEFAULT_MODEL"], default="composer-2-fast") or "composer-2-fast"
+    from core.global_agent_model import get_global_cli_model, get_global_model_policy_fields
+
+    global_cli = str(get_global_cli_model() or "").strip()
+    configured_model = global_cli or _first_nonempty_env(
+        ["CLAUDE_CODE_MODEL", "CURSOR_CLI_MODEL", "WECODE_DEFAULT_MODEL", "CURCHAT_DEFAULT_MODEL"],
+        default="composer-2-fast",
+    ) or "composer-2-fast"
     until = _forced_auto_until_date()
     active = _is_force_auto_active()
     fallback_model = _limit_fallback_model()
@@ -187,13 +193,15 @@ def get_model_policy_status() -> dict:
     if until is not None:
         force_until_text = until.strftime("%Y-%m-%d")
         days_remaining = max(0, (until - date.today()).days)
-    return {
+    out = {
         "configured_model": configured_model,
         "effective_model": effective_model,
         "force_auto_active": active,
         "force_auto_until": force_until_text,
         "force_auto_days_remaining": days_remaining,
     }
+    out.update(get_global_model_policy_fields())
+    return out
 
 
 def _fallback_models_from_env() -> list[str]:
@@ -358,6 +366,7 @@ def _run_cli_prompt(
     force_allow: bool,
     canceler: CLIPromptCanceler,
     on_progress_event: Callable[[dict], None] | None = None,
+    llm_provider: str | None = None,
 ) -> dict:
     cmd = _build_cli_command(
         agent_path=agent_path,
@@ -370,6 +379,9 @@ def _run_cli_prompt(
 
     env = dict(os.environ)
     env.setdefault("NO_COLOR", "1")
+    prov = str(llm_provider or "").strip().lower()
+    if prov:
+        env["CLAUDE_CODE_LLM_PROVIDER"] = prov
 
     proc = subprocess.Popen(
         cmd,
@@ -490,6 +502,7 @@ def acp_prompt_session(
     cancel_event: threading.Event | None = None,
     on_client_ready: Callable[[CLIPromptCanceler], None] | None = None,
     on_progress_event: Callable[[dict], None] | None = None,
+    llm_provider: str | None = None,
 ) -> dict:
     configured_model = str(preferred_model or "").strip() or _first_nonempty_env(["CLAUDE_CODE_MODEL", "CURSOR_CLI_MODEL", "WECODE_DEFAULT_MODEL", "CURCHAT_DEFAULT_MODEL"], default="composer-2-fast")
     configured_effort = str(effort or "").strip().lower() or None
@@ -518,6 +531,7 @@ def acp_prompt_session(
             force_allow=force_allow,
             canceler=canceler,
             on_progress_event=on_progress_event,
+            llm_provider=llm_provider,
         )
     except RuntimeError as exc:
         err_text = str(exc)
@@ -548,6 +562,7 @@ def acp_prompt_session(
                     force_allow=force_allow,
                     canceler=canceler,
                     on_progress_event=on_progress_event,
+                    llm_provider=llm_provider,
                 )
             except RuntimeError:
                 continue

@@ -218,7 +218,7 @@ def maybe_autoname(conversation_id: str) -> None:
 
 def append_message(conversation_id: str, role: str, content: str, extra: dict | None = None) -> dict:
     """向对话添加消息"""
-    from core.config import ALLOWED_SESSION_MODELS, ALLOWED_SESSION_EFFORTS
+    from core.config import ALLOWED_SESSION_EFFORTS
     
     def updater(c: dict):
         messages = c.get("messages")
@@ -232,14 +232,9 @@ def append_message(conversation_id: str, role: str, content: str, extra: dict | 
         if isinstance(extra, dict):
             entry.update(extra)
         
-        # Handle model/effort settings from message
+        # Handle effort settings from message (model is global; use sidebar selector)
         content_lower = str(content or "").lower().strip()
-        if content_lower.startswith("/model "):
-            model = content[7:].strip().lower()
-            if model in ALLOWED_SESSION_MODELS:
-                c["current_model"] = model
-                c["llm_model"] = model
-        elif content_lower.startswith("/effort "):
+        if content_lower.startswith("/effort "):
             effort = content[8:].strip().lower()
             if effort in ALLOWED_SESSION_EFFORTS:
                 c["current_effort"] = effort

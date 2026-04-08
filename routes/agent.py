@@ -3,16 +3,12 @@ from __future__ import annotations
 
 from flask import jsonify, request
 
-from core.config import (
-    SESSION_DEFAULT_MODEL, SESSION_DEFAULT_EFFORT, 
-    ALLOWED_SESSION_MODELS, ALLOWED_SESSION_EFFORTS,
-    ZHH_SERVER_URL
-)
+from core.config import ALLOWED_SESSION_EFFORTS, ZHH_SERVER_URL
 from core.utils import utc_now
 from core.utils import _compact_error_text
 from core.conversation import (
     get_conversation, update_conversation, 
-    build_prompt_with_memory, resolve_session_model, resolve_session_effort,
+    build_prompt_with_memory, resolve_session_effort,
     parse_session_setting_command, maybe_autoname
 )
 from core.conversation.store import append_message
@@ -21,6 +17,7 @@ from core.tasks import get_conversation_jobs, diagnose_completed_jobs_once, upda
 from runtime.agent_action_protocol import extract_run_job_action, new_action_nonce, with_run_job_skill_instruction
 from runtime.acp_runtime import acp_prompt_session, note_usage_limit_error
 from runtime.tasks_runtime import build_prompt_with_task_refs
+from core.global_agent_model import get_global_cli_model, get_global_llm_provider
 
 
 def register_agent_routes(app, auto_fix_coordinator=None, get_agent_path_func=None):
@@ -51,50 +48,39 @@ def register_agent_routes(app, auto_fix_coordinator=None, get_agent_path_func=No
             return jsonify({"error": "not found"}), 404
 
         lowered_text = text.strip().lower()
-        if lowered_text.startswith("/model") or lowered_text.startswith("/effort"):
+        if lowered_text.startswith("/model"):
+            return jsonify({
+                "error": "Model is configured globally for all sessions. Use the Model dropdown in the sidebar.",
+            }), 400
+
+        if lowered_text.startswith("/effort"):
             if len(text.split()) != 2:
-                return jsonify({"error": "invalid setting command. use /model <composer-2-fast|composer-2|opus|sonnet|haiku> or /effort <low|medium|high|max>"}), 400
+                return jsonify({"error": "invalid setting command. use /effort <low|medium|high|max>"}), 400
 
             setting_key, setting_value = parse_session_setting_command(text)
-            if setting_key is not None:
-                status = str(conv.get("status") or "").strip().lower()
-                if status in {"running", "debugging"}:
-                    return jsonify({"error": "session setting update is unavailable while agent is running"}), 409
+            if setting_key is None:
+                return jsonify({"error": "invalid effort. allowed: low, medium, high, max"}), 400
+            if setting_key != "effort":
+                return jsonify({"error": "invalid effort. allowed: low, medium, high, max"}), 400
+            status = str(conv.get("status") or "").strip().lower()
+            if status in {"running", "debugging"}:
+                return jsonify({"error": "session setting update is unavailable while agent is running"}), 409
 
-                if setting_key == "model":
-                    normalized = str(setting_value or "").strip().lower()
-                    if normalized not in ALLOWED_SESSION_MODELS:
-                        allowed_models = ", ".join(sorted(ALLOWED_SESSION_MODELS))
-                        return jsonify({"error": f"invalid model. allowed: {allowed_models}"}), 400
+            normalized = str(setting_value or "").strip().lower()
+            if normalized not in ALLOWED_SESSION_EFFORTS:
+                return jsonify({"error": "invalid effort. allowed: low, medium, high, max"}), 400
 
-                    append_message(conversation_id, "user", text)
-                    append_message(conversation_id, "assistant", f"Model updated to `{normalized}` for this session.")
-                    updated = update_conversation(conversation_id, lambda c: c.update({
-                        "llm_model": normalized,
-                        "current_model": normalized,
-                    }))
-                    return jsonify({
-                        "conversation": updated,
-                        "assistant": f"Model updated to `{normalized}` for this session.",
-                        "setting": {"key": "model", "value": normalized},
-                    }), 200
-
-                if setting_key == "effort":
-                    normalized = str(setting_value or "").strip().lower()
-                    if normalized not in ALLOWED_SESSION_EFFORTS:
-                        return jsonify({"error": "invalid effort. allowed: low, medium, high, max"}), 400
-
-                    append_message(conversation_id, "user", text)
-                    append_message(conversation_id, "assistant", f"Effort updated to `{normalized}` for this session.")
-                    updated = update_conversation(conversation_id, lambda c: c.update({
-                        "llm_effort": normalized,
-                        "current_effort": normalized,
-                    }))
-                    return jsonify({
-                        "conversation": updated,
-                        "assistant": f"Effort updated to `{normalized}` for this session.",
-                        "setting": {"key": "effort", "value": normalized},
-                    }), 200
+            append_message(conversation_id, "user", text)
+            append_message(conversation_id, "assistant", f"Effort updated to `{normalized}` for this session.")
+            updated = update_conversation(conversation_id, lambda c: c.update({
+                "llm_effort": normalized,
+                "current_effort": normalized,
+            }))
+            return jsonify({
+                "conversation": updated,
+                "assistant": f"Effort updated to `{normalized}` for this session.",
+                "setting": {"key": "effort", "value": normalized},
+            }), 200
 
         conv_job_ids = set(conv.get("job_ids", []) or [])
         invalid_refs = [ref for ref in normalized_refs if ref not in conv_job_ids]
@@ -108,9 +94,9 @@ def register_agent_routes(app, auto_fix_coordinator=None, get_agent_path_func=No
             return jsonify({"error": "conversation busy"}), 409
 
         try:
-            session_model = resolve_session_model(conv.get("llm_model"))
+            session_model = get_global_cli_model()
             session_effort = resolve_session_effort(conv.get("llm_effort"))
-            reset_agent_activity(conversation_id, "Prompt sent to Claude Code.")
+            reset_agent_activity(conversation_id, None)
             update_conversation(conversation_id, lambda c: c.update({"status": "running"}))
 
             refs_payload = []
@@ -140,6 +126,7 @@ def register_agent_routes(app, auto_fix_coordinator=None, get_agent_path_func=No
                 cursor_session_id=conv.get("cursor_session_id"),
                 preferred_model=session_model,
                 effort=session_effort,
+                llm_provider=get_global_llm_provider(),
                 on_progress_event=lambda event: record_agent_event(conversation_id, event),
             )
 
@@ -151,7 +138,7 @@ def register_agent_routes(app, auto_fix_coordinator=None, get_agent_path_func=No
             def set_runtime_metadata(c: dict):
                 if not c.get("cursor_session_id"):
                     c["cursor_session_id"] = result["cursor_session_id"]
-                c["llm_model"] = resolve_session_model(c.get("llm_model") or session_model)
+                c["llm_model"] = session_model
                 c["llm_effort"] = resolve_session_effort(c.get("llm_effort") or session_effort)
                 c["current_model"] = model_used or session_model
                 c["current_effort"] = effort_used

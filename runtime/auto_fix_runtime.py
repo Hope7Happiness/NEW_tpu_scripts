@@ -12,6 +12,7 @@ from runtime.agent_action_protocol import (
     with_run_job_skill_instruction,
 )
 from runtime.tasks_runtime import build_prompt_with_task_refs
+from core.global_agent_model import get_global_cli_model, get_global_llm_provider
 
 
 class AutoFixCoordinator:
@@ -229,7 +230,8 @@ class AutoFixCoordinator:
                     mode=latest.get("mode", "agent"),
                     text=prompt_text,
                     cursor_session_id=latest.get("cursor_session_id"),
-                    preferred_model=str(latest.get("llm_model") or "").strip() or None,
+                    preferred_model=get_global_cli_model(),
+                    llm_provider=get_global_llm_provider(),
                     effort=str(latest.get("llm_effort") or "high").strip().lower() or "high",
                     on_progress_event=(
                         (lambda event: reporter(conversation_id, event))
@@ -248,10 +250,7 @@ class AutoFixCoordinator:
                 def set_runtime_metadata(c: dict):
                     if not c.get("cursor_session_id"):
                         c["cursor_session_id"] = result["cursor_session_id"]
-                    if c.get("llm_model"):
-                        c["llm_model"] = str(c.get("llm_model")).strip().lower()
-                    else:
-                        c["llm_model"] = "opus"
+                    c["llm_model"] = get_global_cli_model()
                     if c.get("llm_effort"):
                         c["llm_effort"] = str(c.get("llm_effort")).strip().lower()
                     else:

@@ -24,7 +24,7 @@ app = Flask(__name__)
 from core.config import (
     APP_ROOT, CONFIG_PATH, STORE_PATH, UI_TEMPLATE_PATH,
     DEFAULT_HOST, DEFAULT_PORT, DEFAULT_AGENT, DEFAULT_CWD,
-    ZHH_SERVER_URL, SESSION_DEFAULT_MODEL, SESSION_DEFAULT_EFFORT,
+    ZHH_SERVER_URL, SESSION_DEFAULT_EFFORT,
     ALLOWED_SESSION_MODELS, ALLOWED_SESSION_EFFORTS,
     AUTO_FIX_SCHEDULER_INTERVAL_SECONDS, WECODE_USER
 )
@@ -37,6 +37,7 @@ from core.workdir import relative_workdir
 from routes.conversations import register_conversation_routes
 from routes.tasks import register_task_routes
 from routes.agent import register_agent_routes
+from routes.global_agent_model import register_global_agent_model_routes
 
 # 导入外部模块
 from runtime.yaml_editor_api import register_ka_editor_routes, register_yaml_editor_routes
@@ -78,7 +79,6 @@ def index():
     policy = get_model_policy_status()
     html = UI_TEMPLATE_PATH.read_text(encoding="utf-8")
     html = html.replace("__WORKDIR_ROOT__", str(Path(SERVER_CWD).parent if SERVER_CWD else APP_ROOT))
-    html = html.replace("__DEFAULT_SESSION_MODEL__", SESSION_DEFAULT_MODEL)
     html = html.replace("__DEFAULT_SESSION_EFFORT__", SESSION_DEFAULT_EFFORT)
     html = html.replace("__DEFAULT_MODEL__", str(policy.get("effective_model") or "default"))
     html = html.replace("__CONFIGURED_MODEL__", str(policy.get("configured_model") or "default"))
@@ -293,7 +293,8 @@ def main():
     register_conversation_routes(app, lambda: AGENT_PATH, auto_fix_coordinator)
     register_task_routes(app, ZHH_SERVER_URL, auto_fix_coordinator)
     register_agent_routes(app, auto_fix_coordinator, lambda: AGENT_PATH)
-    
+    register_global_agent_model_routes(app)
+
     # 注册YAML编辑器路由
     register_yaml_editor_routes(app, get_conversation)
     register_ka_editor_routes(app, get_conversation)
