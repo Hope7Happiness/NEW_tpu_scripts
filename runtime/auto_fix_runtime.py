@@ -4,12 +4,19 @@ import threading
 import time
 from typing import Any, Callable
 
+from core.tasks.session_job_tools import execute_session_job_actions, format_session_jobs_user_message_content
 from runtime.agent_action_protocol import (
     build_auto_fix_prompt,
     extract_give_up_fix_action,
-    extract_run_job_action,
+    extract_session_job_actions,
+    format_session_job_parse_errors_message,
     new_action_nonce,
-    with_run_job_skill_instruction,
+)
+from runtime.agent_prompt_compose import compose_cli_turn_prompt
+from runtime.agent_prompts import (
+    append_server_nonce_footer,
+    session_job_followup_core_content,
+    session_job_parse_error_autofix_core_content,
 )
 from runtime.tasks_runtime import build_prompt_with_task_refs
 from core.global_agent_model import get_global_cli_model, get_global_llm_provider
@@ -23,14 +30,12 @@ class AutoFixCoordinator:
         get_conversation_lock: Callable[[str], threading.Lock],
         update_conversation: Callable[[str, Callable[[dict], None]], dict],
         append_message: Callable[[str, str, str, dict | None], object],
-        build_task_reference_payload: Callable[[str, dict, str], tuple[str, str]],
         resolve_job_status: Callable[[dict, str], str],
         is_failed_task_status: Callable[[str], bool],
         normalize_task_status: Callable[[str | None], str],
         maybe_autoname: Callable[[str], None],
         acp_prompt_session: Callable[..., dict],
         agent_path_getter: Callable[[], str],
-        trigger_run_job: Callable[[str, bool], tuple[str | None, str | None]],
         utc_now: Callable[[], float],
         report_agent_event: Callable[[str, dict], None] | None = None,
     ):
@@ -38,14 +43,12 @@ class AutoFixCoordinator:
         self.get_conversation_lock = get_conversation_lock
         self.update_conversation = update_conversation
         self.append_message = append_message
-        self.build_task_reference_payload = build_task_reference_payload
         self.resolve_job_status = resolve_job_status
         self.is_failed_task_status = is_failed_task_status
         self.normalize_task_status = normalize_task_status
         self.maybe_autoname = maybe_autoname
         self.acp_prompt_session = acp_prompt_session
         self.agent_path_getter = agent_path_getter
-        self.trigger_run_job = trigger_run_job
         self.utc_now = utc_now
         self.report_agent_event = report_agent_event
 
@@ -187,26 +190,15 @@ class AutoFixCoordinator:
                     )
                     return
 
-                run_action_nonce = new_action_nonce()
                 give_up_nonce = new_action_nonce()
+                session_job_nonce = new_action_nonce()
                 auto_fix_instruction = build_auto_fix_prompt(job_id, status, give_up_nonce)
-                memory = str(latest.get("memory_summary") or "").strip()
-                memory_pending = bool(latest.get("memory_summary_pending", False))
-                cursor_session_id = str(latest.get("cursor_session_id") or "").strip()
-                if memory and (memory_pending or not cursor_session_id):
-                    auto_fix_instruction_for_model = (
-                        "[Conversation memory summary]\n"
-                        f"{memory}\n\n"
-                        "[Current user request]\n"
-                        f"{auto_fix_instruction}"
-                    )
-                else:
-                    auto_fix_instruction_for_model = auto_fix_instruction
 
-                stdout_text, source = self.build_task_reference_payload(conversation_id, latest, job_id)
-                prompt_text = build_prompt_with_task_refs(
-                    with_run_job_skill_instruction(auto_fix_instruction_for_model, run_action_nonce),
-                    [{"stdout": stdout_text}],
+                prompt_text = append_server_nonce_footer(
+                    build_prompt_with_task_refs(auto_fix_instruction, [{"job_id": job_id}]),
+                    session_nonce=session_job_nonce,
+                    give_up_job_id=job_id,
+                    give_up_nonce=give_up_nonce,
                 )
 
                 if cancel_event.is_set():
@@ -218,12 +210,44 @@ class AutoFixCoordinator:
                     auto_fix_instruction,
                     {
                         "task_refs": [job_id],
-                        "task_ref_sources": {job_id: source},
+                        "task_ref_sources": {job_id: "session_job query"},
                         "auto_fix": True,
                     },
                 )
 
                 reporter = self.report_agent_event
+
+                def _apply_acp_result_to_conv(res: dict) -> None:
+                    snap = self.get_conversation(conversation_id) or latest
+                    model_used = str(res.get("model") or "").strip()
+                    effort_used = str(res.get("effort") or snap.get("llm_effort") or "").strip().lower()
+                    context_tokens = res.get("context_tokens")
+                    context_window = res.get("context_window")
+
+                    def set_runtime_metadata(c: dict):
+                        if not c.get("cursor_session_id"):
+                            c["cursor_session_id"] = res["cursor_session_id"]
+                        c["llm_model"] = get_global_cli_model()
+                        if c.get("llm_effort"):
+                            c["llm_effort"] = str(c.get("llm_effort")).strip().lower()
+                        else:
+                            c["llm_effort"] = "high"
+                        if model_used:
+                            c["current_model"] = model_used
+                        if effort_used:
+                            c["current_effort"] = effort_used
+                        if isinstance(context_tokens, int) and context_tokens >= 0:
+                            c["current_context_tokens"] = context_tokens
+                        if isinstance(context_window, int) and context_window > 0:
+                            c["current_context_window"] = context_window
+                        if c.get("memory_summary_pending"):
+                            c["memory_summary_pending"] = False
+
+                    self.update_conversation(conversation_id, set_runtime_metadata)
+
+                def _parse_after_session_tags(after_sj: str) -> tuple[str, str | None]:
+                    return extract_give_up_fix_action(after_sj, job_id, give_up_nonce)
+
                 result = self.acp_prompt_session(
                     agent_path=self.agent_path_getter(),
                     cwd=latest["cwd"],
@@ -243,37 +267,129 @@ class AutoFixCoordinator:
                 )
                 self._clear_canceler(conversation_id)
 
-                model_used = str(result.get("model") or "").strip()
-                effort_used = str(result.get("effort") or latest.get("llm_effort") or "").strip().lower()
-                context_tokens = result.get("context_tokens")
-                context_window = result.get("context_window")
-                def set_runtime_metadata(c: dict):
-                    if not c.get("cursor_session_id"):
-                        c["cursor_session_id"] = result["cursor_session_id"]
-                    c["llm_model"] = get_global_cli_model()
-                    if c.get("llm_effort"):
-                        c["llm_effort"] = str(c.get("llm_effort")).strip().lower()
-                    else:
-                        c["llm_effort"] = "high"
-                    if model_used:
-                        c["current_model"] = model_used
-                    if effort_used:
-                        c["current_effort"] = effort_used
-                    if isinstance(context_tokens, int) and context_tokens >= 0:
-                        c["current_context_tokens"] = context_tokens
-                    if isinstance(context_window, int) and context_window > 0:
-                        c["current_context_window"] = context_window
-                    if c.get("memory_summary_pending"):
-                        c["memory_summary_pending"] = False
-                self.update_conversation(conversation_id, set_runtime_metadata)
+                _apply_acp_result_to_conv(result)
 
                 assistant_raw = result["text"] or f"[No text returned; stopReason={result['stop_reason']}]"
-                assistant_cleaned, should_run_job = extract_run_job_action(assistant_raw, run_action_nonce)
-                assistant_text, gave_up_reason = extract_give_up_fix_action(
-                    assistant_cleaned,
-                    job_id,
-                    give_up_nonce,
+                after_sj1, sa1, sj_parse_errors = extract_session_job_actions(
+                    assistant_raw, session_job_nonce,
                 )
+                after_sj = after_sj1
+                if sj_parse_errors:
+                    repair_body = session_job_parse_error_autofix_core_content(
+                        format_session_job_parse_errors_message(sj_parse_errors),
+                    )
+                    repair_nonce = new_action_nonce()
+                    repair_prompt = append_server_nonce_footer(
+                        build_prompt_with_task_refs(repair_body, [{"job_id": job_id}]),
+                        session_nonce=repair_nonce,
+                        give_up_job_id=job_id,
+                        give_up_nonce=give_up_nonce,
+                    )
+                    self.append_message(
+                        conversation_id,
+                        "user",
+                        repair_body,
+                        {
+                            "session_job_parse_error_autofix": True,
+                            "errors": sj_parse_errors,
+                            "auto_fix": True,
+                        },
+                    )
+                    latest = self.get_conversation(conversation_id) or latest
+                    if cancel_event.is_set():
+                        raise InterruptedError("auto-fix canceled")
+                    result = self.acp_prompt_session(
+                        agent_path=self.agent_path_getter(),
+                        cwd=latest["cwd"],
+                        mode=latest.get("mode", "agent"),
+                        text=repair_prompt,
+                        cursor_session_id=latest.get("cursor_session_id"),
+                        preferred_model=get_global_cli_model(),
+                        llm_provider=get_global_llm_provider(),
+                        effort=str(latest.get("llm_effort") or "high").strip().lower() or "high",
+                        on_progress_event=(
+                            (lambda event: reporter(conversation_id, event))
+                            if reporter is not None
+                            else None
+                        ),
+                        cancel_event=cancel_event,
+                        on_client_ready=lambda canceler: self._register_canceler(conversation_id, canceler),
+                    )
+                    self._clear_canceler(conversation_id)
+                    _apply_acp_result_to_conv(result)
+                    assistant_raw = result["text"] or f"[No text returned; stopReason={result['stop_reason']}]"
+                    after_sj, sa2, sj_parse_errors2 = extract_session_job_actions(
+                        assistant_raw, repair_nonce,
+                    )
+                    if sj_parse_errors2:
+                        self.append_message(
+                            conversation_id,
+                            "system",
+                            format_session_job_parse_errors_message(sj_parse_errors2),
+                            {"system_event": "session_job_parse_error", "errors": sj_parse_errors2, "auto_fix": True},
+                        )
+                else:
+                    sa2 = []
+
+                assistant_text, gave_up_reason = _parse_after_session_tags(after_sj)
+                tuples1, _ = execute_session_job_actions(conversation_id, sa1)
+                if sj_parse_errors:
+                    tuples2, _ = execute_session_job_actions(conversation_id, sa2)
+                    tuples = tuples1 + tuples2
+                else:
+                    tuples = tuples1
+
+                if tuples:
+                    inj_body = format_session_jobs_user_message_content(tuples)
+                    results_meta = [{"op": o, "payload": p} for o, p in tuples]
+                    self.append_message(
+                        conversation_id,
+                        "user",
+                        inj_body,
+                        {
+                            "session_job_injection": True,
+                            "session_job_results": results_meta,
+                            "auto_fix": True,
+                        },
+                    )
+                    latest2 = self.get_conversation(conversation_id)
+                    if latest2 and not cancel_event.is_set():
+                        session_job_nonce = new_action_nonce()
+                        p_follow = compose_cli_turn_prompt(
+                            session_job_followup_core_content(inj_body),
+                            session_job_nonce,
+                            [],
+                        )
+                        result = self.acp_prompt_session(
+                            agent_path=self.agent_path_getter(),
+                            cwd=latest2["cwd"],
+                            mode=latest2.get("mode", "agent"),
+                            text=p_follow,
+                            cursor_session_id=latest2.get("cursor_session_id"),
+                            preferred_model=get_global_cli_model(),
+                            llm_provider=get_global_llm_provider(),
+                            effort=str(latest2.get("llm_effort") or "high").strip().lower() or "high",
+                            on_progress_event=(
+                                (lambda event: reporter(conversation_id, event))
+                                if reporter is not None
+                                else None
+                            ),
+                            cancel_event=cancel_event,
+                            on_client_ready=lambda canceler: self._register_canceler(conversation_id, canceler),
+                        )
+                        self._clear_canceler(conversation_id)
+                        _apply_acp_result_to_conv(result)
+                        assistant_raw = result["text"] or f"[No text returned; stopReason={result['stop_reason']}]"
+                        after_sj2, sa2, sj_err2 = extract_session_job_actions(assistant_raw, session_job_nonce)
+                        if sj_err2:
+                            self.append_message(
+                                conversation_id,
+                                "system",
+                                format_session_job_parse_errors_message(sj_err2),
+                                {"system_event": "session_job_parse_error", "errors": sj_err2, "auto_fix": True},
+                            )
+                        assistant_text, gave_up_reason = _parse_after_session_tags(after_sj2)
+                        execute_session_job_actions(conversation_id, sa2)
 
                 if assistant_text.strip():
                     self.append_message(conversation_id, "assistant", assistant_text, {"auto_fix": True})
@@ -290,43 +406,6 @@ class AutoFixCoordinator:
                             "reason": gave_up_reason,
                         },
                     )
-
-                should_auto_start_run = (not should_run_job) and (not gave_up_reason)
-                if should_run_job or should_auto_start_run:
-                    new_job_id, run_err = self.trigger_run_job(conversation_id, True)
-                    if new_job_id:
-                        auto_fix_tag = f"auto fix from {job_id}"
-                        def apply_auto_fix_tag(c: dict):
-                            task_meta = c.setdefault("task_meta", {})
-                            entry = task_meta.get(new_job_id)
-                            if not isinstance(entry, dict):
-                                entry = {}
-                            else:
-                                entry = dict(entry)
-                            entry["nickname"] = auto_fix_tag
-                            entry["auto_fix_from_job_id"] = job_id
-                            entry["updated_at"] = self.utc_now()
-                            task_meta[new_job_id] = entry
-                        self.update_conversation(conversation_id, apply_auto_fix_tag)
-
-                        if should_run_job:
-                            self.append_message(
-                                conversation_id,
-                                "system",
-                                "action: run job",
-                                {"system_event": "agent_action_run_job"},
-                            )
-                    elif run_err:
-                        if should_run_job:
-                            err_msg = f"Agent requested run job, but /run failed: {run_err}"
-                        else:
-                            err_msg = f"Auto-fix attempted automatic run job, but /run failed: {run_err}"
-                        self.append_message(
-                            conversation_id,
-                            "system",
-                            err_msg,
-                            {"system_event": "task_run_failed", "auto_run_by_agent": True},
-                        )
 
                 self.maybe_autoname(conversation_id)
             finally:

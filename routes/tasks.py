@@ -4,6 +4,9 @@ from __future__ import annotations
 from flask import jsonify, request
 
 from core.utils import _safe_positive_int
+
+# Task log viewer: never return unbounded log text (default & cap: last N lines).
+_TASK_LOG_VIEWER_MAX_LINES = 400
 from core.conversation import get_conversation, update_conversation
 from core.tasks import (
     get_conversation_jobs, diagnose_completed_jobs_once, update_task_alert_state,
@@ -11,7 +14,13 @@ from core.tasks import (
     is_terminal_task_status, is_failed_task_status, clear_task_unread_alert,
     clear_all_task_unread_alerts, resolve_task_output_log_path, snapshot_task_log_before_cancel
 )
-from core.tasks.operations import zhh_run_job, zhh_resume_job, zhh_cancel_job, get_task_log_payload
+from core.tasks.operations import (
+    zhh_run_job,
+    zhh_resume_job,
+    zhh_cancel_job,
+    get_task_log_payload,
+    persist_zhh_job_to_conversation,
+)
 from core.activity import record_agent_event
 
 
@@ -72,39 +81,14 @@ def register_task_routes(app, zhh_server_url: str, auto_fix_coordinator=None):
         if not result.get("ok"):
             return jsonify({"error": result.get("error", "/run failed"), "detail": result.get("payload")}), 500
 
-        # Record the job
-        from core.conversation.store import append_message
-        from core.utils import utc_now
-        
         job_id = result.get("job_id")
         run_data = result.get("payload", {})
-        
-        def add_job(c: dict):
-            job_ids = c.setdefault("job_ids", [])
-            if job_id not in job_ids:
-                job_ids.append(job_id)
-            task_meta = c.setdefault("task_meta", {})
-            entry = task_meta.get(job_id, {})
-            if not isinstance(entry, dict):
-                entry = {}
-            else:
-                entry = dict(entry)
-            entry["last_status"] = normalize_task_status(run_data.get("status") or "starting")
-            entry["updated_at"] = utc_now()
-            for key in ("zhh_args", "created_at", "final_log_file", "pane_log_file", "command", "cwd"):
-                value = run_data.get(key)
-                if value is not None and value != "":
-                    entry[key] = value
-            task_meta[job_id] = entry
-
-        update_conversation(conversation_id, add_job)
-        append_message(conversation_id, "system", f"Runned job {job_id}", {
-            "system_event": "task_run",
-            "job_id": job_id,
-            "job_status": str(run_data.get("status") or "starting"),
-            "zhh_args": str(run_data.get("zhh_args") or ""),
-            "auto_run_by_agent": False,
-        })
+        persist_zhh_job_to_conversation(
+            conversation_id,
+            job_id,
+            run_data,
+            auto_run_by_agent=False,
+        )
 
         return jsonify({"conversation_id": conversation_id, "job": run_data}), 200
 
@@ -292,44 +276,24 @@ def register_task_routes(app, zhh_server_url: str, auto_fix_coordinator=None):
 
     @app.route("/api/conversations/<conversation_id>/tasks/<job_id>/nickname", methods=["POST"])
     def api_task_nickname(conversation_id: str, job_id: str):
-        conv = get_conversation(conversation_id)
-        if not conv:
-            return jsonify({"error": "not found"}), 404
-
-        job_ids = conv.get("job_ids", []) or []
-        if job_id not in job_ids:
-            return jsonify({"error": "job does not belong to this conversation"}), 404
-
         data = request.get_json(force=True, silent=True) or {}
         raw_nickname = data.get("nickname")
         if raw_nickname is None:
             return jsonify({"error": "nickname is required"}), 400
 
         nickname = str(raw_nickname).strip()
-        if len(nickname) > 80:
-            return jsonify({"error": "nickname too long (max 80 chars)"}), 400
+        from core.tasks.session_job_tools import set_job_nickname
+        result = set_job_nickname(conversation_id, job_id, nickname)
+        if not result.get("ok"):
+            err = str(result.get("error") or "failed")
+            if "not found" in err or "does not belong" in err:
+                return jsonify({"error": err}), 404
+            return jsonify({"error": err}), 400
 
-        from core.utils import utc_now
-        def set_nickname(c: dict):
-            task_meta = c.setdefault("task_meta", {})
-            entry = task_meta.get(job_id, {})
-            if not isinstance(entry, dict):
-                entry = {}
-            else:
-                entry = dict(entry)
-            if nickname:
-                entry["nickname"] = nickname
-                entry["updated_at"] = utc_now()
-            else:
-                entry.pop("nickname", None)
-                entry["updated_at"] = utc_now()
-            task_meta[job_id] = entry
-
-        update_conversation(conversation_id, set_nickname)
         return jsonify({
             "conversation_id": conversation_id,
             "job_id": job_id,
-            "nickname": nickname,
+            "nickname": result.get("nickname", nickname),
         }), 200
 
     @app.route("/api/conversations/<conversation_id>/tasks/<job_id>/log", methods=["GET"])
@@ -342,7 +306,12 @@ def register_task_routes(app, zhh_server_url: str, auto_fix_coordinator=None):
         if job_id not in job_ids:
             return jsonify({"error": "job does not belong to this conversation"}), 404
 
-        lines = _safe_positive_int(request.args.get("lines", "500"), default=500)
+        raw_lines = _safe_positive_int(
+            request.args.get("lines", str(_TASK_LOG_VIEWER_MAX_LINES)),
+            default=_TASK_LOG_VIEWER_MAX_LINES,
+        )
+        lines = raw_lines if raw_lines > 0 else _TASK_LOG_VIEWER_MAX_LINES
+        lines = min(lines, _TASK_LOG_VIEWER_MAX_LINES)
         job_status = _resolve_job_status(conv, job_id)
 
         payload = get_task_log_payload(conv, job_id, lines=lines, prefer_pane=True)

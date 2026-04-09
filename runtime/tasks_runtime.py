@@ -154,34 +154,51 @@ def fetch_task_reference_payload(zhh_server_url: str, job_id: str, lines: int = 
 
     base_stdout = str(payload.get("log", ""))
     output_status, output_path, output_payload = fetch_task_output_log_path(zhh_server_url, job_id)
-    if output_status != 200 or not output_path:
-        err = output_payload if isinstance(output_payload, dict) else {"error": f"status code {output_status}"}
-        return output_status, err
-
     merged = dict(payload)
     merged["stdout"] = base_stdout
-    merged["stdout_source"] = output_path
-    merged["full_log_path"] = output_path
+
+    if output_status == 200 and output_path:
+        merged["stdout_source"] = output_path
+        merged["full_log_path"] = output_path
+        return status_code, merged
+
+    # /log succeeded but /status has no output_log (or status request failed). Do not drop log text.
+    if output_path:
+        merged["stdout_source"] = output_path
+        merged["full_log_path"] = output_path
+    if isinstance(output_payload, dict) and output_payload.get("error"):
+        merged.setdefault(
+            "upstream_output_log_status",
+            {"http_status": output_status, "detail": output_payload},
+        )
 
     return status_code, merged
 
 
 def build_prompt_with_task_refs(base_text: str, refs_payload: list[dict]) -> str:
+    """Append referenced job ids + hint to use session_job query; does not fetch or embed logs.
+
+    Each element of ``refs_payload`` must be a dict with a non-empty ``job_id`` string.
+    """
     if not refs_payload:
         return base_text
 
-    blocks = [
-        text for text in (str(item.get("stdout", "")) for item in refs_payload)
-        if text.strip()
-    ]
+    from runtime.agent_prompts import TASK_REF_JOB_IDS_FOOTER, TASK_REF_JOB_IDS_HEADER
 
-    refs_text = "\n\n".join(blocks)
-    if not refs_text.strip():
-        return base_text
+    job_ids: list[str] = []
+    for i, item in enumerate(refs_payload):
+        if not isinstance(item, dict):
+            raise TypeError(f"refs_payload[{i}] must be dict, got {type(item).__name__}")
+        jid = str(item.get("job_id") or "").strip()
+        if not jid:
+            raise ValueError(f"refs_payload[{i}] must include non-empty job_id")
+        job_ids.append(jid)
 
+    lines = "\n".join(f"- Reference job id: `{jid}`" for jid in job_ids)
     return (
         f"{base_text}\n\n"
         "---\n"
-        "The user referenced the following stdout output(s). Use only these outputs as additional context for this turn.\n"
-        f"{refs_text}"
+        f"{TASK_REF_JOB_IDS_HEADER}\n"
+        f"{lines}\n\n"
+        f"{TASK_REF_JOB_IDS_FOOTER}"
     )

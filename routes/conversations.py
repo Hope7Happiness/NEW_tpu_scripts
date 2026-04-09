@@ -10,11 +10,13 @@ from core.workdir import normalize_workdir, workdir_base, create_workdir_by_clon
 from core.conversation import (
     list_conversations, get_conversation, find_conversation_by_cwd,
     create_conversation_record, delete_conversation, update_conversation,
-    conversation_summary, maybe_autoname, build_conversation_memory_summary
+    conversation_summary, maybe_autoname, build_conversation_memory_summary,
 )
+from core.conversation.store import get_conversation_lock
 from core.activity import get_agent_activity_payload, reset_agent_activity
 from core.tasks import clear_all_task_unread_alerts
 from runtime.auto_fix_runtime import AutoFixCoordinator
+from runtime.workspace_bootstrap import bootstrap_workspace_session, should_skip_workspace_bootstrap
 
 
 def register_conversation_routes(app, get_agent_path_func, auto_fix_coordinator: AutoFixCoordinator):
@@ -71,7 +73,39 @@ def register_conversation_routes(app, get_agent_path_func, auto_fix_coordinator:
             llm_model=get_global_cli_model(),
             llm_effort=SESSION_DEFAULT_EFFORT,
         )
-        return jsonify({"conversation": conversation_summary(record), "detail": record, "reused": False})
+        conv_id = str(record.get("id") or "").strip()
+        agent_path = (get_agent_path_func() if callable(get_agent_path_func) else None) or "claude"
+
+        if should_skip_workspace_bootstrap():
+            fresh = get_conversation(conv_id) or record
+            return jsonify({
+                "conversation": conversation_summary(fresh),
+                "detail": fresh,
+                "reused": False,
+                "workspace_bootstrap_ok": True,
+                "workspace_bootstrap_error": None,
+                "workspace_bootstrap_skipped": True,
+            })
+
+        lock = get_conversation_lock(conv_id)
+        if not lock.acquire(blocking=True):
+            return jsonify({"error": "conversation lock unavailable"}), 503
+        try:
+            update_conversation(conv_id, lambda c: c.update({"status": "running"}))
+            ok, err, skipped = bootstrap_workspace_session(conv_id, record, agent_path=agent_path)
+        finally:
+            update_conversation(conv_id, lambda c: c.update({"status": "idle"}))
+            lock.release()
+
+        fresh = get_conversation(conv_id) or record
+        return jsonify({
+            "conversation": conversation_summary(fresh),
+            "detail": fresh,
+            "reused": False,
+            "workspace_bootstrap_ok": ok,
+            "workspace_bootstrap_error": err,
+            "workspace_bootstrap_skipped": skipped,
+        })
 
     @app.route("/api/workdirs", methods=["GET"])
     def api_workdirs():

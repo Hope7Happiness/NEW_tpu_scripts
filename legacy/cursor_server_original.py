@@ -27,11 +27,13 @@ from pathlib import Path
 from flask import Flask, jsonify, request, send_from_directory
 
 from acp_runtime import acp_prompt_session, get_model_policy_status, note_usage_limit_error
-from agent_action_protocol import (
-  extract_run_job_action,
-  new_action_nonce,
-  with_run_job_skill_instruction,
+from core.tasks.session_job_tools import execute_session_job_actions
+from runtime.agent_action_protocol import (
+    extract_session_job_actions,
+    format_session_job_parse_errors_message,
+    new_action_nonce,
 )
+from runtime.agent_prompts import append_server_nonce_footer
 from auto_fix_runtime import AutoFixCoordinator
 from conversation_store import (
   conversation_summary as conversation_summary_impl,
@@ -1357,22 +1359,6 @@ def build_conversation_memory_summary(conv: dict, max_items: int = 32, max_chars
   return summary[-max_chars:]
 
 
-def build_prompt_with_memory(conv: dict, user_text: str) -> str:
-  memory = str((conv or {}).get("memory_summary") or "").strip()
-  memory_pending = bool((conv or {}).get("memory_summary_pending", False))
-  cursor_session_id = str((conv or {}).get("cursor_session_id") or "").strip()
-  text = str(user_text or "").strip()
-  should_inject = bool(memory) and (memory_pending or not cursor_session_id)
-  if not should_inject:
-    return text
-  return (
-    "[Conversation memory summary]\n"
-    f"{memory}\n\n"
-    "[Current user request]\n"
-    f"{text}"
-  )
-
-
 def resolve_session_model(raw_model: str | None) -> str:
   model = str(raw_model or "").strip().lower()
   if model in ALLOWED_SESSION_MODELS:
@@ -1437,34 +1423,17 @@ def record_run_job(conversation_id: str, run_data: dict, *, auto_run_by_agent: b
   return job_id
 
 
-def trigger_run_job_for_conversation(conversation_id: str, auto_run_by_agent: bool = False) -> tuple[str | None, str | None]:
-  conv = get_conversation(conversation_id)
-  if not conv:
-    return None, "conversation not found"
-  status_code, run_data = zhh_request(ZHH_SERVER_URL, "POST", "/run", {"cwd": conv["cwd"], "args": ""})
-  if status_code != 200:
-    return None, str(run_data.get("error", f"/run failed with {status_code}"))
-  return record_run_job(conversation_id, run_data, auto_run_by_agent=auto_run_by_agent), None
-
-
 AUTO_FIX_COORDINATOR = AutoFixCoordinator(
   get_conversation=get_conversation,
   get_conversation_lock=get_conversation_lock,
   update_conversation=update_conversation,
   append_message=append_message,
-  build_task_reference_payload=lambda conversation_id, conv, job_id: _build_task_reference_payload(
-    conversation_id,
-    conv,
-    job_id,
-    lines=400,
-  ),
   resolve_job_status=_resolve_job_status,
   is_failed_task_status=is_failed_task_status,
   normalize_task_status=normalize_task_status,
   maybe_autoname=maybe_autoname,
   acp_prompt_session=acp_prompt_session,
   agent_path_getter=lambda: AGENT_PATH,
-  trigger_run_job=trigger_run_job_for_conversation,
   utc_now=utc_now,
   report_agent_event=lambda conversation_id, event: record_agent_event(conversation_id, event),
 )
@@ -2107,18 +2076,15 @@ def api_send_message(conversation_id: str):
     reset_agent_activity(conversation_id, "Prompt sent to Claude Code.")
     update_conversation(conversation_id, lambda c: c.update({"status": "running"}))
 
-    refs_payload: list[dict] = []
-    ref_sources: dict[str, str] = {}
-    for job_id in normalized_refs:
-      stdout_text, source = _build_task_reference_payload(conversation_id, conv, job_id, lines=400)
-      ref_sources[job_id] = source
-      refs_payload.append({
-        "stdout": stdout_text,
-      })
+    refs_payload = [{"job_id": job_id} for job_id in normalized_refs]
+    ref_sources = {job_id: "session_job query" for job_id in normalized_refs}
 
-    run_action_nonce = new_action_nonce()
-    prompt_base = build_prompt_with_memory(conv, text)
-    prompt_text = build_prompt_with_task_refs(with_run_job_skill_instruction(prompt_base, run_action_nonce), refs_payload)
+    session_job_nonce = new_action_nonce()
+    prompt_base = text
+    prompt_text = append_server_nonce_footer(
+        build_prompt_with_task_refs(prompt_base, refs_payload),
+        session_nonce=session_job_nonce,
+    )
     append_message(conversation_id, "user", text, {
       "task_refs": normalized_refs,
       "task_ref_sources": ref_sources,
@@ -2155,25 +2121,26 @@ def api_send_message(conversation_id: str):
     update_conversation(conversation_id, set_runtime_metadata)
 
     assistant_raw_text = result["text"] or f"[No text returned; stopReason={result['stop_reason']}]"
-    assistant_text, should_run_job = extract_run_job_action(assistant_raw_text, run_action_nonce)
-    if not assistant_text:
-      assistant_text = "[Action received: run job]"
-    if not (should_run_job and assistant_text == "[Action received: run job]"):
+    assistant_text, session_actions, parse_errors = extract_session_job_actions(
+        assistant_raw_text, session_job_nonce,
+    )
+    if parse_errors:
+      append_message(
+          conversation_id,
+          "system",
+          format_session_job_parse_errors_message(parse_errors),
+          {"system_event": "session_job_parse_error", "errors": parse_errors},
+      )
+    if not assistant_text.strip() and session_actions:
+      assistant_text = "[Action received: session job]"
+    skip_assistant_append = (
+      session_actions
+      and assistant_text == "[Action received: session job]"
+    )
+    if not skip_assistant_append and (assistant_text.strip() or session_actions):
       append_message(conversation_id, "assistant", assistant_text)
 
-    if should_run_job:
-      append_message(conversation_id, "system", "action: run job", {
-        "system_event": "agent_action_run_job",
-      })
-
-    triggered_job = None
-    if should_run_job:
-      triggered_job, run_err = trigger_run_job_for_conversation(conversation_id, auto_run_by_agent=True)
-      if run_err:
-        append_message(conversation_id, "system", f"Agent requested run job, but /run failed: {run_err}", {
-          "system_event": "task_run_failed",
-          "auto_run_by_agent": True,
-        })
+    _, triggered_job = execute_session_job_actions(conversation_id, session_actions)
 
     maybe_autoname(conversation_id)
     updated = update_conversation(conversation_id, lambda c: c.update({"status": "idle"}))
@@ -2183,6 +2150,7 @@ def api_send_message(conversation_id: str):
       "assistant": assistant_text,
       "stop_reason": result["stop_reason"],
       "triggered_job_id": triggered_job,
+      "session_job_parse_errors": parse_errors,
     })
   except Exception as e:
     err_text = _compact_error_text(str(e).strip() or f"{type(e).__name__}: unknown error")

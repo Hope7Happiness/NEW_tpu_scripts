@@ -3,9 +3,12 @@ from __future__ import annotations
 import json
 import re
 import uuid
+from typing import Any
+
+from runtime.agent_prompts import auto_fix_trigger_text
 
 
-RUN_JOB_ACTION_PATTERN = re.compile(r"<run_job>(.*?)</run_job>", re.IGNORECASE | re.DOTALL)
+SESSION_JOB_ACTION_PATTERN = re.compile(r"<session_job>(.*?)</session_job>", re.IGNORECASE | re.DOTALL)
 GIVE_UP_FIX_TAG_PATTERN = re.compile(r"<give_up_fix>(.*?)</give_up_fix>", re.IGNORECASE | re.DOTALL)
 
 
@@ -13,68 +16,94 @@ def new_action_nonce() -> str:
     return uuid.uuid4().hex
 
 
-def with_run_job_skill_instruction(base_text: str, run_nonce: str) -> str:
-    instruction = (
-        "[Server skill: run job]\n"
-        "You have an internal skill named \"run job\".\n"
-        "Definition: run job == run the current remote_run_config.yaml with no extra args (equivalent to command: run).\n"
-        "Critical rule: if user asks to \"run/跑\" the whole project, full pipeline, training, evaluation, or any long experiment, "
-        "you MUST trigger run job skill instead of running local shell commands directly.\n"
-        "If user asks to run job, do NOT do local test runs unless user explicitly says to run locally.\n"
-        "Do NOT execute full-codebase experiment commands locally when run job skill applies.\n"
-        "When and only when the user explicitly asks to run/start/launch that job now, append this exact action tag in your final response:\n"
-        f"<run_job>{{\"command\":\"run\",\"nonce\":\"{run_nonce}\"}}</run_job>\n"
-        "If user did not ask to run the job now, do not output this tag."
-    )
-    return f"{base_text}\n\n{instruction}"
+def format_session_job_parse_errors_message(errors: list[str]) -> str:
+    """User-visible system message when <session_job> tags failed to parse or validate."""
+    if not errors:
+        return ""
+    lines = [
+        "[Server · session_job parse error]",
+        "One or more <session_job>…</session_job> blocks were present but not applied.",
+        "Fix JSON (valid object), op, fields, and nonce matching this turn's Chinese footer, then retry.",
+        "",
+    ]
+    lines.extend(f"- {e}" for e in errors)
+    return "\n".join(lines)
 
 
-def extract_run_job_action(text: str, run_nonce: str) -> tuple[str, bool]:
+def extract_session_job_actions(text: str, session_nonce: str) -> tuple[str, list[dict[str, Any]], list[str]]:
+    """Strip <session_job> tags; collect valid actions; **errors** lists each tag that did not apply."""
     raw = str(text or "")
-    expected_nonce = str(run_nonce or "").strip()
-    should_run = False
+    expected = str(session_nonce or "").strip()
+    actions: list[dict[str, Any]] = []
+    errors: list[str] = []
 
     def _replace(match: re.Match[str]) -> str:
-        nonlocal should_run
         payload = str(match.group(1) or "").strip()
         if not payload:
+            errors.append("<session_job>: empty payload between tags (need JSON object).")
             return ""
-
-        parsed = None
         try:
             parsed = json.loads(payload)
-        except Exception:
-            parsed = None
-
-        command = ""
-        nonce = ""
-        if isinstance(parsed, dict):
-            command = str(parsed.get("command") or "").strip().lower()
-            nonce = str(parsed.get("nonce") or "").strip()
-
-        if command == "run" and nonce == expected_nonce:
-            should_run = True
+        except json.JSONDecodeError as e:
+            errors.append(f"<session_job>: invalid JSON ({e.msg} at position {e.pos}).")
+            return ""
+        except Exception as e:
+            errors.append(f"<session_job>: invalid JSON ({e}).")
+            return ""
+        if not isinstance(parsed, dict):
+            errors.append("<session_job>: JSON must be a single object {{...}}, not an array or string.")
+            return ""
+        nonce = str(parsed.get("nonce") or "").strip()
+        if nonce != expected:
+            errors.append(
+                "<session_job>: `nonce` must exactly match the `session_job` value in this message's Chinese footer "
+                f"(expected footer nonce, got {nonce!r})."
+            )
+            return ""
+        op = str(parsed.get("op") or "").strip().lower()
+        if op == "run":
+            config_path = str(parsed.get("config_path") or "").strip()
+            description = str(parsed.get("description") or "").strip()
+            if not config_path or not description:
+                errors.append(
+                    '<session_job> op "run": requires non-empty `config_path` and `description` (and optional `nickname`).'
+                )
+                return ""
+            nick = str(parsed.get("nickname") or "").strip()
+            item: dict[str, Any] = {"op": "run", "config_path": config_path, "description": description}
+            if nick:
+                item["nickname"] = nick
+            actions.append(item)
+        elif op in ("list", "global_query", "jobs"):
+            status_val = parsed.get("status")
+            st: str | None
+            if status_val is None:
+                st = None
+            else:
+                st = str(status_val).strip()
+                if not st:
+                    st = None
+            actions.append({"op": "list", "status": st})
+        elif op in ("query", "job"):
+            job_id = str(parsed.get("job_id") or "").strip()
+            if not job_id:
+                errors.append('<session_job> op "query": requires non-empty `job_id`.')
+                return ""
+            actions.append({"op": "query", "job_id": job_id})
+        else:
+            if not op:
+                errors.append('<session_job>: missing or empty `op` (use "run", "list", or "query").')
+            else:
+                errors.append(f'<session_job>: unsupported op {op!r} (use "run", "list", or "query").')
+            return ""
         return ""
 
-    cleaned = RUN_JOB_ACTION_PATTERN.sub(_replace, raw)
-    cleaned = cleaned.strip()
-    return cleaned, should_run
+    cleaned = SESSION_JOB_ACTION_PATTERN.sub(_replace, raw).strip()
+    return cleaned, actions, errors
 
 
 def build_auto_fix_prompt(job_id: str, status: str, give_up_nonce: str) -> str:
-    target_job_id = str(job_id or "").strip()
-    normalized_status = str(status or "").strip().lower() or "unknown"
-    nonce = str(give_up_nonce or "").strip()
-    return (
-        f"Task {target_job_id} finished with status '{normalized_status}'.\n"
-        "Please inspect the referenced logs and fix the issue directly in this workspace.\n"
-        "After making fixes, explain what you changed and why.\n"
-        "In some cases, it may be possible that the issue is just random, if you are sure of that, you can just state the reason without making any modifications.\n"
-        "Beside code errors, there are two specific types of errors you might encounter: 1. environmental errors, such as missing packages, which you can fix by adding a 补.sh in the ROOT of the project, the content of it will be executed before the job runs, you can put any shell commands in it to prepare the environment, but notice that most packages (e.g. JAX/flax) are already auto-installed, you only need to add the custom packages you introduce; 2. GS bucket errors, in which you should review your GS bucket skill. Specifically, you are permitted to copy SMALL checkpoints LOCALLY (i.e. run in your shell) if needed.\n"
-        "Finally, only if you are truly blocked and cannot safely fix it now, append exactly one give-up tag in your final response:\n"
-        f"<give_up_fix>{{\"job_id\":\"{target_job_id}\",\"reason\":\"<specific reason>\",\"nonce\":\"{nonce}\"}}</give_up_fix>\n"
-        "Do not use the give-up tag unless absolutely necessary. The reason is mandatory."
-    )
+    return auto_fix_trigger_text(job_id, status, give_up_nonce)
 
 
 def extract_give_up_fix_action(text: str, job_id: str, give_up_nonce: str) -> tuple[str, str | None]:

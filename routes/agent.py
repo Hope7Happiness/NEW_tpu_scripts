@@ -4,19 +4,30 @@ from __future__ import annotations
 from flask import jsonify, request
 
 from core.config import ALLOWED_SESSION_EFFORTS, ZHH_SERVER_URL
-from core.utils import utc_now
 from core.utils import _compact_error_text
 from core.conversation import (
-    get_conversation, update_conversation, 
-    build_prompt_with_memory, resolve_session_effort,
+    get_conversation, update_conversation,
+    resolve_session_effort,
     parse_session_setting_command, maybe_autoname
 )
 from core.conversation.store import append_message
 from core.activity import reset_agent_activity, finish_agent_activity, record_agent_event
 from core.tasks import get_conversation_jobs, diagnose_completed_jobs_once, update_task_alert_state
-from runtime.agent_action_protocol import extract_run_job_action, new_action_nonce, with_run_job_skill_instruction
+from runtime.agent_action_protocol import (
+    extract_session_job_actions,
+    format_session_job_parse_errors_message,
+    new_action_nonce,
+)
+from core.tasks.session_job_tools import (
+    execute_session_job_actions,
+    format_session_jobs_user_message_content,
+)
 from runtime.acp_runtime import acp_prompt_session, note_usage_limit_error
-from runtime.tasks_runtime import build_prompt_with_task_refs
+from runtime.agent_prompt_compose import compose_cli_turn_prompt
+from runtime.agent_prompts import (
+    session_job_followup_core_content,
+    session_job_parse_error_autofix_core_content,
+)
 from core.global_agent_model import get_global_cli_model, get_global_llm_provider
 
 
@@ -99,111 +110,167 @@ def register_agent_routes(app, auto_fix_coordinator=None, get_agent_path_func=No
             reset_agent_activity(conversation_id, None)
             update_conversation(conversation_id, lambda c: c.update({"status": "running"}))
 
-            refs_payload = []
-            ref_sources = {}
-            
-            # Build task reference payloads
-            for job_id in normalized_refs:
-                from routes.tasks import _build_task_reference_payload
-                stdout_text, source = _build_task_reference_payload(conversation_id, conv, job_id, lines=400)
-                ref_sources[job_id] = source
-                refs_payload.append({"stdout": stdout_text})
+            refs_payload = [{"job_id": jid} for jid in normalized_refs]
+            ref_sources = {jid: "session_job query" for jid in normalized_refs}
 
-            run_action_nonce = new_action_nonce()
-            prompt_base = build_prompt_with_memory(conv, text)
-            prompt_text = build_prompt_with_task_refs(with_run_job_skill_instruction(prompt_base, run_action_nonce), refs_payload)
-            
             append_message(conversation_id, "user", text, {
                 "task_refs": normalized_refs,
                 "task_ref_sources": ref_sources,
             })
+            conv = get_conversation(conversation_id) or conv
 
-            result = acp_prompt_session(
-                agent_path=(get_agent_path_func() if callable(get_agent_path_func) else "claude"),
-                cwd=conv["cwd"],
-                mode=conv.get("mode", "agent"),
-                text=prompt_text,
-                cursor_session_id=conv.get("cursor_session_id"),
-                preferred_model=session_model,
-                effort=session_effort,
-                llm_provider=get_global_llm_provider(),
-                on_progress_event=lambda event: record_agent_event(conversation_id, event),
-            )
+            agent_path_resolved = (get_agent_path_func() if callable(get_agent_path_func) else "claude")
+            llm_provider = get_global_llm_provider()
+            tuples_for_next: list[tuple[str, dict]] | None = None
+            triggered_job: str | None = None
+            session_triggered_job: str | None = None
+            assistant_text = ""
+            last_stop = "success"
+            followup_count = 0
+            first_agent_round = True
+            all_session_job_parse_errors: list[str] = []
 
-            model_used = str(result.get("model") or "").strip()
-            effort_used = resolve_session_effort(result.get("effort") or session_effort)
-            context_tokens = result.get("context_tokens")
-            context_window = result.get("context_window")
+            def _append_assistant_session_job_turn(at: str, sa: list) -> str:
+                """Normalize placeholder and append assistant when appropriate. Returns text for API."""
+                t = at
+                if not t.strip() and sa:
+                    t = "[Action received: session job]"
+                skip = bool(sa and t == "[Action received: session job]")
+                if not skip and (t.strip() or sa):
+                    append_message(conversation_id, "assistant", t)
+                return t
 
-            def set_runtime_metadata(c: dict):
-                if not c.get("cursor_session_id"):
-                    c["cursor_session_id"] = result["cursor_session_id"]
-                c["llm_model"] = session_model
-                c["llm_effort"] = resolve_session_effort(c.get("llm_effort") or session_effort)
-                c["current_model"] = model_used or session_model
-                c["current_effort"] = effort_used
-                if isinstance(context_tokens, int) and context_tokens >= 0:
-                    c["current_context_tokens"] = context_tokens
-                if isinstance(context_window, int) and context_window > 0:
-                    c["current_context_window"] = context_window
-                if c.get("memory_summary_pending"):
-                    c["memory_summary_pending"] = False
-
-            update_conversation(conversation_id, set_runtime_metadata)
-
-            assistant_raw_text = result["text"] or f"[No text returned; stopReason={result['stop_reason']}]"
-            assistant_text, should_run_job = extract_run_job_action(assistant_raw_text, run_action_nonce)
-            if not assistant_text:
-                assistant_text = "[Action received: run job]"
-            if not (should_run_job and assistant_text == "[Action received: run job]"):
-                append_message(conversation_id, "assistant", assistant_text)
-
-            triggered_job = None
-            if should_run_job:
-                append_message(conversation_id, "system", "action: run job", {
-                    "system_event": "agent_action_run_job",
-                })
-                
-                # Trigger run job
-                from routes.tasks import zhh_run_job
-                run_result = zhh_run_job(args="", cwd=conv["cwd"])
-                if run_result.get("ok"):
-                    triggered_job = run_result.get("job_id")
-                    job_data = run_result.get("payload", {})
-                    
-                    def add_job(c: dict):
-                        job_ids = c.setdefault("job_ids", [])
-                        if triggered_job not in job_ids:
-                            job_ids.append(triggered_job)
-                        from core.tasks import normalize_task_status
-                        task_meta = c.setdefault("task_meta", {})
-                        entry = task_meta.get(triggered_job, {})
-                        if not isinstance(entry, dict):
-                            entry = {}
-                        else:
-                            entry = dict(entry)
-                        entry["last_status"] = normalize_task_status(job_data.get("status") or "starting")
-                        entry["updated_at"] = utc_now()
-                        for key in ("zhh_args", "created_at", "final_log_file", "pane_log_file", "command", "cwd"):
-                            value = job_data.get(key)
-                            if value is not None and value != "":
-                                entry[key] = value
-                        task_meta[triggered_job] = entry
-
-                    update_conversation(conversation_id, add_job)
-                    append_message(conversation_id, "system", f"Runned job {triggered_job}", {
-                        "system_event": "task_run",
-                        "job_id": triggered_job,
-                        "job_status": str(job_data.get("status") or "starting"),
-                        "zhh_args": str(job_data.get("zhh_args") or ""),
-                        "auto_run_by_agent": True,
-                    })
+            while True:
+                if not first_agent_round:
+                    if not tuples_for_next:
+                        break
+                    inj_body = format_session_jobs_user_message_content(tuples_for_next)
+                    results_meta = [{"op": o, "payload": p} for o, p in tuples_for_next]
+                    append_message(
+                        conversation_id,
+                        "user",
+                        inj_body,
+                        {
+                            "session_job_injection": True,
+                            "session_job_results": results_meta,
+                        },
+                    )
+                    followup_count += 1
+                    conv = get_conversation(conversation_id)
+                    if not conv:
+                        break
+                    core_request = session_job_followup_core_content(inj_body)
+                    refs_for_round: list = []
                 else:
-                    run_err = run_result.get("error", "unknown error")
-                    append_message(conversation_id, "system", f"Agent requested run job, but /run failed: {run_err}", {
-                        "system_event": "task_run_failed",
-                        "auto_run_by_agent": True,
-                    })
+                    core_request = text
+                    refs_for_round = refs_payload
+                    first_agent_round = False
+
+                session_job_nonce = new_action_nonce()
+                prompt_text = compose_cli_turn_prompt(
+                    core_request,
+                    session_job_nonce,
+                    refs_for_round,
+                )
+
+                result = acp_prompt_session(
+                    agent_path=agent_path_resolved,
+                    cwd=conv["cwd"],
+                    mode=conv.get("mode", "agent"),
+                    text=prompt_text,
+                    cursor_session_id=conv.get("cursor_session_id"),
+                    preferred_model=session_model,
+                    effort=session_effort,
+                    llm_provider=llm_provider,
+                    on_progress_event=lambda event: record_agent_event(conversation_id, event),
+                )
+                last_stop = str(result.get("stop_reason") or "success")
+
+                def set_runtime_metadata(c: dict, res: dict):
+                    model_used = str(res.get("model") or "").strip()
+                    effort_used = resolve_session_effort(res.get("effort") or session_effort)
+                    context_tokens = res.get("context_tokens")
+                    context_window = res.get("context_window")
+                    if not c.get("cursor_session_id"):
+                        c["cursor_session_id"] = res["cursor_session_id"]
+                    c["llm_model"] = session_model
+                    c["llm_effort"] = resolve_session_effort(c.get("llm_effort") or session_effort)
+                    c["current_model"] = model_used or session_model
+                    c["current_effort"] = effort_used
+                    if isinstance(context_tokens, int) and context_tokens >= 0:
+                        c["current_context_tokens"] = context_tokens
+                    if isinstance(context_window, int) and context_window > 0:
+                        c["current_context_window"] = context_window
+                    if c.get("memory_summary_pending"):
+                        c["memory_summary_pending"] = False
+
+                update_conversation(conversation_id, lambda c: set_runtime_metadata(c, result))
+                conv = get_conversation(conversation_id) or conv
+
+                assistant_raw_text = result["text"] or f"[No text returned; stopReason={result['stop_reason']}]"
+                at1, sa1, pe1 = extract_session_job_actions(assistant_raw_text, session_job_nonce)
+
+                if pe1:
+                    all_session_job_parse_errors.extend(pe1)
+                    _append_assistant_session_job_turn(at1, sa1)
+                    repair_core = session_job_parse_error_autofix_core_content(
+                        format_session_job_parse_errors_message(pe1),
+                    )
+                    append_message(
+                        conversation_id,
+                        "user",
+                        repair_core,
+                        {
+                            "session_job_parse_error_autofix": True,
+                            "errors": pe1,
+                        },
+                    )
+                    conv = get_conversation(conversation_id) or conv
+                    repair_nonce = new_action_nonce()
+                    repair_prompt = compose_cli_turn_prompt(repair_core, repair_nonce, [])
+                    result = acp_prompt_session(
+                        agent_path=agent_path_resolved,
+                        cwd=conv["cwd"],
+                        mode=conv.get("mode", "agent"),
+                        text=repair_prompt,
+                        cursor_session_id=conv.get("cursor_session_id"),
+                        preferred_model=session_model,
+                        effort=session_effort,
+                        llm_provider=llm_provider,
+                        on_progress_event=lambda event: record_agent_event(conversation_id, event),
+                    )
+                    last_stop = str(result.get("stop_reason") or "success")
+                    update_conversation(conversation_id, lambda c: set_runtime_metadata(c, result))
+                    conv = get_conversation(conversation_id) or conv
+                    assistant_raw_text = result["text"] or f"[No text returned; stopReason={result['stop_reason']}]"
+                    assistant_text, session_actions, pe2 = extract_session_job_actions(
+                        assistant_raw_text, repair_nonce,
+                    )
+                    if pe2:
+                        all_session_job_parse_errors.extend(pe2)
+                        append_message(
+                            conversation_id,
+                            "system",
+                            format_session_job_parse_errors_message(pe2),
+                            {"system_event": "session_job_parse_error", "errors": pe2},
+                        )
+                    assistant_text = _append_assistant_session_job_turn(assistant_text, session_actions)
+                    tuples1, stj1 = execute_session_job_actions(conversation_id, sa1)
+                    tuples2, stj2 = execute_session_job_actions(conversation_id, session_actions)
+                    tuples_for_next = tuples1 + tuples2
+                    stj = stj2 or stj1
+                else:
+                    assistant_text = _append_assistant_session_job_turn(at1, sa1)
+                    tuples_for_next, stj = execute_session_job_actions(conversation_id, sa1)
+
+                if stj:
+                    session_triggered_job = stj
+
+                if not tuples_for_next:
+                    break
+
+            if triggered_job is None and session_triggered_job:
+                triggered_job = session_triggered_job
 
             maybe_autoname(conversation_id)
             updated = update_conversation(conversation_id, lambda c: c.update({"status": "idle"}))
@@ -211,8 +278,10 @@ def register_agent_routes(app, auto_fix_coordinator=None, get_agent_path_func=No
             return jsonify({
                 "conversation": updated,
                 "assistant": assistant_text,
-                "stop_reason": result["stop_reason"],
+                "stop_reason": last_stop,
                 "triggered_job_id": triggered_job,
+                "session_job_followups": followup_count,
+                "session_job_parse_errors": all_session_job_parse_errors,
             })
         except Exception as e:
             err_text = _compact_error_text(str(e).strip() or f"{type(e).__name__}: unknown error")

@@ -9,6 +9,7 @@ from core.tasks.operations import (
     clear_all_task_unread_alerts,
     resolve_task_wandb_url,
     resolve_task_output_log_path,
+    resolve_model_log_file_path,
     snapshot_task_log_before_cancel,
     get_task_log_payload,
 )
@@ -38,6 +39,7 @@ __all__ = [
     "clear_all_task_unread_alerts",
     "resolve_task_wandb_url",
     "resolve_task_output_log_path",
+    "resolve_model_log_file_path",
     "snapshot_task_log_before_cancel",
     "get_task_log_payload",
     "diagnose_completed_jobs_once",

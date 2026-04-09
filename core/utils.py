@@ -57,6 +57,19 @@ def _tail_text_file(path: Path, lines: int = 500, max_chars: int = 120_000) -> s
     return "\n".join(all_lines[-lines:])
 
 
+def _tail_string_lines(text: str, lines: int = 400, max_chars: int = 120_000) -> str:
+    """Return the last ``lines`` lines of a string (e.g. remote log body)."""
+    raw = str(text or "")
+    if not raw:
+        return ""
+    if len(raw) > max_chars:
+        raw = raw[-max_chars:]
+    all_lines = raw.splitlines()
+    if len(all_lines) <= lines:
+        return raw
+    return "\n".join(all_lines[-lines:])
+
+
 def _read_text_file(path: Path, max_chars: int = 2_000_000) -> str:
     """读取文本文件内容"""
     if not path or not path.exists():

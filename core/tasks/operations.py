@@ -4,10 +4,61 @@ from __future__ import annotations
 from pathlib import Path
 
 from core.config import ZHH_SERVER_URL
-from core.utils import _tail_text_file, _extract_wandb_url_from_text, _extract_wandb_url_from_file
+from core.utils import _tail_text_file, _tail_string_lines, _extract_wandb_url_from_text, _extract_wandb_url_from_file
 from runtime.tasks_runtime import fetch_task_reference_payload, fetch_task_output_log_path, zhh_request
 from core.utils import utc_now
 from core.conversation import get_conversation, update_conversation
+from core.tasks.utils import normalize_task_status
+
+
+def persist_zhh_job_to_conversation(
+    conversation_id: str,
+    job_id: str,
+    run_data: dict,
+    *,
+    nickname: str | None = None,
+    run_config_source: str | None = None,
+    auto_run_by_agent: bool = False,
+) -> None:
+    """Append job to conversation task_meta and record a system task_run message (shared by /tasks/run, agent run, session job tools)."""
+    from core.conversation.store import append_message
+
+    jid = str(job_id or "").strip()
+    if not jid:
+        return
+
+    def add_job(c: dict):
+        job_ids = c.setdefault("job_ids", [])
+        if jid not in job_ids:
+            job_ids.append(jid)
+        task_meta = c.setdefault("task_meta", {})
+        entry = task_meta.get(jid, {})
+        if not isinstance(entry, dict):
+            entry = {}
+        else:
+            entry = dict(entry)
+        entry["last_status"] = normalize_task_status(run_data.get("status") or "starting")
+        entry["updated_at"] = utc_now()
+        for key in ("zhh_args", "created_at", "final_log_file", "pane_log_file", "command", "cwd"):
+            value = run_data.get(key)
+            if value is not None and value != "":
+                entry[key] = value
+        nick = str(nickname or "").strip()
+        if nick:
+            entry["nickname"] = nick
+        src = str(run_config_source or "").strip()
+        if src:
+            entry["run_config_source"] = src
+        task_meta[jid] = entry
+
+    update_conversation(conversation_id, add_job)
+    append_message(conversation_id, "system", f"Runned job {jid}", {
+        "system_event": "task_run",
+        "job_id": jid,
+        "job_status": str(run_data.get("status") or "starting"),
+        "zhh_args": str(run_data.get("zhh_args") or ""),
+        "auto_run_by_agent": bool(auto_run_by_agent),
+    })
 
 
 def mark_task_status(conversation_id: str, job_id: str, status: str) -> None:
@@ -130,7 +181,7 @@ def resolve_task_output_log_path(job_id: str) -> str | None:
     return None
 
 
-def _local_task_log_payload(conv: dict, job_id: str, lines: int = 500, prefer_pane: bool = False) -> dict | None:
+def _local_task_log_payload(conv: dict, job_id: str, lines: int = 400, prefer_pane: bool = False) -> dict | None:
     """获取本地任务日志"""
     task_meta = conv.get("task_meta")
     if not isinstance(task_meta, dict):
@@ -182,8 +233,43 @@ def _cached_full_log_path(conv: dict, job_id: str) -> str:
     return str(path)
 
 
-def get_task_log_payload(conv: dict, job_id: str, lines: int = 500, prefer_pane: bool = False) -> dict | None:
-    """获取任务日志负载"""
+def resolve_model_log_file_path(conv: dict, job_id: str) -> str:
+    """Local filesystem path for session_job QUERY / agent file tools.
+
+    Only returns a path when a **real log file** exists on this machine (output log, cached
+    full_log_path, pane/final snapshots in task_meta). Does **not** treat upstream stdout-only
+    payloads as a path — use :func:`get_task_log_payload` for UI, which may fall back to stdout.
+    """
+    jid = str(job_id or "").strip()
+    if not jid:
+        return ""
+    cached = _cached_full_log_path(conv, jid)
+    if cached:
+        return cached
+    ol = resolve_task_output_log_path(jid)
+    if ol:
+        return ol
+    task_meta = conv.get("task_meta", {}) or {}
+    entry = task_meta.get(jid) if isinstance(task_meta, dict) else None
+    if isinstance(entry, dict):
+        for k in ("full_log_path", "final_log_file", "pane_log_file", "cancel_log_file"):
+            v = str(entry.get(k) or "").strip()
+            if not v:
+                continue
+            p = Path(v)
+            if p.exists() and p.is_file():
+                return str(p)
+    return ""
+
+
+def get_task_log_payload(conv: dict, job_id: str, lines: int = 400, prefer_pane: bool = False) -> dict | None:
+    """Load log **text** for the UI/API (task log viewer).
+
+    Prefers local output log files, then upstream ``/log`` body (stdout) when no file is
+    available on this host. Returns at most the last ``lines`` lines (default 400).
+    For the path exposed to the agent in ``session_job`` query, use
+    :func:`resolve_model_log_file_path` instead (never substitutes stdout as a file path).
+    """
     cached = _cached_full_log_path(conv, job_id)
     if cached:
         text = _tail_text_file(Path(cached), lines=lines)
@@ -214,6 +300,7 @@ def get_task_log_payload(conv: dict, job_id: str, lines: int = 500, prefer_pane:
         
         log_text = str(payload.get("log") or payload.get("stdout") or "")
         if log_text.strip():
+            log_text = _tail_string_lines(log_text, lines=lines)
             return {
                 "job_id": job_id,
                 "lines": lines,

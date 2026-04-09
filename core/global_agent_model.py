@@ -24,12 +24,6 @@ GLOBAL_AGENT_MODEL_OPTIONS: tuple[dict[str, Any], ...] = (
         "llm_provider": "openai",
     },
     {
-        "id": "codex-53-copilot",
-        "label": "Codex 5.3 (Copilot)",
-        "cli_model": "gpt-5.3-codex",
-        "llm_provider": "github-copilot",
-    },
-    {
         "id": "sonnet-46-cursor",
         "label": "Claude Sonnet 4.6 (Cursor)",
         "cli_model": "cursor/claude-4.6-sonnet-medium",

@@ -14,7 +14,6 @@ from core.conversation.store import (
 )
 from core.conversation.memory import (
     build_conversation_memory_summary,
-    build_prompt_with_memory,
     resolve_session_model,
     resolve_session_effort,
     parse_session_setting_command,
@@ -33,7 +32,6 @@ __all__ = [
     "maybe_autoname",
     "append_message",
     "build_conversation_memory_summary",
-    "build_prompt_with_memory",
     "resolve_session_model",
     "resolve_session_effort",
     "parse_session_setting_command",

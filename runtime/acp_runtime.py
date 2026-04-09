@@ -11,6 +11,8 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Callable
 
+from runtime.claude_skill_install import ensure_wecode_claude_skill
+
 
 def _first_nonempty_env(keys: list[str], default: str = "") -> str:
     for key in keys:
@@ -313,13 +315,9 @@ class CLIPromptCanceler:
 
 
 def _build_prompt_with_mode(text: str, mode: str) -> str:
-    normalized_mode = str(mode or "agent").strip().lower()
-    base = str(text or "")
-    if normalized_mode == "ask":
-        return "[Run mode: ask]\nRespond concisely and focus on direct answers.\n\n" + base
-    if normalized_mode == "plan":
-        return "[Run mode: plan]\nProvide a concrete implementation plan before coding.\n\n" + base
-    return base
+    from runtime.agent_prompts import apply_mode_prefix
+
+    return apply_mode_prefix(text, mode)
 
 
 def _build_cli_command(
@@ -333,6 +331,9 @@ def _build_cli_command(
     cmd = parts if parts else [str(agent_path or "").strip()]
     if force_allow:
         cmd.extend(["--permission-mode", "bypassPermissions"])
+    # Continue the Claude Code session when we already have a session id (all normal turns).
+    # First message for a conversation has no id yet: omit --resume so the CLI creates a session;
+    # we persist ``cursor_session_id`` from the result for every subsequent call.
     if session_id:
         cmd.extend(["--resume", session_id])
     if model_id:
@@ -511,6 +512,8 @@ def acp_prompt_session(
     force_allow = force_allow_env not in {"0", "false", "no", "off"}
     resolved_cwd = str(Path(cwd).expanduser())
     session_id = str(cursor_session_id or "").strip()
+
+    ensure_wecode_claude_skill(resolved_cwd)
 
     canceler = CLIPromptCanceler()
     if on_client_ready is not None:

@@ -35,24 +35,6 @@ def build_conversation_memory_summary(conv: dict, max_items: int = 32, max_chars
     return "\n".join(lines)
 
 
-def build_prompt_with_memory(conv: dict, user_text: str) -> str:
-    """构建带记忆的提示"""
-    summary = build_conversation_memory_summary(conv)
-    
-    if not summary:
-        return user_text
-    
-    parts: list[str] = [
-        "[Conversation Context]",
-        summary,
-        "",
-        "[Current Request]",
-        user_text,
-    ]
-    
-    return "\n".join(parts)
-
-
 def resolve_session_model(raw_model: str | None) -> str:
     """解析会话模型"""
     model = str(raw_model or "").strip().lower()

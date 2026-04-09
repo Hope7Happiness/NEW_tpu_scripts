@@ -36,6 +36,7 @@ from core.workdir import relative_workdir
 # 导入路由
 from routes.conversations import register_conversation_routes
 from routes.tasks import register_task_routes
+from routes.session_job_tools import register_session_job_tool_routes
 from routes.agent import register_agent_routes
 from routes.global_agent_model import register_global_agent_model_routes
 
@@ -43,8 +44,8 @@ from routes.global_agent_model import register_global_agent_model_routes
 from runtime.yaml_editor_api import register_ka_editor_routes, register_yaml_editor_routes
 from runtime.auto_fix_runtime import AutoFixCoordinator
 from runtime.acp_runtime import acp_prompt_session, get_model_policy_status, note_usage_limit_error
-from runtime.agent_action_protocol import extract_run_job_action, new_action_nonce, with_run_job_skill_instruction
-from runtime.tasks_runtime import zhh_request, build_prompt_with_task_refs
+from runtime.agent_action_protocol import new_action_nonce
+from runtime.tasks_runtime import zhh_request
 
 # 全局变量（将在main中初始化）
 SERVER_CWD = DEFAULT_CWD
@@ -225,66 +226,18 @@ def main():
     from core.conversation import get_conversation_lock, update_conversation, append_message, maybe_autoname
     from core.tasks import is_failed_task_status, normalize_task_status
     from core.activity import record_agent_event
-    from routes.tasks import _build_task_reference_payload, _resolve_job_status
-    from core.tasks.operations import zhh_run_job
-
-    def trigger_run_job_for_conversation(conversation_id: str, auto_run_by_agent: bool = False) -> tuple[str | None, str | None]:
-        conv = get_conversation(conversation_id)
-        if not conv:
-            return None, "conversation not found"
-
-        run_result = zhh_run_job(args="", cwd=conv.get("cwd") or "")
-        if not run_result.get("ok"):
-            return None, str(run_result.get("error") or "run failed")
-
-        run_data = run_result.get("payload") if isinstance(run_result.get("payload"), dict) else {}
-        job_id = str(run_data.get("job_id") or run_result.get("job_id") or "").strip()
-        if not job_id:
-            return None, "run succeeded but job_id missing"
-
-        def add_job(c: dict):
-            job_ids = c.setdefault("job_ids", [])
-            if job_id not in job_ids:
-                job_ids.append(job_id)
-            task_meta = c.setdefault("task_meta", {})
-            entry = task_meta.get(job_id)
-            if not isinstance(entry, dict):
-                entry = {}
-            else:
-                entry = dict(entry)
-            entry["last_status"] = normalize_task_status(run_data.get("status") or "starting")
-            entry["updated_at"] = utc_now()
-            for key in ("zhh_args", "created_at", "final_log_file", "pane_log_file", "command", "cwd"):
-                value = run_data.get(key)
-                if value is not None and value != "":
-                    entry[key] = value
-            task_meta[job_id] = entry
-
-        update_conversation(conversation_id, add_job)
-        append_message(conversation_id, "system", f"Runned job {job_id}", {
-            "system_event": "task_run",
-            "job_id": job_id,
-            "job_status": str(run_data.get("status") or "starting"),
-            "zhh_args": str(run_data.get("zhh_args") or ""),
-            "auto_run_by_agent": bool(auto_run_by_agent),
-        })
-        return job_id, None
-
+    from routes.tasks import _resolve_job_status
     auto_fix_coordinator = AutoFixCoordinator(
         get_conversation=get_conversation,
         get_conversation_lock=get_conversation_lock,
         update_conversation=update_conversation,
         append_message=append_message,
-        build_task_reference_payload=lambda conversation_id, conv, job_id: _build_task_reference_payload(
-            conversation_id, conv, job_id, lines=400
-        ),
         resolve_job_status=_resolve_job_status,
         is_failed_task_status=is_failed_task_status,
         normalize_task_status=normalize_task_status,
         maybe_autoname=maybe_autoname,
         acp_prompt_session=acp_prompt_session,
         agent_path_getter=lambda: AGENT_PATH,
-        trigger_run_job=trigger_run_job_for_conversation,
         utc_now=utc_now,
         report_agent_event=lambda conversation_id, event: record_agent_event(conversation_id, event),
     )
@@ -292,6 +245,7 @@ def main():
     # 注册路由
     register_conversation_routes(app, lambda: AGENT_PATH, auto_fix_coordinator)
     register_task_routes(app, ZHH_SERVER_URL, auto_fix_coordinator)
+    register_session_job_tool_routes(app)
     register_agent_routes(app, auto_fix_coordinator, lambda: AGENT_PATH)
     register_global_agent_model_routes(app)
 
