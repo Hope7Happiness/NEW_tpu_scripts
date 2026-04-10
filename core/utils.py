@@ -91,11 +91,54 @@ def _sanitize_auto_dir_name(name: str) -> str:
     return s.strip("_")
 
 
+def _wandb_url_is_docs_site(url: str) -> bool:
+    """docs.wandb.ai / docs.wandb.me are documentation, not a run or project page."""
+    u = str(url or "").lower()
+    return "docs.wandb.ai" in u or "docs.wandb.me" in u
+
+
 def _extract_wandb_url_from_text(text: str) -> str | None:
-    """从文本中提取wandb URL"""
+    """Pick a Weights & Biases UI link from log text; skip docs.wandb.* and prefer /runs/ URLs."""
+    content = str(text or "").strip()
+    if not content:
+        return None
+
+    repaired = content
+    while True:
+        updated = re.sub(
+            r"(https?://[^\s\"'<>]+)\n([A-Za-z0-9/_?&=%#@:+.-]+)",
+            r"\1\2",
+            repaired,
+        )
+        if updated == repaired:
+            break
+        repaired = updated
+
     from core.config import WANDB_URL_PATTERN
-    found = WANDB_URL_PATTERN.search(str(text or ""))
-    return found.group(0) if found else None
+
+    candidates: list[str] = []
+    for match in WANDB_URL_PATTERN.finditer(repaired):
+        raw_url = match.group(0).rstrip(".,;)")
+        if _wandb_url_is_docs_site(raw_url):
+            continue
+        run_m = re.search(
+            r"(https?://(?:[A-Za-z0-9-]+\.)*wandb\.(?:ai|me)/[^\s\"'<>]*/runs/[A-Za-z0-9]{8,})",
+            raw_url,
+        )
+        if run_m:
+            candidates.append(run_m.group(1))
+        else:
+            candidates.append(raw_url)
+
+    if not candidates:
+        return None
+
+    def score(url: str) -> tuple[int, int]:
+        lower = url.lower()
+        tier = 3 if "/runs/" in lower else (2 if ("wandb.ai" in lower or "wandb.me" in lower) else 1)
+        return (tier, len(url))
+
+    return max(candidates, key=score)
 
 
 def _extract_wandb_url_from_file(path_text: str) -> str | None:
