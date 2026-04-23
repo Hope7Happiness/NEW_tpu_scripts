@@ -8,7 +8,7 @@ POOL_V5=(us-central1-a us-east5-a)
 POOL_V4=(us-central2-b)
 
 trap_send_key(){
-    CMD="echo -e \"\n\033[32m[INFO] Exiting. Remember to run this line: $1 \033[0m\" && [ -z \"$TMUX\" ] || tmux send-keys -t \"$TMUX_PANE\" \"$1\" "
+    CMD="zhh_cleanup_ui; echo -e \"\n\033[32m[INFO] Exiting. Remember to run this line: $1 \033[0m\" && [ -z \"$TMUX\" ] || tmux send-keys -t \"$TMUX_PANE\" \"$1\" "
     trap "$CMD" EXIT
 }
 
@@ -40,17 +40,16 @@ auto_select(){
     fi
 
     if [ -z "$TPU_TYPES" ]; then
-        TPU_TYPES="32,64"
+        zhh_error "TPU_TYPES is required when using auto selection."
+        return 1
     fi
 
     # this may lead to concurrency bug, so add a lock here
     exec 200>/tmp/ka_auto_lock
 
-    echo "[DEBUG] Waiting for auto lock..."
     flock 200
-    echo "[DEBUG] Lock acquired"
 
-    echo "Auto-selecting zone from pool: ${pool[@]}"
+    zhh_muted_info "Auto-selecting TPU from pool: ${pool[*]}"
     found_tpu=false
     # infos=$(get_available_tpu_infos)
     # infos is empty
@@ -102,13 +101,13 @@ auto_select(){
 
         # test if tpu is actually ready
         if ! has_tpu $vm_name $zone; then
-            echo -e "[INFO] Found not ready TPU VM $vm_name in zone $zone..."
+            zhh_debug "Skipping not-ready TPU VM $vm_name in zone $zone."
             continue
         fi
 
         # or, if tpu is registered and in use, skip
         if ! tpu_info_available "$SSCRIPT_HOME/$vm_name"; then
-            echo -e "[INFO] Found in-use TPU VM $vm_name in zone $zone..."
+            zhh_debug "Skipping in-use TPU VM $vm_name in zone $zone."
             continue
         fi
 
@@ -119,7 +118,7 @@ auto_select(){
         if [ -f "$actual_lock_file" ]; then
             # if the actual lock file exists, and the name isn't zak
             # if [[ ! "$actual_lock_file" =~ "zak" ]]; then
-                echo -e "[INFO] Found locked TPU VM $vm_name in zone $zone (lock file: $(basename $actual_lock_file))..."
+                zhh_debug "Skipping locked TPU VM $vm_name in zone $zone (lock file: $(basename $actual_lock_file))."
                 # check the name of the lock file: date -u +%Y-%m-%d_%H-%M-%S
                 # don't use stat
                 lmt=$(date -r "$actual_lock_file" +%s)
@@ -127,7 +126,7 @@ auto_select(){
                 now=$(date -u +%s)
                 # if the lock file is older than 30 mins, consider it stale and ignore
                 if (( now - lmt > 1800 )); then
-                    echo -e "\033[33m[WARNING] Found stale lock file for TPU VM $vm_name: $(basename $actual_lock_file). Ignoring the lock.\033[0m"
+                    zhh_warn "Found stale lock file for TPU VM $vm_name: $(basename $actual_lock_file). Ignoring the lock."
                     # remove the stale lock file
                     # sudo rm -f "$actual_lock_file"
                     continue # debug, this should not happen
@@ -146,11 +145,11 @@ auto_select(){
             $CUSTOM_GCLOUD_EXE compute tpus tpu-vm ssh $vm_name --zone $zone --command "ps -ef | grep python | grep '\-m' | grep -v $hash_tag" 2>/dev/null
         )
         if [ ! -z "$has_script" ]; then
-            echo -e "[WARNING] Found misjudged busy TPU VM $vm_name in zone $zone (running script: $(echo "$has_script" | head -n 1))."
+            zhh_debug "Skipping busy TPU VM $vm_name in zone $zone (running script detected)."
             continue
         fi
 
-        echo -e "Found TPU VM: \033[32m$vm_name @ $zone\033[0m (type $tpu_cls-$tpu_type)"
+        zhh_success "Selected TPU VM $vm_name @ $zone (type $tpu_cls-$tpu_type)"
         export VM_NAME=$vm_name
         export ZONE=$zone
         found_tpu=true
@@ -173,8 +172,8 @@ auto_select(){
         return 0
     fi
 
-    echo "[INFO] No available TPU VM found in the specified pool and types."
-    echo "[INFO] Going to apply..."
+    zhh_muted_warn "No available TPU VM found in the specified pool and types."
+    zhh_muted_info "Falling back to creating a new TPU VM."
 
     # first list all tpus
 
@@ -191,7 +190,7 @@ auto_select(){
             print available
         }')
         if [[ -z "$available" ]]; then
-            echo -e "[Internal Error] Failed to get TPU info for zone $zone"
+            zhh_error "Failed to get TPU info for zone $zone"
             return 2
         fi
         if (( available > best_available )); then
@@ -201,17 +200,17 @@ auto_select(){
     done
 
     if [[ -n "$best_zone" ]]; then
-        echo "Auto-selected zone: $best_zone with $best_available available TPUs"
+        zhh_muted_info "Selected zone $best_zone with $best_available available TPUs"
         export ZONE=$best_zone
     else
-        echo "No suitable zone found, using default zone."
+        zhh_muted_warn "No suitable zone found. Using the default zone."
         # use the first item in pool
         export ZONE=${pool[0]}
-        echo "Using zone: $ZONE"
+        zhh_muted_info "Using zone: $ZONE"
     fi
     # gonna apply for the smallest type in TPU_TYPES
     smallest_type=$(echo $TPU_TYPES | tr ',' '\n' | sort -n | head -n1)
-    echo "Applying for TPU VM of type $tpu_cls-$smallest_type in zone $ZONE"
+    zhh_muted_info "Will request a new TPU VM of type $tpu_cls-$smallest_type in zone $ZONE"
 
     # generate a random 6 digit hex code
     rand_hex=$(openssl rand -hex 3)

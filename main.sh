@@ -10,6 +10,9 @@ export ZHH_SCRIPT_ROOT=$(realpath "$(dirname "${BASH_SOURCE[0]}")")
 
 source $ZHH_SCRIPT_ROOT/scripts/launch.sh
 
+trap 'zhh_cleanup_ui' EXIT
+trap 'zhh_cleanup_ui; exit 130' INT TERM
+
 # .ka has to be sourced in each TMUX window
 # source .ka
 no_need_check=$(
@@ -27,6 +30,8 @@ if $need_concrete_card; then
         exit 1
     fi
 fi
+
+export ZHH_MAIN_COMMAND="$1"
 
 if $no_need_check || check_config_sanity; then
     if [ "$1" = "rr" ]; then

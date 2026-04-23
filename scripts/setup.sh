@@ -1,10 +1,12 @@
 source $ZHH_SCRIPT_ROOT/scripts/common.sh
 
 wrap_gcloud(){
-    if [ ! -z "$SCRIPT_DEBUG" ]; then
-        $CUSTOM_GCLOUD_EXE "$@"
+    if [ -n "$ZHH_CAPTURE_LOG_FILE" ]; then
+        zhh_run_logged_command "$ZHH_CAPTURE_LOG_FILE" "$CUSTOM_GCLOUD_EXE" "$@"
+    elif [ ! -z "$SCRIPT_DEBUG" ]; then
+        "$CUSTOM_GCLOUD_EXE" "$@"
     else
-        $CUSTOM_GCLOUD_EXE "$@" > /dev/null 2>&1
+        "$CUSTOM_GCLOUD_EXE" "$@" > /dev/null 2>&1
     fi
 }
 
@@ -95,6 +97,7 @@ check_env(){
         return 1
     fi
 
+    local log_file="${ZHH_ENV_CHECK_LOG_FILE:-}"
     py_path=$CONDA_PY_PATH
     # if VM_NAME contains v6, don't use conda
     IS_V6=0
@@ -104,44 +107,72 @@ check_env(){
     fi
 
     ENV_CHECK="ls $CODE_HOME > /dev/null && $py_path -c 'import jax, torch; print(jax.__file__)'"
-    # read both stdout and stderr
-    result=$(timeout 60s $CUSTOM_GCLOUD_EXE compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-    --worker=all --command "$ENV_CHECK" 2>&1 || true)
+    if [ -n "$log_file" ]; then
+        zhh_capture_command_output result "$log_file" timeout 60s "$CUSTOM_GCLOUD_EXE" compute tpus tpu-vm ssh "$VM_NAME" --zone "$ZONE" \
+            --worker=all --command "$ENV_CHECK" || true
+    else
+        result=$(timeout 60s "$CUSTOM_GCLOUD_EXE" compute tpus tpu-vm ssh "$VM_NAME" --zone "$ZONE" \
+            --worker=all --command "$ENV_CHECK" 2>&1 || true)
+    fi
     # first, eliminate module not found
     if [[ $result == *"ModuleNotFoundError"* ]]; then
-        echo "Environment is not proper setup: Cannot find torch/jax. Use \`SCRIPT_DEBUG=1\` for more info."
+        if [ -z "$log_file" ]; then
+            echo "Environment is not proper setup: Cannot find torch/jax. Use \`SCRIPT_DEBUG=1\` for more info."
+        fi
         return 4
     fi
     if [[ $result == *"No such file"* ]]; then
-        echo "Environment is not proper setup: Have not mount disk. Use \`SCRIPT_DEBUG=1\` for more info."
+        if [ -z "$log_file" ]; then
+            echo "Environment is not proper setup: Have not mount disk. Use \`SCRIPT_DEBUG=1\` for more info."
+        fi
         return 4
     fi
 
     # if not IS_V6, assert miniforge3 is in result
     if [ ! $IS_V6 -eq 1 ]; then
         if [[ $result =~ *"local"* ]]; then
-            echo "Wrong python env, expected to in miniforge3. Gonna remove local..."
-            wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-            --worker=all --command "sudo rm -rf ~/.local"
+            if [ -z "$log_file" ]; then
+                echo "Wrong python env, expected to in miniforge3. Gonna remove local..."
+            fi
+            if [ -n "$log_file" ]; then
+                export ZHH_CAPTURE_LOG_FILE="$log_file"
+            fi
+            wrap_gcloud compute tpus tpu-vm ssh "$VM_NAME" --zone "$ZONE" \
+                --worker=all --command "sudo rm -rf ~/.local"
+            if [ -n "$log_file" ]; then
+                unset ZHH_CAPTURE_LOG_FILE
+            fi
         fi
     fi
 
     TEST="sudo rm -rf /tmp/*tpu* && $py_path -c 'import jax; print(jax.devices())'"
-    # read both stdout and stderr
-    result=$(timeout 120s $CUSTOM_GCLOUD_EXE compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-    --worker=all --command "$TEST" 2>&1 || true)
+    if [ -n "$log_file" ]; then
+        zhh_capture_command_output result "$log_file" timeout 120s "$CUSTOM_GCLOUD_EXE" compute tpus tpu-vm ssh "$VM_NAME" --zone "$ZONE" \
+            --worker=all --command "$TEST" || true
+    else
+        result=$(timeout 120s "$CUSTOM_GCLOUD_EXE" compute tpus tpu-vm ssh "$VM_NAME" --zone "$ZONE" \
+            --worker=all --command "$TEST" 2>&1 || true)
+    fi
 
     if [[ $result == *"TpuDevice"* ]]; then
-        echo "Environment setup successful."
+        if [ -z "$log_file" ]; then
+            echo "Environment setup successful."
+        fi
     elif [[ $result == *"jaxlib.xla_extension.XlaRuntimeError: ABORTED: The TPU is already in use by process with pid"* || $result == *"Unable to initialize backend"* ]]; then
-        echo "TPU is already in use. If you want to persist, use \`zhh k\` and try again."
+        if [ -z "$log_file" ]; then
+            echo "TPU is already in use. If you want to persist, use \`zhh k\` and try again."
+        fi
         return 3
     elif [[ $result == *"googlecloudsdk.command_lib.util.ssh.ssh.CommandError"* || $result == *"ERROR: (gcloud.compute.tpus.tpu-vm.ssh)"* ]]; then
-        echo "TPU may be preempted (during environment check!). Gonna re-apply..."
+        if [ -z "$log_file" ]; then
+            echo "TPU may be preempted (during environment check!). Gonna re-apply..."
+        fi
         return 9
     else
-        echo "TPU Unkwown Error"
-        echo "$result"
+        if [ -z "$log_file" ]; then
+            echo "TPU Unkwown Error"
+            echo "$result"
+        fi
         return 4
     fi
 }
@@ -150,45 +181,123 @@ while_check_env(){
     # allow user to run "kill" to interrupt
     VM_NAME=$1
     ZONE=$2
+    local env_check_log_file=""
+    local kill_log_file=""
+    local has_pretty_logs=false
 
     if [ -z "$VM_NAME" ]; then
         echo -e $VM_UNFOUND_ERROR
         return 1
     fi
 
-    echo "[INFO] Checking environment setup..."
+    if zhh_prepare_log_file env_check_log_file "env_check_trial${ZHH_SETUP_TRIAL:-1}" 2>/dev/null; then
+        has_pretty_logs=true
+    fi
+
+    if $has_pretty_logs; then
+        zhh_step_banner "Check TPU environment" "$env_check_log_file"
+        export ZHH_ENV_CHECK_LOG_FILE="$env_check_log_file"
+        zhh_step_start_spinner
+    else
+        echo "[INFO] Checking environment setup..."
+    fi
+
     check_env $VM_NAME $ZONE && ret=0 || ret=$?
+    if $has_pretty_logs; then
+        unset ZHH_ENV_CHECK_LOG_FILE
+    fi
     if [ $ret -eq 0 ]; then
-        echo "[INFO] Environment is ready."
+        if $has_pretty_logs; then
+            zhh_step_done
+        else
+            echo "[INFO] Environment is ready."
+        fi
         return 0
     fi
     if [ $ret -eq 3 ]; then
         if [ "$ZAK" = "1" ]; then
-            echo "[INFO] Auto-kill is enabled. Attempting to kill the TPU process..."
+            if $has_pretty_logs; then
+                zhh_step_warn "[BUSY]"
+                zhh_note "TPU is busy. Auto-kill is enabled."
+            else
+                echo "[INFO] Auto-kill is enabled. Attempting to kill the TPU process..."
+            fi
             yn="y"
         else
             # read -p "Kill the TPU process right now? (y/n) " yn
-            echo -e "TPU is in use. Aborted."
+            if $has_pretty_logs; then
+                zhh_step_warn "[BUSY]"
+                zhh_note "TPU is already in use."
+            else
+                echo -e "TPU is in use. Aborted."
+            fi
             yn="n"
         fi
         if [ "$yn" = "y" ]; then
-            kill_tpu $VM_NAME $ZONE || true
+            if zhh_prepare_log_file kill_log_file "kill_tpu_trial${ZHH_SETUP_TRIAL:-1}" 2>/dev/null; then
+                zhh_step_banner "Kill TPU process" "$kill_log_file"
+                export ZHH_KILL_TPU_LOG_FILE="$kill_log_file"
+                zhh_step_start_spinner
+            fi
+            kill_tpu $VM_NAME $ZONE && ret=0 || ret=$?
+            unset ZHH_KILL_TPU_LOG_FILE
+            if $has_pretty_logs; then
+                if [ $ret -eq 0 ]; then
+                    zhh_step_done
+                elif [ $ret -eq 9 ]; then
+                    zhh_step_warn "[PREEMPTED]"
+                else
+                    zhh_step_fail "[FAILED]"
+                    zhh_note "Log: $kill_log_file"
+                fi
+            fi
         else
-            echo "[INFO] Not killing the TPU process. Exiting."
+            if $has_pretty_logs; then
+                zhh_warn "Not killing the TPU process. See $env_check_log_file"
+            else
+                echo "[INFO] Not killing the TPU process. Exiting."
+            fi
             return 3
         fi
     elif [ $ret -eq 4 ]; then
-        echo "[INFO] Environment check failed. Retrying verbose setup..."
+        if $has_pretty_logs; then
+            zhh_step_warn "[RETRY]"
+            zhh_note "Environment check failed. Reinstalling runtime."
+        else
+            echo "[INFO] Environment check failed. Retrying verbose setup..."
+        fi
         export SCRIPT_DEBUG=1
         export ZAK=1 # sometimes need to autokill even in the setup phase
         run_setup_script $VM_NAME $ZONE || true
     elif [ $ret -eq 9 ]; then
-        echo "[INFO] TPU may be preempted. Exiting to re-apply..."
+        if $has_pretty_logs; then
+            zhh_step_warn "[PREEMPTED]"
+            zhh_note "TPU may be preempted during environment check."
+        else
+            echo "[INFO] TPU may be preempted. Exiting to re-apply..."
+        fi
         return 9
     fi
+
+    if zhh_prepare_log_file env_check_log_file "env_check_retry_trial${ZHH_SETUP_TRIAL:-1}" 2>/dev/null; then
+        has_pretty_logs=true
+        zhh_step_banner "Re-check TPU environment" "$env_check_log_file"
+        export ZHH_ENV_CHECK_LOG_FILE="$env_check_log_file"
+        zhh_step_start_spinner
+    fi
     check_env $VM_NAME $ZONE && ret=0 || ret=$?
+    if [ -n "$ZHH_ENV_CHECK_LOG_FILE" ]; then
+        unset ZHH_ENV_CHECK_LOG_FILE
+    fi
     if [ $ret -ne 0 ]; then
-        echo -e "\033[31m[Error] Environment is not proper setup: failed to init TPU. Use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
+        if $has_pretty_logs; then
+            zhh_step_fail "[FAILED]"
+            zhh_note "Log: $env_check_log_file"
+        else
+            echo -e "\033[31m[Error] Environment is not proper setup: failed to init TPU. Use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
+        fi
+    elif $has_pretty_logs; then
+        zhh_step_done
     fi
     return $ret
 }
@@ -196,8 +305,12 @@ while_check_env(){
 kill_tpu(){
     VM_NAME=$1
     ZONE=$2
+    local log_file="${ZHH_KILL_TPU_LOG_FILE:-}"
+    local output=""
 
-    echo -e "\033[1m[INFO] killing tpu vm $VM_NAME in $ZONE...\033[0m"
+    if [ -z "$log_file" ]; then
+        echo -e "\033[1m[INFO] killing tpu vm $VM_NAME in $ZONE...\033[0m"
+    fi
 
     if [ -z "$VM_NAME" ]; then
         echo -e $VM_UNFOUND_ERROR
@@ -211,13 +324,23 @@ kill_tpu(){
     sudo bash $ZHH_SCRIPT_ROOT/scripts/new_killer.sh
     echo job killed
     "
-    $CUSTOM_GCLOUD_EXE compute tpus tpu-vm ssh $VM_NAME --zone=$ZONE --worker=all --command "$CMD" && ret=0 || ret=$?
+    if [ -n "$log_file" ]; then
+        zhh_run_logged_command "$log_file" "$CUSTOM_GCLOUD_EXE" compute tpus tpu-vm ssh "$VM_NAME" --zone="$ZONE" --worker=all --command "$CMD" && ret=0 || ret=$?
+    else
+        "$CUSTOM_GCLOUD_EXE" compute tpus tpu-vm ssh "$VM_NAME" --zone="$ZONE" --worker=all --command "$CMD" && ret=0 || ret=$?
+    fi
     if [ $ret -ne 0 ]; then
-        echo -e "\033[31m[Error] Failed to kill TPU process. Retrying...\033[0m"
-        output=$($CUSTOM_GCLOUD_EXE compute tpus tpu-vm ssh $VM_NAME --zone=$ZONE --worker=all --command "$CMD" 2>&1 || true)
-        echo "[DEBUG] kill tpu result: $output"
+        if [ -z "$log_file" ]; then
+            echo -e "\033[31m[Error] Failed to kill TPU process. Retrying...\033[0m"
+            output=$("$CUSTOM_GCLOUD_EXE" compute tpus tpu-vm ssh "$VM_NAME" --zone="$ZONE" --worker=all --command "$CMD" 2>&1 || true)
+            echo "[DEBUG] kill tpu result: $output"
+        else
+            zhh_capture_command_output output "$log_file" "$CUSTOM_GCLOUD_EXE" compute tpus tpu-vm ssh "$VM_NAME" --zone="$ZONE" --worker=all --command "$CMD" || true
+        fi
         if [[ $output == *"[/usr/bin/ssh] exited with return code [255]"* || $output == *"ERROR: (gcloud.compute.tpus.tpu-vm.ssh)"* ]]; then
-            echo "TPU may be preempted (during killing!). Gonna re-apply..."
+            if [ -z "$log_file" ]; then
+                echo "TPU may be preempted (during killing!). Gonna re-apply..."
+            fi
             return 9
         else
             return 1
@@ -259,8 +382,15 @@ tpu_in_use(){
 run_setup_script(){
     VM_NAME=$1
     ZONE=$2
+    local mount_log_file=""
+    local install_log_file=""
+    local has_pretty_logs=false
 
-    echo "[INFO] setting up tpu vm $VM_NAME in $ZONE..."
+    if zhh_prepare_log_file mount_log_file "mount_disk_trial${ZHH_SETUP_TRIAL:-1}" 2>/dev/null; then
+        has_pretty_logs=true
+    else
+        echo "[INFO] setting up tpu vm $VM_NAME in $ZONE..."
+    fi
 
     if [ -z "$VM_NAME" ]; then
         echo -e $VM_UNFOUND_ERROR
@@ -333,37 +463,85 @@ run_setup_script(){
     # CMD is sequential print of quoted MOUNT_DISK_STR and PIP_INSTALL_STR
     # CMD=$(printf "%s\n%s" "$MOUNT_DISK_STR" "$PIP_INSTALL_STR")
 
-    wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+    if $has_pretty_logs; then
+        zhh_step_banner "Mount shared disk" "$mount_log_file"
+        export ZHH_CAPTURE_LOG_FILE="$mount_log_file"
+        zhh_step_start_spinner
+    fi
+    wrap_gcloud compute tpus tpu-vm ssh "$VM_NAME" --zone "$ZONE" \
     --worker=all --command "$MOUNT_DISK_STR" && ret=0 || ret=$?
+    if $has_pretty_logs; then
+        unset ZHH_CAPTURE_LOG_FILE
+    fi
     if [ $ret -ne 0 ]; then
-        echo -e "\033[31m[Error] Mount disk setup failed. Use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
+        if $has_pretty_logs; then
+            zhh_step_fail "[FAILED]"
+            zhh_note "Log: $mount_log_file"
+        else
+            echo -e "\033[31m[Error] Mount disk setup failed. Use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
+        fi
         # check if DO_TPU_SETUP is not set
         # if [ "$DO_TPU_SETUP" != "1" ]; then
         #     echo -e "\033[33m[Hint] Is the TPU set up? Use \`DO_TPU_SETUP=1\` to force environment setup on TPU VM.\033[0m"
         # fi
         return 1
     fi
+    if $has_pretty_logs; then
+        zhh_step_done
+        zhh_prepare_log_file install_log_file "install_runtime_trial${ZHH_SETUP_TRIAL:-1}"
+        zhh_step_banner "Install TPU runtime" "$install_log_file"
+        export ZHH_CAPTURE_LOG_FILE="$install_log_file"
+        zhh_step_start_spinner
+    fi
 
-    wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+    wrap_gcloud compute tpus tpu-vm ssh "$VM_NAME" --zone "$ZONE" \
     --worker=all --command "$PIP_INSTALL_STR" && ret=0 || ret=$?
+    if $has_pretty_logs; then
+        unset ZHH_CAPTURE_LOG_FILE
+    fi
     if [ $ret -ne 0 ]; then
-        echo -e "\033[31m[Error] Pip install failed. Use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
+        if $has_pretty_logs; then
+            zhh_step_fail "[FAILED]"
+            zhh_note "Log: $install_log_file"
+        else
+            echo -e "\033[31m[Error] Pip install failed. Use \`SCRIPT_DEBUG=1\` for more info.\033[0m"
+        fi
         return 1
+    fi
+    if $has_pretty_logs; then
+        zhh_step_done
     fi
 }
 
 run_wandb_login(){
     VM_NAME=$1
     ZONE=$2
+    local log_file=""
+    local output=""
+    local has_pretty_logs=false
 
-    echo "[INFO] wandb login into $VM_NAME in $ZONE..."
+    if zhh_prepare_log_file log_file "wandb_login_trial${ZHH_SETUP_TRIAL:-1}" 2>/dev/null; then
+        has_pretty_logs=true
+        zhh_step_banner "Wandb login" "$log_file"
+        export ZHH_CAPTURE_LOG_FILE="$log_file"
+        zhh_step_start_spinner
+    else
+        echo "[INFO] wandb login into $VM_NAME in $ZONE..."
+    fi
 
     if [ -z "$VM_NAME" ]; then
+        if $has_pretty_logs; then
+            zhh_step_fail "[FAILED]"
+        fi
         echo -e $VM_UNFOUND_ERROR
         return 1
     fi
 
     if [ -z "$WANDB_API_KEY" ]; then
+        if $has_pretty_logs; then
+            zhh_step_fail "[FAILED]"
+            zhh_note "Log: $log_file"
+        fi
         echo -e "\033[31m[Error] WANDB_API_KEY is not set, so you cannot perform wandb login. Please run \`source .ka\`.\033[0m" >&2
         return 1
     fi
@@ -382,19 +560,44 @@ run_wandb_login(){
     $WANDB_LOGIN_STR
     "
 
-    wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
+    wrap_gcloud compute tpus tpu-vm ssh "$VM_NAME" --zone "$ZONE" \
     --worker=all --command "$CMD" && ret=0 || ret=$?
+    if $has_pretty_logs; then
+        unset ZHH_CAPTURE_LOG_FILE
+    fi
     if [ $ret -ne 0 ]; then
-        echo -e "\033[31m[Error] Wandb login failed. Retrying...\033[0m"
+        if $has_pretty_logs; then
+            zhh_step_warn "[RETRY]"
+            zhh_note "Wandb login failed. Inspecting retry details."
+        else
+            echo -e "\033[31m[Error] Wandb login failed. Retrying...\033[0m"
+        fi
         export SCRIPT_DEBUG=1
-        output=$(wrap_gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE \
-        --worker=all --command "$CMD" 2>&1 || true)
-        echo "[DEBUG] wandb login result: $output"
+        if $has_pretty_logs; then
+            zhh_capture_command_output output "$log_file" "$CUSTOM_GCLOUD_EXE" compute tpus tpu-vm ssh "$VM_NAME" --zone "$ZONE" \
+                --worker=all --command "$CMD" || true
+        else
+            output=$(wrap_gcloud compute tpus tpu-vm ssh "$VM_NAME" --zone "$ZONE" \
+                --worker=all --command "$CMD" 2>&1 || true)
+            echo "[DEBUG] wandb login result: $output"
+        fi
         if [[ $output == *"[/usr/bin/ssh] exited with return code [255]"* || $output == *"ERROR: (gcloud.compute.tpus.tpu-vm.ssh)"* ]]; then
-            echo "TPU may be preempted (during environment check!). Gonna re-apply..."
+            if $has_pretty_logs; then
+                zhh_note "Log: $log_file"
+                zhh_warn "TPU may be preempted during wandb login."
+            else
+                echo "TPU may be preempted (during environment check!). Gonna re-apply..."
+            fi
             return 9
         else
+            if $has_pretty_logs; then
+                zhh_note "Log: $log_file"
+                zhh_warn "Wandb login failed."
+            fi
             return 1
         fi
+    fi
+    if $has_pretty_logs; then
+        zhh_step_done
     fi
 }

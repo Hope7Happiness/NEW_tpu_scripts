@@ -51,8 +51,8 @@ killed_command(){
     fi
 
     sudo mkdir -p $SSCRIPT_HOME/$VM_NAME && \
-    echo "KILLED" | sudo tee $SSCRIPT_HOME/$VM_NAME/status
-    echo "good" | sudo tee $SSCRIPT_HOME/$VM_NAME/check_result
+    (echo "KILLED" | sudo tee $SSCRIPT_HOME/$VM_NAME/status) > /dev/null
+    (echo "good" | sudo tee $SSCRIPT_HOME/$VM_NAME/check_result) > /dev/null
 }
 
 success_command(){
@@ -81,9 +81,9 @@ starting_command(){
 
     old_status=$(cat $SSCRIPT_HOME/$VM_NAME/status 2>/dev/null || echo "")
     if [ "$old_status" = "FINISHED" ] || [ "$old_status" = "KILLED" ] || [ -z "$old_status" ]; then
-        echo "CREATING" | sudo tee $SSCRIPT_HOME/$VM_NAME/status
+        (echo "CREATING" | sudo tee $SSCRIPT_HOME/$VM_NAME/status) > /dev/null
     else
-        echo -e "\033[33m[Warning] Status file already exists: $old_status. Not overwriting.\033[0m"
+        zhh_note "Status file already exists."
     fi
     # if [ ! -f $SSCRIPT_HOME/$VM_NAME/status ]; then
     #     echo "CREATING" | sudo tee $SSCRIPT_HOME/$VM_NAME/status
@@ -91,12 +91,12 @@ starting_command(){
     #     echo -e "\033[33m[Warning] Status file already exists: $(cat $SSCRIPT_HOME/$VM_NAME/status). Not overwriting.\033[0m"
     # fi
     if [ ! -f $SSCRIPT_HOME/$VM_NAME/zone ]; then
-        echo $ZONE | sudo tee $SSCRIPT_HOME/$VM_NAME/zone
+        (echo $ZONE | sudo tee $SSCRIPT_HOME/$VM_NAME/zone) > /dev/null
     fi
     if [ ! -f $SSCRIPT_HOME/$VM_NAME/check_result ]; then
-        echo "creating" | sudo tee $SSCRIPT_HOME/$VM_NAME/check_result
+        (echo "creating" | sudo tee $SSCRIPT_HOME/$VM_NAME/check_result) > /dev/null
     else
-        echo -e "\033[33m[Warning] Check result file already exists: $(cat $SSCRIPT_HOME/$VM_NAME/check_result). Not overwriting.\033[0m"
+        zhh_note "Check result file already exists."
     fi
 }
 
@@ -169,8 +169,10 @@ deregister_tpu(){
     # also remove lock files
     vm_name=$1
     sudo find /kmh-nfs-ssd-us-mount/code/qiao/tpu_lock -maxdepth 1 -type f -name "zak_${vm_name}_*" -delete
-    echo remaining locks:
-    ls /kmh-nfs-ssd-us-mount/code/qiao/tpu_lock/ | grep "${vm_name}"
+    if [ -n "$SCRIPT_DEBUG" ]; then
+        echo "remaining locks:"
+        ls /kmh-nfs-ssd-us-mount/code/qiao/tpu_lock/ | grep "${vm_name}" || true
+    fi
 }
 
 log_tpu_check_result(){

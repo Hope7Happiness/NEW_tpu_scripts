@@ -65,33 +65,47 @@ wandb_id_from_logdir(){
     cat $log_dir/output.log | grep -oP 'wandb: .*runs/\K[^\s]+' | head -n 1
 }
 
+is_run_like_command(){
+    local cmd="${1:-}"
+    [[ -z "$cmd" || "$cmd" == "q" || "$cmd" == "rr" || "$cmd" == "qrr" ]]
+}
+
 stage(){
-    # DO NOT modify the output format, it is parsed in zrun
+    local stage_ret=0
+
     if [ -z "$PROJECT" ]; then
-        echo -e "\033[31m[Warning]: PROJECT is not set. Default to 'unknown'\033[0m" >&2
-        PROJECT=unknown
+        zhh_error "PROJECT is not set."
+        return 1
     fi
 
     if [ -z "$WHO" ]; then
-        echo -e "\033[31m[Error] WHO is not set. Please set it to your username.\033[0m" >&2
-        echo -e "\033[33m[Hint] Use \`zhh help\` for more info.\033[0m" >&2
+        zhh_error "WHO is not set. Please set it to your username."
+        zhh_warn "Use \`zhh help\` for more info."
         return 1
     fi
 
     STAGE_ROOT=/kmh-nfs-ssd-us-mount/staging/$WHO/$PROJECT
     NOW_STR=$(date +'%Y%m%d_%H%M%S')
     RND_STR=$(cat /dev/urandom | tr -cd 'a-f0-9' | head -c 8)
-    GIT_STR=$(git rev-parse --short HEAD)
+    GIT_STR=$(git -c safe.directory="$PWD" rev-parse --short HEAD 2>/dev/null || printf 'nogit')
     STAGE_DIR=$STAGE_ROOT/launch_${NOW_STR}_git${GIT_STR}_${RND_STR}
 
-    echo staging to $STAGE_DIR
+    zhh_set_stage_context "$STAGE_DIR"
+    zhh_step_banner "Stage workspace" "" \
+        "$(zhh_format_detail "stage dir" "$STAGE_DIR")"
+    zhh_step_start_spinner
 
     sudo mkdir -p $STAGE_DIR
     sudo chmod 777 $STAGE_DIR
-    echo "[INFO] staging files" >&2
     # temporally patch
-    sudo rsync -a -O --exclude '.git' --exclude '.opencode' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' --exclude 'wandb' --exclude='*.npz' . $STAGE_DIR
+    sudo rsync -a -O --exclude '.git' --exclude '.opencode' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' --exclude 'wandb' --exclude='*.npz' . $STAGE_DIR && stage_ret=0 || stage_ret=$?
     # sudo rsync -a -O --exclude '.git' --exclude '.opencode' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' --exclude 'wandb' . $STAGE_DIR
+    if [ $stage_ret -eq 0 ]; then
+        zhh_step_done
+    else
+        zhh_step_fail "[FAILED]"
+    fi
+    return $stage_ret
 }
 
 zkill(){
@@ -104,7 +118,7 @@ zkill(){
     fi
     killed_command
     # ask the user if want to dequeue
-    if ! queue_isempty; then
+    if [ "$ZHH_SKIP_QUEUE_PROMPT" != "1" ] && ! queue_isempty; then
         read -p "Do you want to release a queue slot for $VM_NAME? (y/N) " yn
         if [[ "$yn" == "y" ]]; then
             release_queue
@@ -113,15 +127,16 @@ zkill(){
 }
 
 killer_trap(){
+    zhh_cleanup_ui
     echo -e "\n\033[33m[Info] Caught interrupt signal. Running kill...\033[0m"
     zkill
     # if FAST_DEBUG is set, run again
     if [ ! -z "$FAST_DEBUG" ]; then
         echo -e "\033[33m[Info] FAST_DEBUG is set. Running job again...\033[0m"
         cd $HERE
-        echo -e "[Debug] now, at $(pwd)"
+        zhh_debug "now at $(pwd)"
         trap - INT # reset trap, avoid multiple traps stacking
-        echo -e "[Debug] re-running job in 5s (Ctrl+C now if you do not want)..."
+        zhh_debug "re-running job in 5s (Ctrl+C now if you do not want)..."
         sleep 5
         zrun
     else
@@ -134,15 +149,25 @@ killer_trap(){
 run_job(){
     # args: $1=STAGE_DIR, $2...=extra args (passed to main.py)
     HERE=$PWD
+    local patch_ret=0
+    local kill_ret=0
 
     STAGE_DIR=$1
     LOG_ROOT=$STAGE_DIR/logs
 
     NOW_STR=$(date +'%Y%m%d_%H%M%S')
     RND_STR=$(cat /dev/urandom | tr -cd 'a-f0-9' | head -c 8)
-    exist_logs=$(ls $LOG_ROOT 2>/dev/null | wc -l)
+    exist_logs=$(ls "$LOG_ROOT" 2>/dev/null | grep -c '^log[0-9]\+_' || true)
     cur_log_id=$((exist_logs+1))
     LOG_DIR=$LOG_ROOT/log${cur_log_id}_${NOW_STR}_VM${VM_NAME}_Z${ZONE}_${RND_STR}
+    PRE_RUN_LOG_FILE=""
+
+    sudo mkdir -p $LOG_DIR
+    sudo chmod 777 $LOG_DIR
+    PRE_RUN_LOG_FILE="$LOG_DIR/run_prepare.log"
+    : > "$PRE_RUN_LOG_FILE"
+    zhh_box_section "Prepare runtime"
+    zhh_kv "run log dir" "$LOG_DIR"
 
     # EXTRA_ARGS should be a list
     local EXTRA_ARGS=()
@@ -156,13 +181,16 @@ run_job(){
     done
 
     # check whether a checkpoint exists
-    echo "[INFO] finding checkpoints..."
+    printf '[INFO] finding checkpoints...\n' >> "$PRE_RUN_LOG_FILE"
     for check_id in $(seq $((cur_log_id-1)) -1 1); do
-        LAST_LOG_DIR=$(ls $LOG_ROOT | grep log${check_id}_ | tail -n 1)
+        LAST_LOG_DIR=$(ls "$LOG_ROOT" 2>/dev/null | grep "^log${check_id}_" | tail -n 1)
+        if [ -z "$LAST_LOG_DIR" ]; then
+            continue
+        fi
         
         # convert to gs bucket
         GS_DIR=$(ckpt_to_gs $LOG_ROOT/$LAST_LOG_DIR)
-        echo "[INFO] |___checking previous log dir $LOG_ROOT/$LAST_LOG_DIR -> $GS_DIR"
+        printf '[INFO] |___checking previous log dir %s -> %s\n' "$LOG_ROOT/$LAST_LOG_DIR" "$GS_DIR" >> "$PRE_RUN_LOG_FILE"
 
         # parse GS_DIR as gs://kmh-gcp-$zone/$GS_STAGING_NAME/$subpath
         # subpath = '/'.join(GS_DIR.split('/')[4:])
@@ -174,14 +202,14 @@ run_job(){
         
         # check if checkpoints exist in the gs bucket
         if gsutil ls $GS_DIR/checkpoint_* > /dev/null; then
-            echo "[INFO]   ===>found previous checkpoint dir $LOG_ROOT/$LAST_LOG_DIR in gs $GS_DIR"
+            printf '[INFO]   ===>found previous checkpoint dir %s in gs %s\n' "$LOG_ROOT/$LAST_LOG_DIR" "$GS_DIR" >> "$PRE_RUN_LOG_FILE"
 
             if [ "$zone" != "$correct_gs_zone" ]; then
                 # if dest already exists, skip copy
                 if gsutil ls gs://kmh-gcp-$correct_gs_zone/$GS_STAGING_NAME/$subpath > /dev/null; then
-                    echo "[INFO]   ===>checkpoint already copied to correct gs zone gs://kmh-gcp-$correct_gs_zone/$GS_STAGING_NAME/$subpath, skip copy"
+                    printf '[INFO]   ===>checkpoint already copied to correct gs zone gs://kmh-gcp-%s/%s/%s, skip copy\n' "$correct_gs_zone" "$GS_STAGING_NAME" "$subpath" >> "$PRE_RUN_LOG_FILE"
                 else
-                    echo "[INFO]   ===>copying checkpoint from gs://kmh-gcp-$zone/$GS_STAGING_NAME/$subpath to gs://kmh-gcp-$correct_gs_zone/$GS_STAGING_NAME/$subpath"
+                    printf '[INFO]   ===>copying checkpoint from gs://kmh-gcp-%s/%s/%s to gs://kmh-gcp-%s/%s/%s\n' "$zone" "$GS_STAGING_NAME" "$subpath" "$correct_gs_zone" "$GS_STAGING_NAME" "$subpath" >> "$PRE_RUN_LOG_FILE"
 
                     # we only copy the last checkpoint, sort by numerical order, and copy the last one
                     last_ckpt=$(
@@ -191,9 +219,9 @@ run_job(){
                         sort -n |
                         tail -n 1
                     )
-                    echo "[INFO]   ===>copying last checkpoint checkpoint_$last_ckpt"
+                    printf '[INFO]   ===>copying last checkpoint checkpoint_%s\n' "$last_ckpt" >> "$PRE_RUN_LOG_FILE"
 
-                    gcloud storage cp -r gs://kmh-gcp-$zone/$GS_STAGING_NAME/$subpath/checkpoint_$last_ckpt gs://kmh-gcp-$correct_gs_zone/$GS_STAGING_NAME/$subpath/checkpoint_$last_ckpt
+                    zhh_run_logged_command "$PRE_RUN_LOG_FILE" gcloud storage cp -r gs://kmh-gcp-$zone/$GS_STAGING_NAME/$subpath/checkpoint_$last_ckpt gs://kmh-gcp-$correct_gs_zone/$GS_STAGING_NAME/$subpath/checkpoint_$last_ckpt
                 fi
             fi
 
@@ -201,25 +229,24 @@ run_job(){
             # EXTRA_ARGS+=("--config.load_from=$LOG_ROOT/$LAST_LOG_DIR")
             break
         fi
-        echo "[INFO] no checkpoints found in $LOG_ROOT/$LAST_LOG_DIR"
+        printf '[INFO] no checkpoints found in %s\n' "$LOG_ROOT/$LAST_LOG_DIR" >> "$PRE_RUN_LOG_FILE"
     done;
 
-    echo "[INFO] finding past wandb runs..."
+    printf '[INFO] finding past wandb runs...\n' >> "$PRE_RUN_LOG_FILE"
     for check_id in $(seq $((cur_log_id-1)) -1 1); do
-        LAST_LOG_DIR=$(ls $LOG_ROOT | grep log${check_id}_ | tail -n 1)
+        LAST_LOG_DIR=$(ls "$LOG_ROOT" 2>/dev/null | grep "^log${check_id}_" | tail -n 1)
+        if [ -z "$LAST_LOG_DIR" ]; then
+            continue
+        fi
         
         # convert to gs bucket
         WANDB_ID=$(wandb_id_from_logdir $LOG_ROOT/$LAST_LOG_DIR)
         if [ ! -z "$WANDB_ID" ]; then
-            echo "[INFO]   ===>found previous wandb run id $WANDB_ID from $LOG_ROOT/$LAST_LOG_DIR"
+            printf '[INFO]   ===>found previous wandb run id %s from %s\n' "$WANDB_ID" "$LOG_ROOT/$LAST_LOG_DIR" >> "$PRE_RUN_LOG_FILE"
             EXTRA_ARGS+=("--config.wandb_resume_id=$WANDB_ID")
             break
         fi
     done;
-
-    sudo mkdir -p $LOG_DIR
-    sudo chmod 777 $LOG_DIR
-    echo "[INFO] logging to $LOG_DIR"
 
     DBG_COMMANDS="ls $CONDA_PY_PATH"
     py_path=$CONDA_PY_PATH
@@ -245,24 +272,47 @@ run_job(){
     fi
 
     if [ -f "$STAGE_DIR/补.sh" ]; then
-        echo "[INFO] executing 补.sh"
+        PATCH_LOG_FILE="$LOG_DIR/patch_script.log"
+        : > "$PATCH_LOG_FILE"
+        zhh_step_banner "Run patch script" "$PATCH_LOG_FILE"
+        zhh_step_start_spinner
         # bash $STAGE_DIR/补.sh && ret=0 || ret=$?
 
         # two cases:
         # 1. "gcloud" is found in 补.sh, which means it is doing some gcloud command, we should run it on local machine
         if grep -q "gcloud" $STAGE_DIR/补.sh; then
-            echo "[INFO] found gcloud command in 补.sh, running it on local machine"
-            bash $STAGE_DIR/补.sh && ret=0 || ret=$?
+            zhh_run_logged_command "$PATCH_LOG_FILE" bash "$STAGE_DIR/补.sh" && patch_ret=0 || patch_ret=$?
         else
-            echo "[INFO] no gcloud command found in 补.sh, running it on remote machine"
-            gcloud compute tpus tpu-vm ssh $VM_NAME --zone $ZONE --worker=all --command "bash $STAGE_DIR/补.sh" && ret=0 || ret=$?
+            zhh_run_logged_command "$PATCH_LOG_FILE" "$CUSTOM_GCLOUD_EXE" compute tpus tpu-vm ssh "$VM_NAME" --zone "$ZONE" --worker=all --command "bash $STAGE_DIR/补.sh" && patch_ret=0 || patch_ret=$?
         fi
 
-        echo "[INFO] finished executing 补.sh, returned $ret"
+        if [ $patch_ret -ne 0 ]; then
+            zhh_step_fail "[FAILED]"
+            zhh_note "Log: $PATCH_LOG_FILE"
+            return $patch_ret
+        fi
+        zhh_step_done
     fi
 
     # kill anyway
-    zkill
+    KILL_LOG_FILE="$LOG_DIR/kill_tpu.log"
+    : > "$KILL_LOG_FILE"
+    zhh_step_banner "Clear TPU processes" "$KILL_LOG_FILE"
+    zhh_step_start_spinner
+    export ZHH_KILL_TPU_LOG_FILE="$KILL_LOG_FILE"
+    export ZHH_SKIP_QUEUE_PROMPT=1
+    zkill && kill_ret=0 || kill_ret=$?
+    unset ZHH_KILL_TPU_LOG_FILE
+    unset ZHH_SKIP_QUEUE_PROMPT
+    if [ $kill_ret -eq 0 ]; then
+        zhh_step_done
+    elif [ $kill_ret -eq 9 ]; then
+        zhh_step_warn "[PREEMPTED]"
+        zhh_note "Log: $KILL_LOG_FILE"
+    else
+        zhh_step_fail "[FAILED]"
+        zhh_note "Log: $KILL_LOG_FILE"
+    fi
 
 
     # COMMAND="ls /foo/bar | sudo tee -a $LOG_DIR/output.log"
@@ -270,7 +320,7 @@ run_job(){
 
     # if main.py doesn't exist, check if main.sh exists
     if [ ! -f "$STAGE_DIR/main.py" ] && [ -f "$STAGE_DIR/main.sh" ]; then
-        echo "[INFO] main.py not found, using main.sh instead."
+        printf '[INFO] main.py not found, using main.sh instead.\n' >> "$PRE_RUN_LOG_FILE"
         COMMAND="bash main.sh $LOG_DIR $EXTRA_ARGS_STR 2>&1"
     fi
 
@@ -280,18 +330,22 @@ run_job(){
 
     # report runtime log dir to current HTTP server (if running under server.py)
     if [ ! -z "$ZHH_SERVER_URL" ] && [ ! -z "$ZHH_JOB_ID" ]; then
-        echo "[INFO] Reporting log dir to server: $ZHH_SERVER_URL/job-log-dir/$ZHH_JOB_ID"
         curl -s -m3 -X POST "$ZHH_SERVER_URL/job-log-dir/$ZHH_JOB_ID" \
-            --data-urlencode "log_dir=$LOG_DIR" > /dev/null && echo "[INFO] Successfully reported log dir to server." || echo "[ERROR] Failed to report log dir to server."
+            --data-urlencode "log_dir=$LOG_DIR" > /dev/null || zhh_warn "Failed to report runtime log dir to task server."
     fi
 
-    echo "[INFO] running command: $COMMAND"
+    zhh_box_section "Launch training"
+    if [ -f "$STAGE_DIR/main.py" ]; then
+        zhh_info "Running main.py. Good luck!"
+    else
+        zhh_info "Running main.sh. Good luck!"
+    fi
+    zhh_hr "-"
     (echo "$COMMAND"; echo ========; echo; ) > $LOG_DIR/output.log
 
 
     # trap a ^C signal
     trap - INT # reset trap, avoid multiple traps stacking
-    echo -e "[DEBUG] FAST DEBUG is $FAST_DEBUG"
     trap killer_trap INT
 
     cd $STAGE_DIR && \
@@ -359,48 +413,51 @@ while_run(){
         register_tpu && \
         run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
         && ret=0 || ret=$?
-        echo "[Debug] Initial run returned $ret"
+        zhh_debug "Initial run returned $ret"
 
         if [ $ret -eq 0 ]; then
             echo -e "\033[32m[Info] Job finished successfully (in one trial! lucky you!).\033[0m"
             return 0
         fi
 
-    
-        echo -e "\033[31m[Error] Job failed, first wait for a moment (feel free to ^C if you are here)...\033[0m"
-        # sleep 600
-        sleep 60
+        if [ $ret -eq 42 ]; then
+            zhh_warn "Current TPU could not be prepared. Re-selecting another card."
+        else
 
-        echo "[INFO] Checking TPU status..."
-        # if has tpu and the return code is not 42
-        # if has_tpu $VM_NAME $ZONE; then
-        # if ! is_preempted $VM_NAME $ZONE; then
-        if [ $ret -ne 42 ] && has_tpu $VM_NAME $ZONE; then
-            # note: better make the code more likely to enter this branch
-            # this will avoid infinite loop
+            echo -e "\033[31m[Error] Job failed, first wait for a moment (feel free to ^C if you are here)...\033[0m"
+            # sleep 600
+            sleep 60
 
-            # check if there is GRPC error
-            # if grep -q "This TPU is going through a maintenance event, and might be unavailable" $LOG_DIR/output.log; then
-            #     echo -e "\033[33m[Info] Found maintenance event in logs, this TPU is no longer usable. Aborted.\033[0m"
-            #     return 1
-            
-            # case 1: exist output.log
-            if [ -f "$LOG_DIR/output.log" ]; then
-                echo "[DEBUG] log found at $LOG_DIR/output.log, checking logs for errors..."
+            echo "[INFO] Checking TPU status..."
+            # if has tpu and the return code is not 42
+            # if has_tpu $VM_NAME $ZONE; then
+            # if ! is_preempted $VM_NAME $ZONE; then
+            if has_tpu $VM_NAME $ZONE; then
+                # note: better make the code more likely to enter this branch
+                # this will avoid infinite loop
 
-                if grep -q '\[/usr/bin/ssh\] exited with return code \[255\]' $LOG_DIR/output.log || grep -q "Terminating process because the coordinator detected missing heartbeats." $LOG_DIR/output.log; then
-                    echo -e "\033[33m[Info] Found GRPC/heartbeat error in logs, will re-setup env and re-run.\033[0m"
-                    # sleep 60
-                    # kill_tpu $VM_NAME $ZONE
-                    echo "[Debug] Re-running job..."
-                    get_and_setup_tpu $VM_NAME $ZONE && \
-                    register_tpu && \
-                    kill_tpu $VM_NAME $ZONE && \
-                    sleep 10 && \
-                    kill_tpu $VM_NAME $ZONE && \
-                    run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
-                    && ret=0 || ret=$?
-                    echo "[Debug] Re-run (for grpc) returned $ret"
+                # check if there is GRPC error
+                # if grep -q "This TPU is going through a maintenance event, and might be unavailable" $LOG_DIR/output.log; then
+                #     echo -e "\033[33m[Info] Found maintenance event in logs, this TPU is no longer usable. Aborted.\033[0m"
+                #     return 1
+                
+                # case 1: exist output.log
+                if [ -f "$LOG_DIR/output.log" ]; then
+                    zhh_debug "log found at $LOG_DIR/output.log, checking logs for errors..."
+
+                    if grep -q '\[/usr/bin/ssh\] exited with return code \[255\]' $LOG_DIR/output.log || grep -q "Terminating process because the coordinator detected missing heartbeats." $LOG_DIR/output.log; then
+                        echo -e "\033[33m[Info] Found GRPC/heartbeat error in logs, will re-setup env and re-run.\033[0m"
+                        # sleep 60
+                        # kill_tpu $VM_NAME $ZONE
+                        zhh_debug "Re-running job..."
+                        get_and_setup_tpu $VM_NAME $ZONE && \
+                        register_tpu && \
+                        kill_tpu $VM_NAME $ZONE && \
+                        sleep 10 && \
+                        kill_tpu $VM_NAME $ZONE && \
+                        run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
+                        && ret=0 || ret=$?
+                        zhh_debug "Re-run (for grpc) returned $ret"
                 # elif grep -q "Fatal Python error: Aborted" $LOG_DIR/output.log; then
                 #     echo -e "\033[33m[Info] Found Segfault in logs, will wait and re-run...\033[0m"
                 #     echo "[Debug] Re-running job..."
@@ -410,44 +467,45 @@ while_run(){
                 #     run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
                 #     && ret=0 || ret=$?
                 #     echo "[Debug] Re-run (for segfault) returned $ret"
-                elif grep -q "(core dumped)" $LOG_DIR/output.log || grep -q "Command execution on worker 0 failed with exit status 134" $LOG_DIR/output.log || grep -q "UNKNOWN: TPU initialization failed:" $LOG_DIR/output.log || grep -q "ABORTED: The TPU is already in use by process" $LOG_DIR/output.log; then
-                    echo -e "\033[33m[Info] Our job is killed by others. Will change card and re-run...\033[0m"
+                    elif grep -q "(core dumped)" $LOG_DIR/output.log || grep -q "Command execution on worker 0 failed with exit status 134" $LOG_DIR/output.log || grep -q "UNKNOWN: TPU initialization failed:" $LOG_DIR/output.log || grep -q "ABORTED: The TPU is already in use by process" $LOG_DIR/output.log; then
+                        echo -e "\033[33m[Info] Our job is killed by others. Will change card and re-run...\033[0m"
+                        deregister_tpu $VM_NAME $ZONE
+                        ret=42
+                    else
+                        echo -e "\033[32m[Info] Card status looks good, then it is probably a code bug. Please fix it and re-run.\033[0m"
+                        return 1
+                    fi
+                else
+                    echo -e "Log file not found. This means the environment setup failed."
+                    echo -e "\033[33m[Info] Will change card and re-run...\033[0m"
                     deregister_tpu $VM_NAME $ZONE
                     ret=42
-                else
-                    echo -e "\033[32m[Info] Card status looks good, then it is probably a code bug. Please fix it and re-run.\033[0m"
-                    return 1
                 fi
             else
-                echo -e "Log file not found. This means the environment setup failed."
-                echo -e "\033[33m[Info] Will change card and re-run...\033[0m"
-                deregister_tpu $VM_NAME $ZONE
-                ret=42
+                echo -e "\033[33m[Info] Card $VM_NAME in $ZONE is PREEMPTED, will re-apply and re-run.\033[0m"
+                # zhh: resumes with an auto card
+                # reset EXIT trap
+                trap - EXIT
+                trap 'zhh_cleanup_ui' EXIT
+                accel_arg=$(get_accelerator_args $VM_NAME)
+                # split by '-'
+                type_part=$(echo $accel_arg | cut -d'-' -f1)
+                size_part=$(echo $accel_arg | cut -d'-' -f2)
+                export VM_NAME="auto${type_part}"
+                export TPU_TYPES="$size_part"
+                export ZONE=$ZONE_INITIAL
+                auto_select && \
+                log_stage_dir "$STAGE_DIR" && \
+                get_and_setup_tpu $VM_NAME $ZONE && \
+                register_tpu && \
+                run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
+                && ret=0 || ret=$?
+                zhh_debug "Re-run with auto-select returned $ret"
             fi
-            
-        else
-            echo -e "\033[33m[Info] Card $VM_NAME in $ZONE is PREEMPTED, will re-apply and re-run.\033[0m"
-            # zhh: resumes with an auto card
-            # reset EXIT trap
-            trap - EXIT
-            accel_arg=$(get_accelerator_args $VM_NAME)
-            # split by '-'
-            type_part=$(echo $accel_arg | cut -d'-' -f1)
-            size_part=$(echo $accel_arg | cut -d'-' -f2)
-            export VM_NAME="auto${type_part}"
-            export TPU_TYPES="$size_part"
-            export ZONE=$ZONE_INITIAL
-            auto_select && \
-            log_stage_dir "$STAGE_DIR" && \
-            get_and_setup_tpu $VM_NAME $ZONE && \
-            register_tpu && \
-            run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
-            && ret=0 || ret=$?
-            echo "[Debug] Re-run with auto-select returned $ret"
         fi
 
         while [ $ret -eq 42 ]; do
-            echo -e "\033[31m[INFO] Re-doing auto-select... \033[0m" >&2
+            zhh_note "[INFO] Re-doing auto-select..."
 
             accel_arg=$(get_accelerator_args $VM_NAME)
             # split by '-'
@@ -462,7 +520,7 @@ while_run(){
             register_tpu && \
             run_job $STAGE_DIR "${EXTRA_ARGS[@]}" \
             && ret=0 || ret=$?
-            echo "[Debug] Re-doing auto-select returned $ret"
+            zhh_debug "Re-doing auto-select returned $ret"
         done
     done
 
@@ -482,9 +540,7 @@ zrun(){
     starting_command # avoid multiple jobs starting together
 
     # staging to $STAGE_DIR
-
-    STAGE_DIR=$(stage)
-    STAGE_DIR=$(echo $STAGE_DIR | head -n 1 | awk '{print $3}')
+    stage || return 1
     log_stage_dir "$STAGE_DIR"
 
     # if EXTRA_ARGS exists, write to a file in STAGE_DIR
@@ -511,6 +567,10 @@ zrerun(){
     export WHO=$(echo $(pwd) | cut -d'/' -f4)
 
     starting_command # avoid multiple jobs starting together
+    zhh_box_section "Reuse staged workspace"
+    zhh_kv "stage path" "$(pwd)"
+    zhh_set_stage_context "$(pwd)"
+    zhh_kv "prep logs" "$ZHH_PREP_LOG_DIR"
 
     # check if .extra_args exists
     # EXTRA_ARGS=""
@@ -539,8 +599,7 @@ zqueue(){
     fi
 
     # staging to $STAGE_DIR
-    STAGE_DIR=$(stage)
-    STAGE_DIR=$(echo $STAGE_DIR | head -n 1 | awk '{print $3}')
+    stage || return 1
 
     # if EXTRA_ARGS exists, write to a file in STAGE_DIR
     # if [ ! -z "$EXTRA_ARGS" ]; then
@@ -591,8 +650,7 @@ zqueue_rerun(){
     fi
 
     # staging to $STAGE_DIR
-    STAGE_DIR=$(stage)
-    STAGE_DIR=$(echo $STAGE_DIR | head -n 1 | awk '{print $3}')
+    stage || return 1
 
     # if EXTRA_ARGS exists, write to a file in STAGE_DIR
     # if [ ! -z "$EXTRA_ARGS" ]; then
@@ -759,20 +817,38 @@ zclean(){
 }
 
 check_config_sanity(){
-    if [ -z "$WANDB_API_KEY" ]; then
-        for _ in {1..10}; do 
-        echo -e "\033[31m[FATAL Warning] WANDB_API_KEY is not set. Please run \`source .ka\`.\033[0m" >&2
-        done
-        # return 1
+    local strict_run=false
+    local missing=()
+
+    if is_run_like_command "$ZHH_MAIN_COMMAND"; then
+        strict_run=true
     fi
 
-    if [ -z "$VM_NAME" ]; then
-        echo -e "\033[31m[Error] VM_NAME is not set. Please run \`source .ka\`.\033[0m" >&2
-        echo -e "\033[33m[Hint] Use \`zhh help\` for more info.\033[0m" >&2
+    export WHO="${WHO:-$WECODE_USER}"
+
+    if $strict_run; then
+        [ -n "$PROJECT" ] || missing+=("PROJECT")
+        [ -n "$WANDB_API_KEY" ] || missing+=("WANDB_API_KEY")
+        [ -n "$TPU_TYPES" ] || missing+=("TPU_TYPES")
+        [ -n "$VM_NAME" ] || missing+=("VM_NAME")
+        [ -n "$WHO" ] || missing+=("WHO")
+        if [ ${#missing[@]} -ne 0 ]; then
+            zhh_section "Run Configuration"
+            zhh_error "Missing required environment variables: ${missing[*]}"
+            zhh_warn "Set them in .ka or your shell and run again."
+            return 1
+        fi
+    elif [ -z "$VM_NAME" ]; then
+        zhh_error "VM_NAME is not set. Please run \`source .ka\`."
+        zhh_warn "Use \`zhh help\` for more info."
         return 1
     fi
 
-    auto_select
+    if ! $strict_run && [ -z "$TPU_TYPES" ]; then
+        export TPU_TYPES="32,64"
+    fi
+
+    auto_select || return $?
 
     if [[ $VM_NAME =~ 'v4-' ]]; then
         export INF_ZONE=us-central2-b
@@ -780,22 +856,20 @@ check_config_sanity(){
         export INF_ZONE=us-central1-a
     elif [[ $VM_NAME =~ 'v5p-' ]]; then
         # export INF_ZONE=us-east5-a
-        echo "current will not infer v5p zone"
+        zhh_debug "Current logic will not infer v5p zone automatically."
     elif [[ $VM_NAME =~ 'v6e-' ]]; then
         # export INF_ZONE=us-east1-d
-        echo "current will not infer v6e zone"
+        zhh_debug "Current logic will not infer v6e zone automatically."
     fi
 
     if [ -z "$ZONE" ]; then
-        echo -e "\033[33m[Info] ZONE is not set. Will automatically infer zone.\033[0m" >&2
-
         if [[ -z "$INF_ZONE" ]]; then
-            echo -e "\033[31m[Error] Cannot infer ZONE from VM_NAME. Please set ZONE manually in .ka.\033[0m" >&2
+            zhh_error "Cannot infer ZONE from VM_NAME. Please set ZONE manually in .ka."
             return 1
         fi
         ZONE=$INF_ZONE
-        echo -e "\033[32m[Info] Inferred ZONE=$ZONE from VM_NAME=$VM_NAME.\033[0m"
-        sleep 2
+        export ZONE
+        zhh_info "Inferred ZONE=$ZONE from VM_NAME=$VM_NAME."
     else
         if [[ ! -z "$INF_ZONE" && "$ZONE" != "$INF_ZONE" ]]; then
             # use red
@@ -807,8 +881,17 @@ check_config_sanity(){
         fi
     fi
 
-    echo -e "\033[32m[INFO] You are using VM_NAME=$VM_NAME (ZONE=$ZONE)\033[0m"
-    sleep 2
+    if $strict_run; then
+        zhh_section "Run Configuration"
+        zhh_kv "PROJECT" "$PROJECT"
+        zhh_kv "WANDB_API_KEY" "$(zhh_mask_secret "$WANDB_API_KEY") (masked)"
+        zhh_kv "TPU_TYPES" "$TPU_TYPES"
+        zhh_kv "VM_NAME" "$VM_NAME"
+        zhh_kv "WHO" "$WHO"
+        zhh_kv "ZONE" "${ZONE:-<empty>}"
+    else
+        zhh_success "Using VM_NAME=$VM_NAME (ZONE=$ZONE)"
+    fi
 }
 
 # infer_stagedir has problem, since the command may be overwrite

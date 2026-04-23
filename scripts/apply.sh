@@ -80,9 +80,12 @@ get_service_account(){
 get_tpu_legacy(){
     VM_NAME=$1
     ZONE=$2
+    local apply_log_file=""
+    local describe_cmd=""
+    local delete_cmd=""
+    local max_apply_rounds="${ZHH_MAX_APPLY_ROUNDS:-5}"
+    local success=0
     
-    echo "[INFO] requesting tpu vm $VM_NAME in $ZONE..."
-
     if [ -z "$VM_NAME" ]; then
         echo -e $VM_UNFOUND_ERROR
         return 1
@@ -93,46 +96,85 @@ get_tpu_legacy(){
     accelerator_version=$(get_accelerator_version $VM_NAME)
     service_account=$(get_service_account $ZONE)
     if [ $? -ne 0 ]; then
+        if [ -n "$apply_log_file" ]; then
+            zhh_step_fail "[FAILED]"
+            zhh_note "Log: $apply_log_file"
+        fi
         return 1
     fi
     create_cmd="gcloud compute tpus tpu-vm create $VM_NAME --zone=$ZONE --accelerator-type=$accelerator_type --version=$accelerator_version --spot --service-account=$service_account"
+    describe_cmd="gcloud compute tpus tpu-vm describe $VM_NAME --zone=$ZONE --format=\"value(state)\" 2>/dev/null"
+    delete_cmd="gcloud compute tpus tpu-vm delete $VM_NAME --zone=$ZONE --quiet"
 
-    outer_loop=0
+    outer_loop=1
     try_start=$(date)
-    while true; do
-        status=$(
-            gcloud compute tpus tpu-vm describe $VM_NAME --zone=$ZONE --format="value(state)"
-        )
-        if [ "$status" = "READY" ]; then
-            echo -e "\033[32m[INFO] TPU VM is ready.\033[0m"
-            break
-        elif [ -z "$status" ]; then
-            echo "[INFO] TPU VM does not exist."
-        elif [ "$status" = "PREEMPTED" ]; then
-            echo "[INFO] TPU VM is preempted. Deleting..."
-            gcloud compute tpus tpu-vm delete $VM_NAME --zone=$ZONE --quiet
+    while [ $outer_loop -le $max_apply_rounds ]; do
+        apply_log_file=""
+        if zhh_prepare_ring_log_file apply_log_file "apply_tpu" 5 2>/dev/null; then
+            zhh_step_banner "Apply TPU" "$apply_log_file" \
+                "$(zhh_format_detail "target" "$(zhh_blue_text "$VM_NAME") @ $(zhh_blue_text "$ZONE")")"
+            zhh_step_start_spinner
         else
-            echo "[INFO] TPU VM status: $status. Waiting..."
+            echo "[INFO] requesting tpu vm $VM_NAME in $ZONE..."
+        fi
+
+        if [ -n "$apply_log_file" ]; then
+            zhh_capture_eval_output status "$apply_log_file" "$describe_cmd" || true
+        else
+            status=$(eval "$describe_cmd")
+        fi
+        if [ "$status" = "READY" ]; then
+            if [ -n "$apply_log_file" ]; then
+                zhh_step_done
+            else
+                echo -e "\033[32m[INFO] TPU VM is ready.\033[0m"
+            fi
+            return 0
+        elif [ -z "$status" ]; then
+            :
+        elif [ "$status" = "PREEMPTED" ]; then
+            if [ -n "$apply_log_file" ]; then
+                zhh_run_eval_logged "$apply_log_file" "$delete_cmd" || true
+            else
+                echo "[INFO] TPU VM is preempted. Deleting..."
+                gcloud compute tpus tpu-vm delete $VM_NAME --zone=$ZONE --quiet
+            fi
+        else
+            if [ -z "$apply_log_file" ]; then
+                echo "[INFO] TPU VM status: $status. Waiting..."
+            fi
             sleep 10 # Wait for 1 minutes before checking again
             continue
         fi
         success=0
         for i in {1..3}; do
-            echo "[INFO] Creating TPU VM... Round $outer_loop Attempt $i (time: " $(date) ")"
-            if eval $create_cmd ; then
-                echo -e "\033[32m[INFO] TPU VM created successfully.\033[0m"
-                success=1
-                break
+            if [ -n "$apply_log_file" ]; then
+                if zhh_run_eval_logged "$apply_log_file" "$create_cmd"; then
+                    success=1
+                    break
+                fi
+            else
+                echo "[INFO] Creating TPU VM... Round $outer_loop Attempt $i (time: " $(date) ")"
+                if eval $create_cmd ; then
+                    echo -e "\033[32m[INFO] TPU VM created successfully.\033[0m"
+                    success=1
+                    break
+                fi
             fi
 
             # all other calls are quiet
-            if [ $i -eq 1 ] && [ $outer_loop -eq 0 ]; then create_cmd="$create_cmd --quiet 2>/dev/null"; fi
+            if [ $i -eq 1 ] && [ $outer_loop -eq 1 ]; then create_cmd="$create_cmd --quiet 2>/dev/null"; fi
 
-            echo "[INFO] Failed to create TPU VM. Retrying..."
-            # sleep 10 # Wait for 10 seconds before retrying
+            if [ -z "$apply_log_file" ]; then
+                echo "[INFO] Failed to create TPU VM. Retrying..."
+            fi
         done
         if [ $success -eq 1 ]; then
-            echo -e "\033[32m[INFO] TPU VM $VM_NAME created successfully.\033[0m"
+            if [ -n "$apply_log_file" ]; then
+                zhh_step_done
+            else
+                echo -e "\033[32m[INFO] TPU VM $VM_NAME created successfully.\033[0m"
+            fi
             # if available, send email
             semail --apply-success $VM_NAME "$try_start" "$(date)" $outer_loop
             # for this case, TPU must be set up
@@ -142,19 +184,28 @@ get_tpu_legacy(){
         fi
         # sleep 60 # Wait for 1 minutes before checking again
 
-        outer_loop=$((outer_loop+1))
         # if outer_loop % 100 == 0, send email
         if [ $((outer_loop % 100)) -eq 0 ]; then
             semail --apply-fail $VM_NAME "$try_start" "$(date)" $outer_loop
         fi
 
-        # if achieve 100 loops, abort
-        # if [ $outer_loop -ge 0 ]; then # debug
-        if [ $outer_loop -ge 1 ]; then
-            echo -e "\033[31m[ERROR] Failed to create TPU VM after 1 attempts. Exiting.\033[0m"
+        if [ -n "$apply_log_file" ]; then
+            zhh_step_fail "[FAILED]"
+            zhh_error "Failed to apply after round $outer_loop."
+            zhh_note "Log: $apply_log_file"
+            if [ $outer_loop -lt $max_apply_rounds ]; then
+                zhh_note "Will continue to apply."
+            fi
+        else
+            echo -e "\033[31m[ERROR] Failed to create TPU VM after round $outer_loop.\033[0m"
+        fi
+
+        if [ $outer_loop -ge $max_apply_rounds ]; then
             deregister_tpu $VM_NAME
             return 1
         fi
+
+        outer_loop=$((outer_loop+1))
 
     done;
 }
@@ -308,7 +359,7 @@ get_tpu(){
         return 1
     fi
 
-    trap 'echo -e "\n\033[33m[Info] Caught interrupt signal. Deregistering...\033[0m"; deregister_tpu $1; exit $ret' INT
+    trap 'zhh_cleanup_ui; echo -e "\n\033[33m[Info] Caught interrupt signal. Deregistering...\033[0m"; deregister_tpu $1; exit $ret' INT
     if [ "$USE_QUEUE" = "1" ]; then
         # get_tpu_queue $1 $2
         echo -e 'NO LONGER USE QUEUE. Please set USE_QUEUE=0 and use legacy get_tpu.\n'
@@ -410,7 +461,11 @@ good_tpu_verbose(){
 }
 
 run_helpzak(){
-    gcloud compute tpus tpu-vm ssh kmh-tpuvm-v4-8-3 --zone=us-central2-b --command="sudo -iu sqa sudo -iu sqa bash /home/sqa/.helpzak $VM_NAME $ZONE"
+    if [ -n "$ZHH_ENV_CHECK_LOG_FILE" ]; then
+        zhh_run_logged_command "$ZHH_ENV_CHECK_LOG_FILE" gcloud compute tpus tpu-vm ssh kmh-tpuvm-v4-8-3 --zone=us-central2-b --command="sudo -iu sqa sudo -iu sqa bash /home/sqa/.helpzak $VM_NAME $ZONE"
+    else
+        gcloud compute tpus tpu-vm ssh kmh-tpuvm-v4-8-3 --zone=us-central2-b --command="sudo -iu sqa sudo -iu sqa bash /home/sqa/.helpzak $VM_NAME $ZONE"
+    fi
 }
 
 setup_tpu(){
@@ -418,31 +473,31 @@ setup_tpu(){
     log_tpu_check_result "testing"
 
     if [ "$TPU_IS_NEW" = "1" ]; then
-        echo "[INFO] TPU is newly created, running setup script."
+        zhh_muted_info "TPU is newly created. Installing runtime dependencies."
         run_setup_script $VM_NAME $ZONE
     else
-        echo "[INFO] TPU is existing, first skip setup script."
+        zhh_muted_info "TPU already exists. Skipping install unless environment check requests it."
     fi
     while_check_env $VM_NAME $ZONE && ret=0 || ret=$?
     if [ $ret -eq 9 ]; then
-        echo "[INFO] TPU may be preempted during environment check. First trying to use helpzak..."
+        zhh_warn "TPU may be preempted during environment check. Trying helpzak once."
         run_helpzak
         while_check_env $VM_NAME $ZONE && ret=0 || ret=$?
         if [ $ret -eq 9 ]; then
-            echo "[INFO] TPU is really preempted"
+            zhh_warn "TPU is still preempted after helpzak."
             return 9
         fi
         # return 9
     elif [ $ret -ne 0 ]; then
-        echo "[INFO] Environment check failed with ret=$ret"
+        zhh_warn "Environment check failed with ret=$ret."
         return $ret
     fi
     run_wandb_login $VM_NAME $ZONE && ret=0 || ret=$?
     if [ $ret -eq 9 ]; then
-        echo "[INFO] TPU may be preempted during wandb login. Exiting to re-apply..."
+        zhh_warn "TPU may be preempted during wandb login. Re-applying."
         return 9
     elif [ $ret -ne 0 ]; then
-        echo "[INFO] Wandb login failed with ret=$ret"
+        zhh_warn "Wandb login failed with ret=$ret."
         return $ret
     fi
 
@@ -452,15 +507,14 @@ setup_tpu(){
 }
 
 get_and_setup_tpu(){
-
     # write name lock (group shared):
     # zak_$VM_NAME_2026-02-26_21-42-42
-    echo "Writing lock file for TPU $VM_NAME"
+    printf '%bℹ️  Preparing TPU %s @ %s%b\n' "$ZHH_COLOR_DIM" "$(zhh_blue_text "$VM_NAME")" "$(zhh_blue_text "$ZONE")" "$ZHH_COLOR_RESET"
     LOCK_FILE="/kmh-nfs-ssd-us-mount/code/qiao/tpu_lock/zak_${VM_NAME}_$(date -u +%Y-%m-%d_%H-%M-%S)"
     sudo touch $LOCK_FILE
 
     if [ ! -z "$FAST_DEBUG" ]; then
-        echo -e "\033[33m[INFO] FAST_DEBUG is set, skipping TPU get and setup.\033[0m"
+        zhh_warn "FAST_DEBUG is set. Skipping TPU allocation and setup."
         # unset FAST_DEBUG # if for second time (i.e. card preempted), then do normal
         return 0
     fi
@@ -468,30 +522,34 @@ get_and_setup_tpu(){
     ret=9
     trial=0
     while [ $ret -eq 9 ]; do
-        echo "[INFO] Attempt number $((trial+1)) to get and setup TPU..."
+        export ZHH_SETUP_TRIAL=$((trial+1))
+        zhh_box_section "TPU setup trial ${ZHH_SETUP_TRIAL}/5"
         get_tpu $VM_NAME $ZONE && ret=0 || ret=$?
         if [ $ret -ne 0 ]; then
-            echo -e "\033[31m[ERROR] Failed to apply TPU $VM_NAME @ $ZONE with ret=$ret. Exiting.\033[0m"
             deregister_tpu $VM_NAME
+            unset ZHH_SETUP_TRIAL
             return 42
         fi
         setup_tpu $VM_NAME $ZONE && ret=0 || ret=$?
         if [ $ret -eq 0 ]; then
-            echo -e "\033[32m[INFO] TPU $VM_NAME @ $ZONE is ready to use.\033[0m"
+            zhh_box_success "TPU $VM_NAME @ $ZONE is ready to use."
+            unset ZHH_SETUP_TRIAL
             return 0
         fi
         trial=$((trial+1))
         export SCRIPT_DEBUG=1 # for the subsequent runs, always use verbose mode
         if [ $trial -ge 5 ]; then
-            echo -e "\033[31m[Error] TPU $VM_NAME @ $ZONE setup failed after 5 trials. Exiting.\033[0m"
+            zhh_error "TPU $VM_NAME @ $ZONE setup failed after 5 trials."
             deregister_tpu $VM_NAME
+            unset ZHH_SETUP_TRIAL
             return 1
         fi
-        echo -e "\033[33m[INFO] Retrying to get and setup TPU after 1 minute...\033[0m"
+        zhh_warn "Retrying TPU setup in 60 seconds."
         sleep 60
     done
-    echo -e "\033[31m[ERROR] get_and_setup_tpu exited with ret=$ret\033[0m"
-    echo -e "\033[32m[INFO] we will automatically switch a card (by returning 42)"
+    unset ZHH_SETUP_TRIAL
+    zhh_error "get_and_setup_tpu exited with ret=$ret"
+    zhh_info "Automatically switching to another card."
     deregister_tpu $VM_NAME
     return 42
     # return $ret

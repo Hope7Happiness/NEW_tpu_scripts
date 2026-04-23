@@ -26,7 +26,9 @@ def _extract_wandb_api_key(text: str) -> str:
         if not m:
             continue
         value = m.group(1).strip()
-        if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+        if (value.startswith('"') and value.endswith('"')) or (
+            value.startswith("'") and value.endswith("'")
+        ):
             value = value[1:-1]
         return value
     return ""
@@ -35,15 +37,19 @@ def _extract_wandb_api_key(text: str) -> str:
 def _load_default_wandb_api_key() -> str:
     try:
         if SCRIPT_KA_FILE.exists() and SCRIPT_KA_FILE.is_file():
-            return _extract_wandb_api_key(SCRIPT_KA_FILE.read_text(encoding="utf-8", errors="replace"))
+            return _extract_wandb_api_key(
+                SCRIPT_KA_FILE.read_text(encoding="utf-8", errors="replace")
+            )
     except Exception:
         pass
     return ""
 
 
-def _ka_template_text() -> str:
+def _ka_template_text(cwd: Path) -> str:
     key = _load_default_wandb_api_key()
+    project = cwd.resolve().name or "unknown"
     lines = [
+        f"export PROJECT={project}",
         "export VM_NAME=autov6",
         "export TPU_TYPES=64",
         "export ZONE=",
@@ -81,11 +87,13 @@ def _list_available_yaml_files(cwd: Path) -> list[dict]:
     for name, rel in TARGET_YAML_FILES.items():
         abs_path = (cwd / rel).resolve()
         if abs_path.exists() and abs_path.is_file():
-            items.append({
-                "name": name,
-                "relative_path": str(rel),
-                "absolute_path": str(abs_path),
-            })
+            items.append(
+                {
+                    "name": name,
+                    "relative_path": str(rel),
+                    "absolute_path": str(abs_path),
+                }
+            )
     return items
 
 
@@ -101,7 +109,9 @@ def register_yaml_editor_routes(app, get_conversation):
             return jsonify({"error": str(e)}), 400
 
         files = _list_available_yaml_files(cwd)
-        return jsonify({"conversation_id": conversation_id, "cwd": str(cwd), "files": files})
+        return jsonify(
+            {"conversation_id": conversation_id, "cwd": str(cwd), "files": files}
+        )
 
     @app.route("/api/conversations/<conversation_id>/yaml/file", methods=["GET"])
     def api_yaml_read(conversation_id: str):
@@ -127,12 +137,14 @@ def register_yaml_editor_routes(app, get_conversation):
         except Exception as e:
             return jsonify({"error": f"failed to read yaml file: {e}"}), 500
 
-        return jsonify({
-            "conversation_id": conversation_id,
-            "name": target_name,
-            "relative_path": str(TARGET_YAML_FILES[target_name]),
-            "content": content,
-        })
+        return jsonify(
+            {
+                "conversation_id": conversation_id,
+                "name": target_name,
+                "relative_path": str(TARGET_YAML_FILES[target_name]),
+                "content": content,
+            }
+        )
 
     @app.route("/api/conversations/<conversation_id>/yaml/file", methods=["PUT"])
     def api_yaml_write(conversation_id: str):
@@ -163,13 +175,15 @@ def register_yaml_editor_routes(app, get_conversation):
         except Exception as e:
             return jsonify({"error": f"failed to write yaml file: {e}"}), 500
 
-        return jsonify({
-            "conversation_id": conversation_id,
-            "name": target_name,
-            "relative_path": str(TARGET_YAML_FILES[target_name]),
-            "bytes": len(content.encode("utf-8")),
-            "saved": True,
-        })
+        return jsonify(
+            {
+                "conversation_id": conversation_id,
+                "name": target_name,
+                "relative_path": str(TARGET_YAML_FILES[target_name]),
+                "bytes": len(content.encode("utf-8")),
+                "saved": True,
+            }
+        )
 
 
 def register_ka_editor_routes(app, get_conversation):
@@ -188,7 +202,7 @@ def register_ka_editor_routes(app, get_conversation):
         created = False
         if not target_path.exists():
             try:
-                target_path.write_text(_ka_template_text(), encoding="utf-8")
+                target_path.write_text(_ka_template_text(cwd), encoding="utf-8")
                 created = True
             except Exception as e:
                 return jsonify({"error": f"failed to create .ka file: {e}"}), 500
@@ -200,13 +214,15 @@ def register_ka_editor_routes(app, get_conversation):
         except Exception as e:
             return jsonify({"error": f"failed to read .ka file: {e}"}), 500
 
-        return jsonify({
-            "conversation_id": conversation_id,
-            "name": ".ka",
-            "relative_path": ".ka",
-            "content": content,
-            "created": created,
-        })
+        return jsonify(
+            {
+                "conversation_id": conversation_id,
+                "name": ".ka",
+                "relative_path": ".ka",
+                "content": content,
+                "created": created,
+            }
+        )
 
     @app.route("/api/conversations/<conversation_id>/ka/file", methods=["PUT"])
     def api_ka_write(conversation_id: str):
@@ -230,10 +246,12 @@ def register_ka_editor_routes(app, get_conversation):
         except Exception as e:
             return jsonify({"error": f"failed to write .ka file: {e}"}), 500
 
-        return jsonify({
-            "conversation_id": conversation_id,
-            "name": ".ka",
-            "relative_path": ".ka",
-            "bytes": len(content.encode("utf-8")),
-            "saved": True,
-        })
+        return jsonify(
+            {
+                "conversation_id": conversation_id,
+                "name": ".ka",
+                "relative_path": ".ka",
+                "bytes": len(content.encode("utf-8")),
+                "saved": True,
+            }
+        )
