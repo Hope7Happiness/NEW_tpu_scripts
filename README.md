@@ -167,6 +167,7 @@ Current MVP behavior:
 - `zhh center s` shows centralized runs.
 - `zhh center cancel <run_id>` cancels a run and kills its assigned TPU by default.
 - This first slice uses existing TPUs from `itou`; it does **not** create new TPU VMs yet.
+- The center loop stays fast: it reads `itou`/inbox in the main process and runs slow TPU environment probes in background subprocesses. Bad probe results suppress that TPU for 10 minutes.
 - The center can run as your current user; workers default to running as `zak` via `sudo`.
 - The sudo password file is `.center_sudo_password` in this repo root. It is gitignored and should be `0600`.
 
@@ -204,6 +205,12 @@ Show centralized status:
 
 ```bash
 zhh center s
+```
+
+Change TPU requirements for a submitted run:
+
+```bash
+zhh change <run_id>
 ```
 
 Show the center TPU inventory:

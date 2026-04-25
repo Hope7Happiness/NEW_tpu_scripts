@@ -95,10 +95,18 @@ stage(){
         "$(zhh_format_detail "stage dir" "$STAGE_DIR")"
     zhh_step_start_spinner
 
-    zhh_sudo mkdir -p $STAGE_DIR
-    zhh_sudo chmod 777 $STAGE_DIR
-    # temporally patch
-    zhh_sudo rsync -a -O --exclude '.git' --exclude '.opencode' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' --exclude 'wandb' --exclude='*.npz' . $STAGE_DIR && stage_ret=0 || stage_ret=$?
+    if mkdir -p "$STAGE_DIR" 2>/dev/null && chmod 777 "$STAGE_DIR" 2>/dev/null; then
+        # temporally patch
+        rsync -a -O --exclude '.git' --exclude '.opencode' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' --exclude 'wandb' --exclude='*.npz' . "$STAGE_DIR" && stage_ret=0 || stage_ret=$?
+    else
+        stage_ret=1
+    fi
+    if [ $stage_ret -ne 0 ] && [ ! -w "$STAGE_ROOT" ]; then
+        zhh_muted_warn "Stage root is not writable by $(whoami); falling back to sudo."
+        zhh_sudo mkdir -p "$STAGE_DIR"
+        zhh_sudo chmod 777 "$STAGE_DIR"
+        zhh_sudo rsync -a -O --exclude '.git' --exclude '.opencode' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' --exclude 'wandb' --exclude='*.npz' . "$STAGE_DIR" && stage_ret=0 || stage_ret=$?
+    fi
     # sudo rsync -a -O --exclude '.git' --exclude '.opencode' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' --exclude 'wandb' . $STAGE_DIR
     if [ $stage_ret -eq 0 ]; then
         zhh_step_done
@@ -691,6 +699,24 @@ zcenter_worker(){
         ret=$?
     fi
     python3 "$ZHH_SCRIPT_ROOT/tpu_center/cli.py" worker-finished --run-id "$run_id" --exit-code "$ret" || true
+    return $ret
+}
+
+zcenter_probe(){
+    local vm_name="$1"
+    local zone="$2"
+    local ret=0
+
+    if [ -z "$vm_name" ] || [ -z "$zone" ]; then
+        zhh_error "Usage: zhh center-probe <vm_name> <zone>"
+        return 1
+    fi
+
+    export VM_NAME="$vm_name"
+    export ZONE="$zone"
+    has_tpu "$VM_NAME" "$ZONE" || return 2
+    tpu_in_use "$VM_NAME" "$ZONE" || return 3
+    check_env "$VM_NAME" "$ZONE" && ret=0 || ret=$?
     return $ret
 }
 

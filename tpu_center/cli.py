@@ -45,7 +45,7 @@ def print_kv(label: str, value: object, indent: str = "  ") -> None:
 
 
 def ensure_layout(root: Path = CENTER_ROOT) -> None:
-    for rel in ("inbox", "processing", "failed_requests", "runs", "leases", "inventory", "logs"):
+    for rel in ("inbox", "processing", "failed_requests", "runs", "leases", "inventory", "logs", "probes", "bad_tpus"):
         (root / rel).mkdir(parents=True, exist_ok=True)
 
 
@@ -81,6 +81,10 @@ def run_id_from_stage_dir(stage_dir: str) -> str:
 
 def tmux_name(run_id: str) -> str:
     return f"zhh_center_{run_id[:12]}"
+
+
+def safe_name(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", value)
 
 
 def strip_ansi(text: str) -> str:
@@ -440,6 +444,45 @@ def has_center_lease(vm_name: str) -> bool:
     return lease_path(vm_name).exists()
 
 
+def probe_path(vm_name: str) -> Path:
+    return CENTER_ROOT / "probes" / f"{safe_name(vm_name)}.json"
+
+
+def probe_log_path(vm_name: str) -> Path:
+    return CENTER_ROOT / "probes" / f"{safe_name(vm_name)}.log"
+
+
+def bad_tpu_path(vm_name: str) -> Path:
+    return CENTER_ROOT / "bad_tpus" / f"{safe_name(vm_name)}.json"
+
+
+def bad_tpu_reason(vm_name: str) -> str:
+    path = bad_tpu_path(vm_name)
+    if not path.exists():
+        return ""
+    try:
+        payload = read_json(path)
+    except Exception:
+        path.unlink(missing_ok=True)
+        return ""
+    bad_until = int(payload.get("bad_until", 0) or 0)
+    if time.time() >= bad_until:
+        path.unlink(missing_ok=True)
+        return ""
+    return str(payload.get("reason") or "probe failed")
+
+
+def mark_tpu_bad(vm_name: str, zone: str, reason: str) -> None:
+    cooldown = int(os.environ.get("ZHH_CENTER_BAD_TPU_COOLDOWN", str(10 * 60)))
+    atomic_write_json(bad_tpu_path(vm_name), {
+        "vm_name": vm_name,
+        "zone": zone,
+        "reason": reason,
+        "bad_at": now_ts(),
+        "bad_until": int(time.time()) + cooldown,
+    })
+
+
 def cloud_ready(vm_name: str, zone: str) -> bool:
     if os.environ.get("ZHH_CENTER_SKIP_CLOUD_CHECK") == "1":
         return True
@@ -501,7 +544,13 @@ def available_tpus() -> list[dict[str, str]]:
 
 def itou_inventory() -> list[dict[str, str]]:
     ensure_layout()
-    items = [{**item, "available": "candidate", "reason": "itou pre-check only", "checked_at": now_ts()} for item in run_itou()]
+    items = []
+    for item in run_itou():
+        reason = bad_tpu_reason(item["vm_name"])
+        if reason:
+            items.append({**item, "available": "false", "reason": f"cooldown: {reason}", "checked_at": now_ts()})
+        else:
+            items.append({**item, "available": "candidate", "reason": "itou pre-check only", "checked_at": now_ts()})
     atomic_write_json(CENTER_ROOT / "inventory" / "latest.json", {"ts": now_ts(), "items": items, "available": []})
     return items
 
@@ -523,6 +572,150 @@ def run_matches_tpu(run: dict[str, Any], tpu: dict[str, str]) -> bool:
     if sizes and tpu.get("size") not in sizes:
         return False
     return True
+
+
+def probe_is_running(payload: dict[str, Any]) -> bool:
+    pid = int(payload.get("pid", 0) or 0)
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def start_probe(tpu: dict[str, str]) -> bool:
+    ensure_layout()
+    vm_name = tpu["vm_name"]
+    zone = tpu["zone"]
+    path = probe_path(vm_name)
+    if path.exists():
+        try:
+            payload = read_json(path)
+            if payload.get("status") == "PROBING" and probe_is_running(payload):
+                return False
+            if payload.get("status") == "GOOD" and time.time() - int(payload.get("finished_at_epoch", 0) or 0) < int(os.environ.get("ZHH_CENTER_GOOD_TPU_TTL", "120")):
+                return False
+        except Exception:
+            pass
+    log_path = probe_log_path(vm_name)
+    with log_path.open("a", encoding="utf-8") as log_file:
+        proc = subprocess.Popen(
+            [sys.executable, str(Path(__file__).resolve()), "probe-worker", "--vm-name", vm_name, "--zone", zone],
+            stdout=log_file,
+            stderr=log_file,
+            start_new_session=True,
+        )
+    atomic_write_json(path, {
+        "vm_name": vm_name,
+        "zone": zone,
+        "class": tpu.get("class", ""),
+        "size": tpu.get("size", ""),
+        "status": "PROBING",
+        "pid": proc.pid,
+        "started_at": now_ts(),
+        "log": str(log_path),
+    })
+    return True
+
+
+def probe_worker(args: argparse.Namespace) -> int:
+    ensure_layout()
+    vm_name = args.vm_name
+    zone = args.zone
+    path = probe_path(vm_name)
+    started = time.time()
+    reason = ""
+    status = "BAD"
+    if has_center_lease(vm_name):
+        reason = "center lease"
+    elif has_legacy_lock(vm_name):
+        reason = "legacy lock"
+    elif not cloud_ready(vm_name, zone):
+        reason = "not READY"
+    elif remote_has_python(vm_name, zone):
+        reason = "remote python process"
+    elif os.environ.get("ZHH_CENTER_SKIP_PROBE_ENV_CHECK") == "1":
+        status = "GOOD"
+        reason = "ready (env check skipped)"
+    else:
+        command = " ".join(["exec", shlex.quote(str(SCRIPT_ROOT / "main.sh")), "center-probe", shlex.quote(vm_name), shlex.quote(zone)])
+        try:
+            proc = run_shell_as_worker_user(command, timeout=int(os.environ.get("ZHH_CENTER_PROBE_TIMEOUT", "240")))
+            if proc.returncode == 0:
+                status = "GOOD"
+                reason = "ready"
+            else:
+                reason = (proc.stderr or proc.stdout or f"probe exited {proc.returncode}").strip().splitlines()[-1:]
+                reason = reason[0] if reason else f"probe exited {proc.returncode}"
+        except subprocess.TimeoutExpired:
+            reason = "probe timeout"
+    payload = {
+        "vm_name": vm_name,
+        "zone": zone,
+        "class": parse_tpu_type(vm_name)[0],
+        "size": parse_tpu_type(vm_name)[1],
+        "status": status,
+        "reason": reason,
+        "started_at_epoch": int(started),
+        "finished_at_epoch": int(time.time()),
+        "finished_at": now_ts(),
+        "pid": os.getpid(),
+    }
+    atomic_write_json(path, payload)
+    if status != "GOOD":
+        mark_tpu_bad(vm_name, zone, reason)
+        return 1
+    return 0
+
+
+def good_probe_tpus(candidates: list[dict[str, str]]) -> list[dict[str, str]]:
+    ttl = int(os.environ.get("ZHH_CENTER_GOOD_TPU_TTL", "120"))
+    now = time.time()
+    good: list[dict[str, str]] = []
+    by_vm = {item["vm_name"]: item for item in candidates}
+    for vm_name, item in by_vm.items():
+        path = probe_path(vm_name)
+        if not path.exists():
+            continue
+        try:
+            payload = read_json(path)
+        except Exception:
+            continue
+        if payload.get("status") != "GOOD":
+            continue
+        if now - int(payload.get("finished_at_epoch", 0) or 0) > ttl:
+            continue
+        if has_center_lease(vm_name) or has_legacy_lock(vm_name) or bad_tpu_reason(vm_name):
+            continue
+        good.append(item)
+    return good
+
+
+def probe_candidates_for_queue(candidates: list[dict[str, str]], queue: list[dict[str, Any]]) -> list[dict[str, str]]:
+    ordered: list[tuple[int, dict[str, str]]] = []
+    for item in candidates:
+        for idx, run in enumerate(queue):
+            if run_matches_tpu(run, item):
+                ordered.append((idx, item))
+                break
+    ordered.sort(key=lambda pair: (pair[0], pair[1].get("vm_name", "")))
+    return [item for _, item in ordered]
+
+
+def refresh_probe_pool(candidates: list[dict[str, str]], queue: list[dict[str, Any]]) -> int:
+    started = 0
+    max_new = int(os.environ.get("ZHH_CENTER_MAX_NEW_PROBES_PER_TICK", "4"))
+    for item in probe_candidates_for_queue(candidates, queue):
+        vm_name = item["vm_name"]
+        if has_center_lease(vm_name) or has_legacy_lock(vm_name) or bad_tpu_reason(vm_name):
+            continue
+        if start_probe(item):
+            started += 1
+            if started >= max_new:
+                break
+    return started
 
 
 def ingest_once(verbose: bool = True) -> int:
@@ -716,9 +909,11 @@ def schedule_once() -> int:
     runs = load_runs()
     queue = [r for r in runs if r.get("status") in ("QUEUED", "INFRA_RETRY")]
     queue.sort(key=lambda r: (-int(r.get("priority", 0)), str(r.get("submitted_at", "")), str(r.get("run_id", ""))))
+    candidates = [item for item in itou_inventory() if item.get("available") == "candidate"]
     if not queue:
         return 0
-    tpus = available_tpus()
+    refresh_probe_pool(candidates, queue)
+    tpus = good_probe_tpus(candidates)
     scheduled = 0
     for run in queue:
         matches = [t for t in tpus if run_matches_tpu(run, t)]
@@ -986,6 +1181,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_done.add_argument("--run-id", required=True)
     p_done.add_argument("--exit-code", type=int, required=True)
     p_done.set_defaults(func=worker_finished)
+
+    p_probe = sub.add_parser("probe-worker", help=argparse.SUPPRESS)
+    p_probe.add_argument("--vm-name", required=True)
+    p_probe.add_argument("--zone", required=True)
+    p_probe.set_defaults(func=probe_worker)
 
     p_cancel = sub.add_parser("cancel", help="cancel a run and kill its TPU if assigned")
     p_cancel.add_argument("run_id")
