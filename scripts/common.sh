@@ -20,6 +20,17 @@ semail(){
     python3 $ZHH_SCRIPT_ROOT/tools/pemail.py "$@" || zhh_warn "Failed to send email."
 }
 
+zhh_sudo(){
+    local password_file="${ZHH_SUDO_PASSWORD_FILE:-${ZHH_SCRIPT_ROOT:-$(pwd)}/.center_sudo_password}"
+    if sudo -n true >/dev/null 2>&1; then
+        sudo "$@"
+    elif [ -f "$password_file" ]; then
+        printf '%s\n' "$(cat "$password_file")" | sudo -S -p '' "$@"
+    else
+        sudo "$@"
+    fi
+}
+
 VM_UNFOUND_ERROR="\033[31m[Internal Error] VM_NAME is not set. Contact admin.\033[0m"
 ZONE_UNFOUND_ERROR="\033[31m[Internal Error] ZONE is not set or incorrect. Contact admin.\033[0m"
 

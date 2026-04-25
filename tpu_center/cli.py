@@ -24,10 +24,24 @@ SCRIPT_ROOT = Path(os.environ.get("ZHH_SCRIPT_ROOT", Path(__file__).resolve().pa
 LEGACY_LOCK_ROOT = Path("/kmh-nfs-ssd-us-mount/code/qiao/tpu_lock")
 WORKER_USER = os.environ.get("ZHH_CENTER_WORKER_USER", "zak")
 SUDO_PASSWORD_FILE = Path(os.environ.get("ZHH_CENTER_SUDO_PASSWORD_FILE", SCRIPT_ROOT / ".center_sudo_password"))
+RESET = "\033[0m"
+BOLD = "\033[1m"
+DIM = "\033[90m"
+GREEN = "\033[32m"
+YELLOW = "\033[33m"
+RED = "\033[31m"
 
 
 def now_ts() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def ctext(color: str, text: object) -> str:
+    return f"{color}{text}{RESET}"
+
+
+def print_kv(label: str, value: object, indent: str = "  ") -> None:
+    print(f"{indent}{DIM}{label + ':':<14}{RESET} {value}")
 
 
 def ensure_layout(root: Path = CENTER_ROOT) -> None:
@@ -295,10 +309,10 @@ def submit(args: argparse.Namespace) -> int:
     }
     path = CENTER_ROOT / "inbox" / f"{req}.json"
     atomic_write_json(path, request, mode=0o600)
-    print(f"Submitted run {rid}")
-    print(f"  stage_dir: {stage_dir}")
-    print(f"  priority:  {priority}")
-    print(f"  inbox:     {path}")
+    print(f"Submitted run {ctext(BOLD, rid)}")
+    print_kv("stage_dir", stage_dir)
+    print_kv("priority", priority)
+    print_kv("inbox", path)
     return 0
 
 
@@ -537,6 +551,24 @@ def load_runs() -> list[dict[str, Any]]:
         except Exception as exc:
             print(f"failed to read {path}: {exc}", file=sys.stderr)
     return runs
+
+
+def resolve_run(prefix: str) -> tuple[str, Path] | tuple[None, None]:
+    ensure_layout()
+    matches = []
+    for path in (CENTER_ROOT / "runs").glob("*/run.json"):
+        rid = path.parent.name
+        if rid == prefix or rid.startswith(prefix):
+            matches.append((rid, path))
+    if not matches:
+        print(f"run not found: {prefix}", file=sys.stderr)
+        return None, None
+    if len(matches) > 1:
+        print(f"ambiguous run id prefix: {prefix}", file=sys.stderr)
+        for rid, _ in matches:
+            print(f"  {rid}", file=sys.stderr)
+        return None, None
+    return matches[0]
 
 
 def write_worker_env(run_dir: Path, run: dict[str, Any]) -> Path:
@@ -784,7 +816,6 @@ def status(_: argparse.Namespace) -> int:
         print("No centralized runs found.")
         return 0
     print(f"TPU center root: {CENTER_ROOT}")
-    print(f"{'STATUS':<12} {'PRI':>5} {'RUN_ID':<16} {'TPU':<36} {'AGE':<6} DESCRIPTION")
     for run in runs:
         tpu = run.get("assigned_tpu") or run.get("requirements") or {}
         if isinstance(tpu, dict):
@@ -794,10 +825,20 @@ def status(_: argparse.Namespace) -> int:
         else:
             tpu_text = str(tpu)
         desc = str(run.get("description") or "-").replace("\n", " ")
-        print(f"{str(run.get('status', '-')):<12} {int(run.get('priority', 0)):>5} {str(run.get('run_id', '-')):<16} {tpu_text[:36]:<36} {fmt_age(run.get('last_log_mtime')):<6} {desc[:100]}")
+        print()
+        print(ctext(BOLD, str(run.get("run_id", "-"))))
+        print_kv("status", run.get("status", "-"), indent="\t")
+        print_kv("priority", int(run.get("priority", 0)), indent="\t")
+        print_kv("description", desc, indent="\t")
+        print_kv("tpu", tpu_text, indent="\t")
+        print_kv("last_log", fmt_age(run.get("last_log_mtime")), indent="\t")
         if run.get("wandb_url"):
-            print(f"{'':<36} wandb: {run['wandb_url']}")
-        print(f"{'':<36} stage: {run.get('stage_dir', '-')}")
+            print_kv("wandb", run["wandb_url"], indent="\t")
+        if run.get("current_log_dir"):
+            print_kv("log_dir", run["current_log_dir"], indent="\t")
+        if run.get("last_error"):
+            print_kv("last_error", run["last_error"], indent="\t")
+        print_kv("stage_dir", run.get("stage_dir", "-"), indent="\t")
     return 0
 
 
@@ -833,6 +874,39 @@ def tpus(args: argparse.Namespace) -> int:
             state = "skip"
         typ = f"{item.get('class', '')}-{item.get('size', '')}".strip("-")
         print(f"{state:<10} {typ:<8} {item.get('vm_name', '-'):<48} {item.get('zone', '-'):<18} {item.get('reason', '')}")
+    return 0
+
+
+def change(args: argparse.Namespace) -> int:
+    rid, run_path = resolve_run(args.run_id)
+    if not rid or not run_path:
+        return 1
+    run = read_json(run_path)
+    req = dict(run.get("requirements") or {})
+    print(f"Editing requirements for {ctext(BOLD, rid)}")
+    print("Press Enter to keep the current value.")
+    fields = (
+        ("VM_NAME", "vm_name"),
+        ("ZONE", "zone"),
+        ("TPU_TYPES", "tpu_types"),
+    )
+    changed: dict[str, str] = {}
+    for title, key in fields:
+        current = str(req.get(key) or "")
+        value = input(f"{DIM}{title} [{current}]: {RESET}").strip()
+        if value:
+            req[key] = value
+            changed[key] = value
+    if not changed:
+        print("No changes.")
+        return 0
+    run["requirements"] = req
+    run["updated_at"] = now_ts()
+    atomic_write_json(run_path, run)
+    append_event(run_path.parent, "requirements_changed", **changed)
+    print(f"Updated {ctext(BOLD, rid)}")
+    for _, key in fields:
+        print_kv(key, req.get(key, ""))
     return 0
 
 
@@ -917,6 +991,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_cancel.add_argument("run_id")
     p_cancel.add_argument("--no-kill", action="store_true")
     p_cancel.set_defaults(func=cancel)
+
+    p_change = sub.add_parser("change", help="interactively edit TPU requirements for a run")
+    p_change.add_argument("run_id")
+    p_change.set_defaults(func=change)
 
     return parser
 

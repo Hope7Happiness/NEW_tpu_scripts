@@ -95,10 +95,10 @@ stage(){
         "$(zhh_format_detail "stage dir" "$STAGE_DIR")"
     zhh_step_start_spinner
 
-    sudo mkdir -p $STAGE_DIR
-    sudo chmod 777 $STAGE_DIR
+    zhh_sudo mkdir -p $STAGE_DIR
+    zhh_sudo chmod 777 $STAGE_DIR
     # temporally patch
-    sudo rsync -a -O --exclude '.git' --exclude '.opencode' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' --exclude 'wandb' --exclude='*.npz' . $STAGE_DIR && stage_ret=0 || stage_ret=$?
+    zhh_sudo rsync -a -O --exclude '.git' --exclude '.opencode' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' --exclude 'wandb' --exclude='*.npz' . $STAGE_DIR && stage_ret=0 || stage_ret=$?
     # sudo rsync -a -O --exclude '.git' --exclude '.opencode' --exclude '__pycache__' --exclude '*.pyc' --exclude 'logs' --exclude 'wandb' . $STAGE_DIR
     if [ $stage_ret -eq 0 ]; then
         zhh_step_done
