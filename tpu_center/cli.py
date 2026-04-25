@@ -485,6 +485,13 @@ def available_tpus() -> list[dict[str, str]]:
     return available
 
 
+def itou_inventory() -> list[dict[str, str]]:
+    ensure_layout()
+    items = [{**item, "available": "candidate", "reason": "itou pre-check only", "checked_at": now_ts()} for item in run_itou()]
+    atomic_write_json(CENTER_ROOT / "inventory" / "latest.json", {"ts": now_ts(), "items": items, "available": []})
+    return items
+
+
 def run_matches_tpu(run: dict[str, Any], tpu: dict[str, str]) -> bool:
     req = run.get("requirements") or {}
     vm_req = str(req.get("vm_name") or "")
@@ -805,16 +812,25 @@ def tpus(args: argparse.Namespace) -> int:
         items = payload.get("items", [])
         print(f"TPU inventory cached at {payload.get('ts', '-')}")
     else:
-        available_tpus()
+        if args.check:
+            available_tpus()
+        else:
+            itou_inventory()
         payload = read_json(CENTER_ROOT / "inventory" / "latest.json")
         items = payload.get("items", [])
-        print(f"TPU inventory refreshed at {payload.get('ts', '-')}")
+        suffix = "with full checks" if args.check else "from itou pre-check"
+        print(f"TPU inventory refreshed at {payload.get('ts', '-')} ({suffix})")
     if not items:
         print("No TPU candidates found.")
         return 0
     print(f"{'STATE':<10} {'TYPE':<8} {'VM_NAME':<48} {'ZONE':<18} REASON")
     for item in items:
-        state = "free" if item.get("available") == "true" else "skip"
+        if item.get("available") == "true":
+            state = "free"
+        elif item.get("available") == "candidate":
+            state = "candidate"
+        else:
+            state = "skip"
         typ = f"{item.get('class', '')}-{item.get('size', '')}".strip("-")
         print(f"{state:<10} {typ:<8} {item.get('vm_name', '-'):<48} {item.get('zone', '-'):<18} {item.get('reason', '')}")
     return 0
@@ -878,6 +894,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_tpus = sub.add_parser("tpus", help="show center TPU inventory")
     p_tpus.add_argument("--cached", action="store_true")
+    p_tpus.add_argument("--check", action="store_true", help="run slow cloud/remote checks after itou")
     p_tpus.set_defaults(func=tpus)
 
     p_start = sub.add_parser("start", help="start the center daemon loop")

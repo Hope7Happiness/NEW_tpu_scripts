@@ -212,6 +212,12 @@ Show the center TPU inventory:
 zhh center tpus
 ```
 
+By default this only shows the fast `itou` pre-check. To run slower cloud/remote checks:
+
+```bash
+zhh center tpus --check
+```
+
 Cancel a run:
 
 ```bash
