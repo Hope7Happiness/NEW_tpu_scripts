@@ -671,6 +671,8 @@ zcenter_worker(){
     local zone="$4"
     local ret=1
 
+    set +e
+
     if [ -z "$run_id" ] || [ -z "$stage_dir" ] || [ -z "$vm_name" ] || [ -z "$zone" ]; then
         zhh_error "Usage: zhh center-worker <run_id> <stage_dir> <vm_name> <zone> [-- main.py args...]"
         return 1
@@ -685,21 +687,51 @@ zcenter_worker(){
     export ZONE="$zone"
     export ZHH_SKIP_QUEUE_PROMPT=1
     zhh_set_stage_context "$stage_dir"
-    log_stage_dir "$stage_dir"
+    zhh_center_stage "Worker starting"
+    log_stage_dir "$stage_dir" || zhh_warn "Failed to update legacy TPU status for $VM_NAME. Continuing."
 
-    set +e
-    get_and_setup_tpu "$VM_NAME" "$ZONE"
+    zcenter_prepare_assigned_tpu "$VM_NAME" "$ZONE"
     ret=$?
     if [ $ret -eq 0 ]; then
+        zhh_center_stage "Register TPU"
         register_tpu
         ret=$?
     fi
     if [ $ret -eq 0 ]; then
+        zhh_center_stage "Run job"
         run_job "$stage_dir" "$@"
         ret=$?
     fi
+    zhh_center_stage "Worker finished"
     python3 "$ZHH_SCRIPT_ROOT/tpu_center/cli.py" worker-finished --run-id "$run_id" --exit-code "$ret" || true
     return $ret
+}
+
+zcenter_prepare_assigned_tpu(){
+    local vm_name="$1"
+    local zone="$2"
+    local ret=0
+
+    zhh_box_section "Prepare assigned TPU"
+    zhh_kv "tpu" "$vm_name @ $zone"
+    has_tpu "$vm_name" "$zone" || {
+        zhh_warn "Assigned TPU is not READY. Returning it to center."
+        return 2
+    }
+    tpu_in_use "$vm_name" "$zone" || {
+        zhh_warn "Assigned TPU is busy. Returning it to center."
+        return 3
+    }
+    export ZHH_SETUP_TRIAL=1
+    setup_tpu "$vm_name" "$zone"
+    ret=$?
+    unset ZHH_SETUP_TRIAL
+    if [ $ret -ne 0 ]; then
+        zhh_warn "Assigned TPU setup failed with ret=$ret. Returning it to center."
+        return $ret
+    fi
+    zhh_box_success "Assigned TPU $vm_name @ $zone is ready."
+    return 0
 }
 
 zcenter_probe(){
@@ -714,10 +746,16 @@ zcenter_probe(){
 
     export VM_NAME="$vm_name"
     export ZONE="$zone"
-    has_tpu "$VM_NAME" "$ZONE" || return 2
-    tpu_in_use "$VM_NAME" "$ZONE" || return 3
-    check_env "$VM_NAME" "$ZONE" && ret=0 || ret=$?
-    return $ret
+    has_tpu "$VM_NAME" "$ZONE" || {
+        echo "TPU is not READY: $VM_NAME @ $ZONE"
+        return 2
+    }
+    tpu_in_use "$VM_NAME" "$ZONE" || {
+        echo "TPU device is busy or unavailable: $VM_NAME @ $ZONE"
+        return 3
+    }
+    echo "TPU status ready and idle: $VM_NAME @ $ZONE"
+    return 0
 }
 
 zrerun(){

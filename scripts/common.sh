@@ -31,6 +31,19 @@ zhh_sudo(){
     fi
 }
 
+zhh_center_stage(){
+    if [ -z "${ZHH_CENTER_RUN_ID:-}" ] || [ -z "${ZHH_SCRIPT_ROOT:-}" ]; then
+        return 0
+    fi
+    local stage="$1"
+    local log_file="${2:-}"
+    local args=("$ZHH_SCRIPT_ROOT/tpu_center/cli.py" "worker-stage" "--run-id" "$ZHH_CENTER_RUN_ID" "--stage" "$stage")
+    if [ -n "$log_file" ]; then
+        args+=("--log-file" "$log_file")
+    fi
+    python3 "${args[@]}" >/dev/null 2>&1 || true
+}
+
 VM_UNFOUND_ERROR="\033[31m[Internal Error] VM_NAME is not set. Contact admin.\033[0m"
 ZONE_UNFOUND_ERROR="\033[31m[Internal Error] ZONE is not set or incorrect. Contact admin.\033[0m"
 
@@ -67,6 +80,7 @@ zhh_step_banner(){
     local title="$1"
     local log_file="$2"
     shift 2
+    zhh_center_stage "$title" "$log_file"
     local details=()
     if [ -n "$log_file" ]; then
         details+=("$(zhh_format_detail "log file" "$log_file")")
@@ -160,11 +174,13 @@ zhh_box_message(){
 
 zhh_box_section(){
     printf '\n'
+    zhh_center_stage "$1"
     zhh_box_message "$ZHH_COLOR_BLUE$ZHH_COLOR_BOLD" "$1"
 }
 
 zhh_box_success(){
     printf '\n'
+    zhh_center_stage "$1"
     zhh_box_message "$ZHH_COLOR_GREEN$ZHH_COLOR_BOLD" "$1"
     printf '\n'
 }

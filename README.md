@@ -167,7 +167,9 @@ Current MVP behavior:
 - `zhh center s` shows centralized runs.
 - `zhh center cancel <run_id>` cancels a run and kills its assigned TPU by default.
 - This first slice uses existing TPUs from `itou`; it does **not** create new TPU VMs yet.
+- Center workers never run TPU apply/auto-select; they only prepare the assigned TPU and run the job.
 - The center loop stays fast: it reads `itou`/inbox in the main process and runs slow TPU environment probes in background subprocesses. Bad probe results suppress that TPU for 10 minutes.
+- Probe files are garbage-collected automatically; by default probe history is kept for 1 hour and capped at 200 files.
 - The center can run as your current user; workers default to running as `zak` via `sudo`.
 - The sudo password file is `.center_sudo_password` in this repo root. It is gitignored and should be `0600`.
 
@@ -201,11 +203,22 @@ Run the center loop:
 zhh center start
 ```
 
+The default loop interval is 5 seconds. Use `zhh center start --verbose` to print per-tick scheduling diagnostics with matching `itou` candidates, ready probes, and the latest probe result for the top queued run.
+If a worker tmux exits before reporting status, the center records `worker_launch.log` in the run directory and backs off retries instead of immediately rescheduling every tick.
+
 Show centralized status:
 
 ```bash
 zhh center s
 ```
+
+Refresh centralized status every 3 seconds:
+
+```bash
+zhh table
+```
+
+For active center workers, the table shows the current setup stage, such as `Prepare TPU`, `Mount shared disk`, `Install TPU runtime`, `Check TPU environment`, `Wandb login`, and `Launch training`.
 
 Change TPU requirements for a submitted run:
 
@@ -229,6 +242,12 @@ Cancel a run:
 
 ```bash
 zhh center cancel <run_id>
+```
+
+Delete a submitted run from the center list. Finished runs are removed directly; other states are cancelled first and their assigned TPU is killed before removal:
+
+```bash
+zhh delete <run_id>
 ```
 
 ### 📄 Requirements

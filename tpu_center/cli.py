@@ -30,6 +30,8 @@ DIM = "\033[90m"
 GREEN = "\033[32m"
 YELLOW = "\033[33m"
 RED = "\033[31m"
+BLUE = "\033[34m"
+CYAN = "\033[36m"
 
 
 def now_ts() -> str:
@@ -44,13 +46,28 @@ def print_kv(label: str, value: object, indent: str = "  ") -> None:
     print(f"{indent}{DIM}{label + ':':<14}{RESET} {value}")
 
 
+def make_shared(path: Path, directory: bool | None = None) -> None:
+    try:
+        is_dir = path.is_dir() if directory is None else directory
+        os.chmod(path, 0o777 if is_dir else 0o666)
+    except FileNotFoundError:
+        return
+    except PermissionError:
+        return
+
+
 def ensure_layout(root: Path = CENTER_ROOT) -> None:
+    root.mkdir(parents=True, exist_ok=True)
+    make_shared(root, directory=True)
     for rel in ("inbox", "processing", "failed_requests", "runs", "leases", "inventory", "logs", "probes", "bad_tpus"):
-        (root / rel).mkdir(parents=True, exist_ok=True)
+        path = root / rel
+        path.mkdir(parents=True, exist_ok=True)
+        make_shared(path, directory=True)
 
 
-def atomic_write_text(path: Path, text: str, mode: int = 0o644) -> None:
+def atomic_write_text(path: Path, text: str, mode: int = 0o666) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    make_shared(path.parent, directory=True)
     tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}.{random.randrange(1_000_000):06d}")
     with tmp.open("w", encoding="utf-8") as f:
         f.write(text)
@@ -60,7 +77,7 @@ def atomic_write_text(path: Path, text: str, mode: int = 0o644) -> None:
     tmp.replace(path)
 
 
-def atomic_write_json(path: Path, payload: dict[str, Any], mode: int = 0o644) -> None:
+def atomic_write_json(path: Path, payload: dict[str, Any], mode: int = 0o666) -> None:
     atomic_write_text(path, json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", mode)
 
 
@@ -71,8 +88,11 @@ def read_json(path: Path) -> dict[str, Any]:
 
 def append_event(run_dir: Path, event: str, **fields: Any) -> None:
     payload = {"ts": now_ts(), "event": event, **fields}
-    with (run_dir / "events.log").open("a", encoding="utf-8") as f:
+    make_shared(run_dir, directory=True)
+    path = run_dir / "events.log"
+    with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+    make_shared(path, directory=False)
 
 
 def run_id_from_stage_dir(stage_dir: str) -> str:
@@ -97,6 +117,21 @@ def parse_tpu_type(vm_name: str) -> tuple[str, str]:
     if not match:
         return "", ""
     return match.group(1), match.group(2)
+
+
+def format_tpu_text(tpu: dict[str, Any] | None) -> str:
+    if not isinstance(tpu, dict):
+        return "-"
+    vm_name = str(tpu.get("vm_name") or "-")
+    zone = str(tpu.get("zone") or "")
+    if vm_name.startswith("auto"):
+        tpu_types = str(tpu.get("tpu_types") or tpu.get("size") or "any type")
+        return f"{ctext(CYAN, vm_name)} w/ {ctext(CYAN, tpu_types)} @ {ctext(CYAN, zone or 'any zone')}"
+    return f"{ctext(CYAN, vm_name)} @ {ctext(CYAN, zone)}" if zone else ctext(CYAN, vm_name)
+
+
+def probe_reason_is_retryable_setup(reason: str) -> bool:
+    return "Have not mount disk" in reason or "Cannot find torch/jax" in reason
 
 
 def requirement_class(vm_name: str) -> str:
@@ -242,6 +277,15 @@ def classify_failure(exit_code: int, output_log: Path | None) -> tuple[str, str]
         except Exception:
             text = ""
     if not text:
+        center_worker_reasons = {
+            2: "assigned TPU is not READY",
+            3: "assigned TPU is busy",
+            4: "assigned TPU environment check failed",
+            9: "assigned TPU may be preempted",
+            42: "assigned TPU unusable",
+        }
+        if exit_code in center_worker_reasons:
+            return "INFRA_RETRY", center_worker_reasons[exit_code]
         return "INFRA_RETRY", f"exit code {exit_code}; no output log"
     infra_patterns = (
         "[/usr/bin/ssh] exited with return code [255]",
@@ -314,6 +358,8 @@ def submit(args: argparse.Namespace) -> int:
     path = CENTER_ROOT / "inbox" / f"{req}.json"
     atomic_write_json(path, request, mode=0o600)
     print(f"Submitted run {ctext(BOLD, rid)}")
+    print_kv("description", ctext(BOLD, request["description"] or "-"))
+    print_kv("tpu", format_tpu_text(request["requirements"]))
     print_kv("stage_dir", stage_dir)
     print_kv("priority", priority)
     print_kv("inbox", path)
@@ -333,6 +379,7 @@ def ingest_request(path: Path) -> tuple[bool, str]:
         rid = str(request.get("run_id") or run_id_from_stage_dir(stage_dir))
         run_dir = CENTER_ROOT / "runs" / rid
         run_dir.mkdir(parents=True, exist_ok=True)
+        make_shared(run_dir, directory=True)
         run_path = run_dir / "run.json"
         created = not run_path.exists()
 
@@ -450,6 +497,62 @@ def probe_path(vm_name: str) -> Path:
 
 def probe_log_path(vm_name: str) -> Path:
     return CENTER_ROOT / "probes" / f"{safe_name(vm_name)}.log"
+
+
+def probe_json_epoch(path: Path, payload: dict[str, Any] | None = None) -> int:
+    if payload is None:
+        try:
+            payload = read_json(path)
+        except Exception:
+            payload = {}
+    epoch = probe_payload_epoch(payload)
+    if epoch:
+        return epoch
+    try:
+        return int(path.stat().st_mtime)
+    except FileNotFoundError:
+        return 0
+
+
+def probe_payload_epoch(payload: dict[str, Any]) -> int:
+    return int(payload.get("finished_at_epoch") or payload.get("started_at_epoch") or 0)
+
+
+def remove_probe_file(path: Path) -> None:
+    try:
+        payload = read_json(path)
+        if payload.get("status") == "PROBING" and probe_is_running(payload):
+            return
+    except Exception:
+        pass
+    path.unlink(missing_ok=True)
+    path.with_suffix(".log").unlink(missing_ok=True)
+
+
+def prune_probe_files() -> None:
+    ensure_layout()
+    max_age = int(os.environ.get("ZHH_CENTER_PROBE_RETENTION_SECONDS", str(60 * 60)))
+    max_files = int(os.environ.get("ZHH_CENTER_MAX_PROBE_FILES", "200"))
+    now = int(time.time())
+    keep: list[tuple[int, Path]] = []
+    for path in (CENTER_ROOT / "probes").glob("*.json"):
+        try:
+            payload = read_json(path)
+        except Exception:
+            remove_probe_file(path)
+            continue
+        epoch = probe_json_epoch(path, payload)
+        if payload.get("status") == "PROBING" and probe_is_running(payload):
+            keep.append((epoch, path))
+            continue
+        if epoch and now - epoch > max_age:
+            remove_probe_file(path)
+            continue
+        keep.append((epoch, path))
+    if max_files > 0 and len(keep) > max_files:
+        keep.sort(key=lambda item: item[0])
+        for _, path in keep[: len(keep) - max_files]:
+            remove_probe_file(path)
 
 
 def bad_tpu_path(vm_name: str) -> Path:
@@ -630,12 +733,8 @@ def probe_worker(args: argparse.Namespace) -> int:
     status = "BAD"
     if has_center_lease(vm_name):
         reason = "center lease"
-    elif has_legacy_lock(vm_name):
-        reason = "legacy lock"
     elif not cloud_ready(vm_name, zone):
         reason = "not READY"
-    elif remote_has_python(vm_name, zone):
-        reason = "remote python process"
     elif os.environ.get("ZHH_CENTER_SKIP_PROBE_ENV_CHECK") == "1":
         status = "GOOD"
         reason = "ready (env check skipped)"
@@ -687,10 +786,48 @@ def good_probe_tpus(candidates: list[dict[str, str]]) -> list[dict[str, str]]:
             continue
         if now - int(payload.get("finished_at_epoch", 0) or 0) > ttl:
             continue
-        if has_center_lease(vm_name) or has_legacy_lock(vm_name) or bad_tpu_reason(vm_name):
+        if has_center_lease(vm_name) or bad_tpu_reason(vm_name):
             continue
         good.append(item)
     return good
+
+
+def probe_summary_for_run(run: dict[str, Any]) -> str:
+    probes: list[dict[str, Any]] = []
+    for path in (CENTER_ROOT / "probes").glob("*.json"):
+        try:
+            payload = read_json(path)
+        except Exception:
+            continue
+        if run_matches_tpu(run, {str(k): str(v) for k, v in payload.items()}):
+            probes.append(payload)
+    if not probes:
+        return "waiting for matching TPU probe"
+    probes.sort(key=probe_payload_epoch, reverse=True)
+    ttl = int(os.environ.get("ZHH_CENTER_GOOD_TPU_TTL", "120"))
+    now = int(time.time())
+    for payload in probes:
+        if payload.get("status") != "GOOD":
+            continue
+        epoch = probe_payload_epoch(payload)
+        vm_name = str(payload.get("vm_name") or "")
+        if epoch and now - epoch <= ttl and vm_name and not has_center_lease(vm_name) and not bad_tpu_reason(vm_name):
+            return f"ready {format_tpu_text(payload)} ({fmt_age(epoch)} ago)"
+    for payload in probes:
+        if payload.get("status") == "PROBING" and probe_is_running(payload):
+            epoch = probe_payload_epoch(payload)
+            suffix = f" ({fmt_age(epoch)} ago)" if epoch else ""
+            return f"checking {format_tpu_text(payload)}{suffix}"
+    latest = probes[0]
+    latest_status = str(latest.get("status") or "UNKNOWN")
+    latest_reason = str(latest.get("reason") or "")
+    latest_epoch = probe_payload_epoch(latest)
+    latest_text = f"waiting; latest {format_tpu_text(latest)} {latest_status}"
+    if latest_epoch:
+        latest_text += f" {fmt_age(latest_epoch)} ago"
+    if latest_reason:
+        latest_text += f": {latest_reason}"
+    return latest_text
 
 
 def probe_candidates_for_queue(candidates: list[dict[str, str]], queue: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -709,7 +846,7 @@ def refresh_probe_pool(candidates: list[dict[str, str]], queue: list[dict[str, A
     max_new = int(os.environ.get("ZHH_CENTER_MAX_NEW_PROBES_PER_TICK", "4"))
     for item in probe_candidates_for_queue(candidates, queue):
         vm_name = item["vm_name"]
-        if has_center_lease(vm_name) or has_legacy_lock(vm_name) or bad_tpu_reason(vm_name):
+        if has_center_lease(vm_name) or bad_tpu_reason(vm_name):
             continue
         if start_probe(item):
             started += 1
@@ -746,7 +883,7 @@ def load_runs() -> list[dict[str, Any]]:
     return runs
 
 
-def resolve_run(prefix: str) -> tuple[str, Path] | tuple[None, None]:
+def resolve_run(prefix: str, quiet: bool = False) -> tuple[str, Path] | tuple[None, None]:
     ensure_layout()
     matches = []
     for path in (CENTER_ROOT / "runs").glob("*/run.json"):
@@ -754,10 +891,32 @@ def resolve_run(prefix: str) -> tuple[str, Path] | tuple[None, None]:
         if rid == prefix or rid.startswith(prefix):
             matches.append((rid, path))
     if not matches:
-        print(f"run not found: {prefix}", file=sys.stderr)
+        if not quiet:
+            print(f"run not found: {prefix}", file=sys.stderr)
         return None, None
     if len(matches) > 1:
-        print(f"ambiguous run id prefix: {prefix}", file=sys.stderr)
+        if not quiet:
+            print(f"ambiguous run id prefix: {prefix}", file=sys.stderr)
+            for rid, _ in matches:
+                print(f"  {rid}", file=sys.stderr)
+        return None, None
+    return matches[0]
+
+
+def resolve_pending_request(prefix: str) -> tuple[str, Path] | tuple[None, None]:
+    ensure_layout()
+    matches = []
+    for path in (CENTER_ROOT / "inbox").glob("*.json"):
+        try:
+            rid = str(read_json(path).get("run_id") or "")
+        except Exception:
+            continue
+        if rid == prefix or rid.startswith(prefix):
+            matches.append((rid, path))
+    if not matches:
+        return None, None
+    if len(matches) > 1:
+        print(f"ambiguous pending run id prefix: {prefix}", file=sys.stderr)
         for rid, _ in matches:
             print(f"  {rid}", file=sys.stderr)
         return None, None
@@ -799,20 +958,30 @@ def create_lease(run: dict[str, Any], tpu: dict[str, str]) -> None:
     lock_path = LEGACY_LOCK_ROOT / lock_name
     try:
         LEGACY_LOCK_ROOT.mkdir(parents=True, exist_ok=True)
+        make_shared(LEGACY_LOCK_ROOT, directory=True)
         lock_path.touch()
+        make_shared(lock_path, directory=False)
     except PermissionError:
-        command = f"mkdir -p {shlex.quote(str(LEGACY_LOCK_ROOT))} && touch {shlex.quote(str(lock_path))}"
+        command = f"mkdir -p {shlex.quote(str(LEGACY_LOCK_ROOT))} && chmod 777 {shlex.quote(str(LEGACY_LOCK_ROOT))} && touch {shlex.quote(str(lock_path))} && chmod 666 {shlex.quote(str(lock_path))}"
         run_shell(sudo_root_shell_command(command), timeout=15)
 
 
 def release_lease(vm_name: str) -> None:
-    lease_path(vm_name).unlink(missing_ok=True)
+    lease = lease_path(vm_name)
+    try:
+        lease.unlink(missing_ok=True)
+    except PermissionError:
+        command = f"chmod 777 {shlex.quote(str(lease.parent))} && rm -f {shlex.quote(str(lease))}"
+        proc = run_shell(sudo_root_shell_command(command), timeout=15)
+        if proc.returncode != 0:
+            print((proc.stderr or proc.stdout or f"failed to remove lease {lease}").strip(), file=sys.stderr)
     if LEGACY_LOCK_ROOT.exists():
         try:
             for path in LEGACY_LOCK_ROOT.glob(f"center_{vm_name}_*"):
                 path.unlink(missing_ok=True)
         except PermissionError:
             command = " ".join([
+                "chmod", "777", shlex.quote(str(LEGACY_LOCK_ROOT)), "&&",
                 "find", shlex.quote(str(LEGACY_LOCK_ROOT)), "-maxdepth", "1", "-type", "f",
                 "-name", shlex.quote(f"center_{vm_name}_*"), "-delete",
             ])
@@ -824,6 +993,7 @@ def launch_worker(run: dict[str, Any], tpu: dict[str, str]) -> bool:
     run_path = run_dir / "run.json"
     env_file = write_worker_env(run_dir, run)
     session = tmux_name(run["run_id"])
+    launch_log = run_dir / "worker_launch.log"
     extra_args = [str(x) for x in (run.get("extra_args") or [])]
     quoted_args = " ".join(shlex.quote(x) for x in extra_args)
     inner_command = (
@@ -832,11 +1002,17 @@ def launch_worker(run: dict[str, Any], tpu: dict[str, str]) -> bool:
         f"{shlex.quote(tpu['vm_name'])} {shlex.quote(tpu['zone'])} -- {quoted_args}"
     )
     command = worker_user_shell_command(inner_command, env_file)
+    command = " ".join([
+        "set -o pipefail;",
+        "{", "printf", shlex.quote(f"[center] worker start {now_ts()} run={run['run_id']} tpu={tpu['vm_name']} zone={tpu['zone']}\\n"), ";",
+        command, ";", "} 2>&1 | tee -a", shlex.quote(str(launch_log)),
+    ])
     create_lease(run, tpu)
     run.update({
         "status": "APPLYING",
         "assigned_tpu": {"vm_name": tpu["vm_name"], "zone": tpu["zone"], "class": tpu.get("class", ""), "size": tpu.get("size", "")},
-        "worker": {"tmux_session": session, "started_at": now_ts(), "host": os.uname().nodename},
+        "worker": {"tmux_session": session, "started_at": now_ts(), "host": os.uname().nodename, "launch_log": str(launch_log)},
+        "worker_launch_log": str(launch_log),
     })
     attempts = list(run.get("attempts") or [])
     attempts.append({"ts": now_ts(), "vm_name": tpu["vm_name"], "zone": tpu["zone"], "event": "launch"})
@@ -879,12 +1055,24 @@ def reconcile_active_runs() -> int:
         if not tmux_session_exists(str(session)):
             if vm_name:
                 release_lease(str(vm_name))
-            run["status"] = "INFRA_RETRY"
+            missing_count = int(run.get("worker_missing_count", 0) or 0) + 1
+            max_missing = int(os.environ.get("ZHH_CENTER_MAX_WORKER_MISSING_RETRIES", "3"))
+            if missing_count >= max_missing:
+                run["status"] = "FAILED"
+                run["next_retry_at_epoch"] = None
+                run["next_retry_at"] = None
+            else:
+                delay = min(300, 30 * missing_count)
+                run["status"] = "INFRA_RETRY"
+                run["next_retry_at_epoch"] = now + delay
+                run["next_retry_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now + delay))
             run["assigned_tpu"] = None
             run["worker"] = None
-            run["last_error"] = "worker tmux session is not running"
+            run["worker_missing_count"] = missing_count
+            run["last_error"] = "worker tmux session exited before reporting status"
+            run["current_stage"] = "Worker exited before reporting status"
             atomic_write_json(run_path, run)
-            append_event(run_dir, "worker_missing_requeued", tmux_session=session)
+            append_event(run_dir, "worker_missing", tmux_session=session, count=missing_count, status=run["status"])
             changed += 1
             continue
         output_log = Path(run["output_log"]) if run.get("output_log") else None
@@ -905,13 +1093,19 @@ def reconcile_active_runs() -> int:
     return changed
 
 
-def schedule_once() -> int:
+def schedule_once(verbose: bool = False) -> int:
+    prune_probe_files()
     runs = load_runs()
-    queue = [r for r in runs if r.get("status") in ("QUEUED", "INFRA_RETRY")]
+    now = int(time.time())
+    queue = [
+        r for r in runs
+        if r.get("status") in ("QUEUED", "INFRA_RETRY") and int(r.get("next_retry_at_epoch", 0) or 0) <= now
+    ]
     queue.sort(key=lambda r: (-int(r.get("priority", 0)), str(r.get("submitted_at", "")), str(r.get("run_id", ""))))
     candidates = [item for item in itou_inventory() if item.get("available") == "candidate"]
     if not queue:
         return 0
+    matching_candidates = probe_candidates_for_queue(candidates, queue)
     refresh_probe_pool(candidates, queue)
     tpus = good_probe_tpus(candidates)
     scheduled = 0
@@ -923,12 +1117,19 @@ def schedule_once() -> int:
         if launch_worker(run, choice):
             scheduled += 1
             tpus = [t for t in tpus if t["vm_name"] != choice["vm_name"]]
+    if verbose:
+        top = queue[0]
+        print_kv("schedule", f"queued={len(queue)} candidates={len(candidates)} matching={len(matching_candidates)} ready={len(tpus) + scheduled} scheduled={scheduled}")
+        print_kv("top_run", f"{top.get('run_id', '-')} {format_tpu_text(top.get('requirements') if isinstance(top.get('requirements'), dict) else None)}")
+        print_kv("top_probe", probe_summary_for_run(top))
     return scheduled
 
 
 def worker_log_dir(args: argparse.Namespace) -> int:
     run_dir = CENTER_ROOT / "runs" / args.run_id
     run_path = run_dir / "run.json"
+    if not run_path.exists():
+        return 0
     run = read_json(run_path)
     log_dir = str(Path(args.log_dir).resolve())
     run["current_log_dir"] = log_dir
@@ -940,53 +1141,135 @@ def worker_log_dir(args: argparse.Namespace) -> int:
     return 0
 
 
+def worker_stage(args: argparse.Namespace) -> int:
+    run_dir = CENTER_ROOT / "runs" / args.run_id
+    run_path = run_dir / "run.json"
+    if not run_path.exists():
+        return 0
+    run = read_json(run_path)
+    run["current_stage"] = str(args.stage)
+    run["current_stage_at"] = now_ts()
+    run["current_stage_epoch"] = int(time.time())
+    if args.log_file:
+        run["current_stage_log"] = str(Path(args.log_file).expanduser())
+    if args.detail:
+        run["current_stage_detail"] = str(args.detail)
+    atomic_write_json(run_path, run)
+    append_event(run_dir, "worker_stage", stage=str(args.stage), log_file=str(args.log_file or ""), detail=str(args.detail or ""))
+    return 0
+
+
 def worker_finished(args: argparse.Namespace) -> int:
     run_dir = CENTER_ROOT / "runs" / args.run_id
     run_path = run_dir / "run.json"
+    if not run_path.exists():
+        return 0
     run = read_json(run_path)
     output_log = Path(run["output_log"]) if run.get("output_log") else None
     status, reason = classify_failure(int(args.exit_code), output_log)
     assigned = run.get("assigned_tpu") or {}
     vm_name = assigned.get("vm_name") if isinstance(assigned, dict) else ""
+    zone = assigned.get("zone") if isinstance(assigned, dict) else ""
     if vm_name:
         release_lease(str(vm_name))
     run["last_error"] = None if status == "FINISHED" else reason
     if status == "INFRA_RETRY":
+        if vm_name and zone:
+            mark_tpu_bad(str(vm_name), str(zone), reason)
         run["status"] = "INFRA_RETRY"
         run["assigned_tpu"] = None
         run["worker"] = None
+        run["current_stage"] = "Waiting for retry"
     else:
         run["status"] = status
+        run["current_stage"] = "Finished" if status == "FINISHED" else "Failed"
     update_observations(run)
     atomic_write_json(run_path, run)
     append_event(run_dir, "worker_finished", exit_code=int(args.exit_code), status=run["status"], reason=reason)
     return 0
 
 
-def cancel(args: argparse.Namespace) -> int:
-    run_dir = CENTER_ROOT / "runs" / args.run_id
-    run_path = run_dir / "run.json"
-    if not run_path.exists():
-        print(f"run not found: {args.run_id}", file=sys.stderr)
-        return 1
+def cancel_run(run_id: str, no_kill: bool = False, verbose: bool = True) -> tuple[bool, str, Path | None]:
+    rid, run_path = resolve_run(run_id)
+    if not rid or not run_path:
+        return False, "", None
+    run_dir = run_path.parent
     run = read_json(run_path)
     worker = run.get("worker") or {}
     session = worker.get("tmux_session") if isinstance(worker, dict) else ""
     if session:
         subprocess.run(["tmux", "kill-session", "-t", str(session)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     assigned = run.get("assigned_tpu") or {}
-    if isinstance(assigned, dict) and assigned.get("vm_name") and assigned.get("zone") and not args.no_kill:
+    run["status"] = "CANCELLED"
+    run["last_error"] = "cancelled by user"
+    run["updated_at"] = now_ts()
+    atomic_write_json(run_path, run)
+    append_event(run_dir, "cancelled", kill_tpu=not no_kill)
+    if isinstance(assigned, dict) and assigned.get("vm_name") and assigned.get("zone") and not no_kill:
         kill_command = " ".join([
             "exec", shlex.quote(str(SCRIPT_ROOT / "main.sh")), "kill",
             shlex.quote(str(assigned["vm_name"])), shlex.quote(str(assigned["zone"])),
         ])
-        run_shell(worker_user_shell_command(kill_command), timeout=180)
+        try:
+            proc = run_shell(worker_user_shell_command(kill_command), timeout=180)
+            if proc.returncode != 0 and verbose:
+                print((proc.stderr or proc.stdout or f"kill_tpu exited {proc.returncode}").strip(), file=sys.stderr)
+        except subprocess.TimeoutExpired:
+            run["last_error"] = "cancelled, but TPU kill timed out"
+            atomic_write_json(run_path, run)
+            append_event(run_dir, "kill_timeout", vm_name=assigned["vm_name"], zone=assigned["zone"])
+            print(f"TPU kill timed out for {assigned['vm_name']}@{assigned['zone']}", file=sys.stderr)
+            return False, rid, run_path
         release_lease(str(assigned["vm_name"]))
-    run["status"] = "CANCELLED"
-    run["last_error"] = "cancelled by user"
-    atomic_write_json(run_path, run)
-    append_event(run_dir, "cancelled", kill_tpu=not args.no_kill)
-    print(f"cancelled {args.run_id}")
+    if verbose:
+        print(f"cancelled {rid}")
+    return True, rid, run_path
+
+
+def cancel(args: argparse.Namespace) -> int:
+    ok, _, _ = cancel_run(args.run_id, no_kill=args.no_kill, verbose=True)
+    return 0 if ok else 1
+
+
+def delete(args: argparse.Namespace) -> int:
+    rid, run_path = resolve_run(args.run_id, quiet=True)
+    if not rid or not run_path:
+        pending_rid, request_path = resolve_pending_request(args.run_id)
+        if pending_rid and request_path:
+            request_path.unlink(missing_ok=True)
+            print(f"Deleted pending run {ctext(BOLD, pending_rid)}")
+            print_kv("request", request_path)
+            return 0
+        print(f"run not found: {args.run_id}", file=sys.stderr)
+        return 1
+
+    run_dir = run_path.parent
+    run = read_json(run_path)
+    status = str(run.get("status") or "")
+    assigned = run.get("assigned_tpu") or {}
+    if status == "FINISHED":
+        if isinstance(assigned, dict) and assigned.get("vm_name"):
+            release_lease(str(assigned["vm_name"]))
+    else:
+        ok, rid, run_path = cancel_run(rid, no_kill=False, verbose=False)
+        if not ok:
+            print(f"cancel failed; keeping run {rid}", file=sys.stderr)
+            return 1
+        if run_path is None:
+            return 1
+        run_dir = run_path.parent
+
+    try:
+        shutil.rmtree(run_dir)
+    except PermissionError:
+        command = f"rm -rf {shlex.quote(str(run_dir))}"
+        proc = run_shell(sudo_root_shell_command(command), timeout=30)
+        if proc.returncode != 0:
+            print((proc.stderr or proc.stdout or f"failed to remove {run_dir}").strip(), file=sys.stderr)
+            return 1
+    print(f"Deleted run {ctext(BOLD, rid)}")
+    print_kv("previous", status or "-")
+    print_kv("removed", run_dir)
     return 0
 
 
@@ -1003,7 +1286,34 @@ def fmt_age(ts: int | None) -> str:
     return f"{delta // 86400}d"
 
 
+def fmt_until(ts: int | None) -> str:
+    if not ts:
+        return "-"
+    delta = max(0, int(ts) - int(time.time()))
+    if delta < 60:
+        return f"{delta}s"
+    if delta < 3600:
+        return f"{delta // 60}m"
+    if delta < 86400:
+        return f"{delta // 3600}h"
+    return f"{delta // 86400}d"
+
+
+def format_status(status: object) -> str:
+    text = str(status or "-")
+    if text in ("FINISHED",):
+        return ctext(GREEN + BOLD, text)
+    if text in ("FAILED", "CANCELLED"):
+        return ctext(RED + BOLD, text)
+    if text in ("INFRA_RETRY", "STALE"):
+        return ctext(YELLOW + BOLD, text)
+    if text in ("APPLYING", "QUEUED", "RUNNING"):
+        return ctext(BLUE + BOLD, text)
+    return text
+
+
 def status(_: argparse.Namespace) -> int:
+    prune_probe_files()
     runs = load_runs()
     status_order = {name: i for i, name in enumerate(("RUNNING", "APPLYING", "STALE", "INFRA_RETRY", "QUEUED", "FAILED", "FINISHED", "CANCELLED"))}
     runs.sort(key=lambda r: (status_order.get(str(r.get("status")), 99), -int(r.get("priority", 0)), str(r.get("submitted_at", ""))))
@@ -1013,19 +1323,20 @@ def status(_: argparse.Namespace) -> int:
     print(f"TPU center root: {CENTER_ROOT}")
     for run in runs:
         tpu = run.get("assigned_tpu") or run.get("requirements") or {}
-        if isinstance(tpu, dict):
-            vm = tpu.get("vm_name") or "-"
-            zone = tpu.get("zone") or ""
-            tpu_text = f"{vm}@{zone}" if zone else str(vm)
-        else:
-            tpu_text = str(tpu)
+        tpu_text = format_tpu_text(tpu if isinstance(tpu, dict) else None)
         desc = str(run.get("description") or "-").replace("\n", " ")
         print()
-        print(ctext(BOLD, str(run.get("run_id", "-"))))
-        print_kv("status", run.get("status", "-"), indent="\t")
+        print(f"{ctext(BOLD, str(run.get('run_id', '-')))} · {ctext(BOLD, desc)}")
+        print_kv("status", format_status(run.get("status", "-")), indent="\t")
         print_kv("priority", int(run.get("priority", 0)), indent="\t")
-        print_kv("description", desc, indent="\t")
         print_kv("tpu", tpu_text, indent="\t")
+        if run.get("current_stage"):
+            stage_text = str(run["current_stage"])
+            if run.get("current_stage_epoch"):
+                stage_text += f" ({fmt_age(int(run['current_stage_epoch']))} ago)"
+            print_kv("stage", stage_text, indent="\t")
+        if run.get("status") in ("QUEUED", "INFRA_RETRY"):
+            print_kv("probe", probe_summary_for_run(run), indent="\t")
         print_kv("last_log", fmt_age(run.get("last_log_mtime")), indent="\t")
         if run.get("wandb_url"):
             print_kv("wandb", run["wandb_url"], indent="\t")
@@ -1033,6 +1344,10 @@ def status(_: argparse.Namespace) -> int:
             print_kv("log_dir", run["current_log_dir"], indent="\t")
         if run.get("last_error"):
             print_kv("last_error", run["last_error"], indent="\t")
+        if run.get("next_retry_at_epoch"):
+            print_kv("retry_in", fmt_until(int(run["next_retry_at_epoch"])), indent="\t")
+        if run.get("worker_launch_log"):
+            print_kv("worker_log", run["worker_launch_log"], indent="\t")
         print_kv("stage_dir", run.get("stage_dir", "-"), indent="\t")
     return 0
 
@@ -1122,7 +1437,7 @@ def start(args: argparse.Namespace) -> int:
             if reconciled and not args.quiet:
                 print(f"reconciled {reconciled} active run(s)")
             if not args.no_schedule:
-                scheduled = schedule_once()
+                scheduled = schedule_once(verbose=args.verbose)
                 if scheduled and not args.quiet:
                     print(f"scheduled {scheduled} run(s)")
             load_runs()
@@ -1132,11 +1447,36 @@ def start(args: argparse.Namespace) -> int:
 def tick(args: argparse.Namespace) -> int:
     ingest_once(verbose=not args.quiet)
     reconciled = reconcile_active_runs()
-    scheduled = 0 if args.no_schedule else schedule_once()
+    scheduled = 0 if args.no_schedule else schedule_once(verbose=not args.quiet)
     if not args.quiet:
         print(f"reconciled {reconciled} active run(s)")
         print(f"scheduled {scheduled} run(s)")
     return 0
+
+
+def table(args: argparse.Namespace) -> int:
+    interval = max(0.1, float(args.interval))
+    use_alt_screen = sys.stdout.isatty() and not args.once
+    if use_alt_screen:
+        print("\033[?1049h\033[?25l", end="")
+    try:
+        while True:
+            if use_alt_screen:
+                print("\033[H\033[2J", end="")
+            elif not args.once:
+                print("\033[2J\033[H", end="")
+            print(ctext(DIM, f"updated {now_ts()} | refresh every {interval:g}s | Ctrl-C to exit"))
+            status(args)
+            sys.stdout.flush()
+            if args.once:
+                return 0
+            time.sleep(interval)
+    except KeyboardInterrupt:
+        print()
+        return 130
+    finally:
+        if use_alt_screen:
+            print("\033[?25h\033[?1049l", end="")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1161,6 +1501,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_status = sub.add_parser("s", aliases=["status"], help="show centralized run status")
     p_status.set_defaults(func=status)
 
+    p_table = sub.add_parser("table", help="refresh centralized run status repeatedly")
+    p_table.add_argument("--interval", type=float, default=3.0)
+    p_table.add_argument("--once", action="store_true", help=argparse.SUPPRESS)
+    p_table.set_defaults(func=table)
+
     p_tpus = sub.add_parser("tpus", help="show center TPU inventory")
     p_tpus.add_argument("--cached", action="store_true")
     p_tpus.add_argument("--check", action="store_true", help="run slow cloud/remote checks after itou")
@@ -1169,6 +1514,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_start = sub.add_parser("start", help="start the center daemon loop")
     p_start.add_argument("--interval", type=float, default=5.0)
     p_start.add_argument("--quiet", action="store_true")
+    p_start.add_argument("--verbose", action="store_true", help="print per-tick scheduling diagnostics")
     p_start.add_argument("--no-schedule", action="store_true")
     p_start.set_defaults(func=start)
 
@@ -1176,6 +1522,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_log.add_argument("--run-id", required=True)
     p_log.add_argument("--log-dir", required=True)
     p_log.set_defaults(func=worker_log_dir)
+
+    p_stage = sub.add_parser("worker-stage", help=argparse.SUPPRESS)
+    p_stage.add_argument("--run-id", required=True)
+    p_stage.add_argument("--stage", required=True)
+    p_stage.add_argument("--log-file", default="")
+    p_stage.add_argument("--detail", default="")
+    p_stage.set_defaults(func=worker_stage)
 
     p_done = sub.add_parser("worker-finished", help=argparse.SUPPRESS)
     p_done.add_argument("--run-id", required=True)
@@ -1191,6 +1544,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_cancel.add_argument("run_id")
     p_cancel.add_argument("--no-kill", action="store_true")
     p_cancel.set_defaults(func=cancel)
+
+    p_delete = sub.add_parser("delete", help="cancel if needed and remove a submitted run from center")
+    p_delete.add_argument("run_id")
+    p_delete.set_defaults(func=delete)
 
     p_change = sub.add_parser("change", help="interactively edit TPU requirements for a run")
     p_change.add_argument("run_id")
