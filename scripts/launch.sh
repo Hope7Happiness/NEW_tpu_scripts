@@ -595,6 +595,64 @@ zrun(){
     while_run $STAGE_DIR "${EXTRA_ARGS[@]}"
 }
 
+zsubmit(){
+    local priority="${ZHH_PRIORITY:-0}"
+    local extra_args=()
+    local missing=()
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -p|--priority)
+                if [ -z "$2" ]; then
+                    zhh_error "Usage: zhh submit [--priority N] [main.py args...]"
+                    return 1
+                fi
+                priority="$2"
+                shift 2
+                ;;
+            --priority=*)
+                priority="${1#--priority=}"
+                shift
+                ;;
+            --)
+                shift
+                while [ $# -gt 0 ]; do
+                    extra_args+=("$1")
+                    shift
+                done
+                ;;
+            *)
+                extra_args+=("$1")
+                shift
+                ;;
+        esac
+    done
+
+    if [[ ! "$priority" =~ ^-?[0-9]+$ ]]; then
+        zhh_error "Priority must be an integer: $priority"
+        return 1
+    fi
+
+    export WHO="${WHO:-$WECODE_USER}"
+    [ -n "$PROJECT" ] || missing+=("PROJECT")
+    [ -n "$WANDB_API_KEY" ] || missing+=("WANDB_API_KEY")
+    [ -n "$TPU_TYPES" ] || missing+=("TPU_TYPES")
+    [ -n "$VM_NAME" ] || missing+=("VM_NAME")
+    [ -n "$WHO" ] || missing+=("WHO")
+    if [ ${#missing[@]} -ne 0 ]; then
+        zhh_error "Missing required environment variables: ${missing[*]}"
+        zhh_warn "Set them in .ka or your shell and submit again."
+        return 1
+    fi
+
+    stage || return 1
+    python3 "$ZHH_SCRIPT_ROOT/tpu_center/cli.py" submit-staged \
+        --stage-dir "$STAGE_DIR" \
+        --priority "$priority" \
+        --cwd "$PWD" \
+        -- "${extra_args[@]}"
+}
+
 zrerun(){
     # check if in staging dir
     if [[ ! $(pwd) =~ /kmh-nfs-ssd-us-mount/staging/ ]]; then

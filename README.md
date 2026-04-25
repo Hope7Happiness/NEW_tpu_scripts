@@ -157,6 +157,40 @@ TODO List:
 
 ## Usage
 
+### Centralized TPU Center MVP
+
+The centralized path is intentionally separate from the legacy decentralized `zhh` workflow.
+
+Current MVP behavior:
+- `zhh submit` stages the current workspace and writes a durable request into `/kmh-nfs-ssd-us-mount/staging/.tpu_center/inbox`.
+- `zhh center start` ingests inbox requests into persistent run metadata under `/kmh-nfs-ssd-us-mount/staging/.tpu_center/runs`.
+- `zhh center s` shows centralized runs.
+- This first slice does **not** schedule TPUs or start workers yet.
+
+Submit a run:
+
+```bash
+VM_NAME=autov5p TPU_TYPES=64 ZONE=us-east5-a zhh submit --priority 100
+```
+
+Pass extra training args through to the future worker:
+
+```bash
+zhh submit --priority 100 -- --config.foo=bar
+```
+
+Run the center loop:
+
+```bash
+zhh center start
+```
+
+Show centralized status:
+
+```bash
+zhh center s
+```
+
 ### 📄 Requirements
 
 **Environment vars**: You must have the following environment variables set:

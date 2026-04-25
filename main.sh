@@ -16,7 +16,7 @@ trap 'zhh_cleanup_ui; exit 130' INT TERM
 # .ka has to be sourced in each TMUX window
 # source .ka
 no_need_check=$(
-    [[ "$1" == "s" || "$1" == "wall" || ("$1" == "w" && "$2" == "all") || "$1" == "dall" || ("$1" == "d" && "$2" == "all") || ("$1" == "c") || ("$1" == "kill") || ("$1" =~ ^h) ]] \
+    [[ "$1" == "s" || "$1" == "wall" || ("$1" == "w" && "$2" == "all") || "$1" == "dall" || ("$1" == "d" && "$2" == "all") || ("$1" == "c") || ("$1" == "kill") || ("$1" == "submit") || ("$1" == "center") || ("$1" =~ ^h) ]] \
     && echo true || echo false
 )
 need_concrete_card=$(
@@ -40,6 +40,10 @@ if $no_need_check || check_config_sanity; then
         zkill
     elif [ "$1" = "kill" ]; then
         zkill_explicit "$2" "$3"
+    elif [ "$1" = "submit" ]; then
+        zsubmit "${@:2}"
+    elif [ "$1" = "center" ]; then
+        python3 "$ZHH_SCRIPT_ROOT/tpu_center/cli.py" "${@:2}"
     elif [ "$1" = "q" ]; then
         zqueue "${@:2}"
     elif [ "$1" = "qq" ]; then
