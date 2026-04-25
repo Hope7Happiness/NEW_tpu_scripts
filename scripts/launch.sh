@@ -209,6 +209,9 @@ run_job(){
     : > "$PRE_RUN_LOG_FILE"
     zhh_box_section "Prepare runtime"
     zhh_kv "run log dir" "$LOG_DIR"
+    if [ -n "$ZHH_CENTER_RUN_ID" ]; then
+        python3 "$ZHH_SCRIPT_ROOT/tpu_center/cli.py" worker-log-dir --run-id "$ZHH_CENTER_RUN_ID" --log-dir "$LOG_DIR" || true
+    fi
 
     # EXTRA_ARGS should be a list
     local EXTRA_ARGS=()
@@ -651,6 +654,44 @@ zsubmit(){
         --priority "$priority" \
         --cwd "$PWD" \
         -- "${extra_args[@]}"
+}
+
+zcenter_worker(){
+    local run_id="$1"
+    local stage_dir="$2"
+    local vm_name="$3"
+    local zone="$4"
+    local ret=1
+
+    if [ -z "$run_id" ] || [ -z "$stage_dir" ] || [ -z "$vm_name" ] || [ -z "$zone" ]; then
+        zhh_error "Usage: zhh center-worker <run_id> <stage_dir> <vm_name> <zone> [-- main.py args...]"
+        return 1
+    fi
+    shift 4
+    if [ "${1:-}" = "--" ]; then
+        shift
+    fi
+
+    export ZHH_CENTER_RUN_ID="$run_id"
+    export VM_NAME="$vm_name"
+    export ZONE="$zone"
+    export ZHH_SKIP_QUEUE_PROMPT=1
+    zhh_set_stage_context "$stage_dir"
+    log_stage_dir "$stage_dir"
+
+    set +e
+    get_and_setup_tpu "$VM_NAME" "$ZONE"
+    ret=$?
+    if [ $ret -eq 0 ]; then
+        register_tpu
+        ret=$?
+    fi
+    if [ $ret -eq 0 ]; then
+        run_job "$stage_dir" "$@"
+        ret=$?
+    fi
+    python3 "$ZHH_SCRIPT_ROOT/tpu_center/cli.py" worker-finished --run-id "$run_id" --exit-code "$ret" || true
+    return $ret
 }
 
 zrerun(){

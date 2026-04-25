@@ -163,9 +163,10 @@ The centralized path is intentionally separate from the legacy decentralized `zh
 
 Current MVP behavior:
 - `zhh submit` stages the current workspace and writes a durable request into `/kmh-nfs-ssd-us-mount/staging/.tpu_center/inbox`.
-- `zhh center start` ingests inbox requests into persistent run metadata under `/kmh-nfs-ssd-us-mount/staging/.tpu_center/runs`.
+- `zhh center start` ingests inbox requests, discovers candidate TPUs from `itou`, and starts matching runs in detached tmux workers.
 - `zhh center s` shows centralized runs.
-- This first slice does **not** schedule TPUs or start workers yet.
+- `zhh center cancel <run_id>` cancels a run and kills its assigned TPU by default.
+- This first slice uses existing TPUs from `itou`; it does **not** create new TPU VMs yet.
 
 Submit a run:
 
@@ -189,6 +190,18 @@ Show centralized status:
 
 ```bash
 zhh center s
+```
+
+Show the center TPU inventory:
+
+```bash
+zhh center tpus
+```
+
+Cancel a run:
+
+```bash
+zhh center cancel <run_id>
 ```
 
 ### 📄 Requirements

@@ -9,6 +9,8 @@ import os
 from pathlib import Path
 import random
 import re
+import shlex
+import subprocess
 import shutil
 import sys
 import time
@@ -17,6 +19,8 @@ from typing import Any
 
 CENTER_ROOT = Path(os.environ.get("ZHH_CENTER_ROOT", "/kmh-nfs-ssd-us-mount/staging/.tpu_center"))
 RUN_STATUSES = ("QUEUED", "APPLYING", "RUNNING", "STALE", "INFRA_RETRY", "FAILED", "FINISHED", "CANCELLED")
+SCRIPT_ROOT = Path(os.environ.get("ZHH_SCRIPT_ROOT", Path(__file__).resolve().parents[1]))
+LEGACY_LOCK_ROOT = Path("/kmh-nfs-ssd-us-mount/code/qiao/tpu_lock")
 
 
 def now_ts() -> str:
@@ -56,6 +60,27 @@ def append_event(run_dir: Path, event: str, **fields: Any) -> None:
 
 def run_id_from_stage_dir(stage_dir: str) -> str:
     return hashlib.sha1(str(Path(stage_dir).resolve()).encode("utf-8")).hexdigest()[:16]
+
+
+def tmux_name(run_id: str) -> str:
+    return f"zhh_center_{run_id[:12]}"
+
+
+def parse_tpu_type(vm_name: str) -> tuple[str, str]:
+    match = re.search(r"(v[0-9][a-z0-9]*)-([0-9]+)", vm_name)
+    if not match:
+        return "", ""
+    return match.group(1), match.group(2)
+
+
+def requirement_class(vm_name: str) -> str:
+    if vm_name in ("auto", "autov6", "autov6e"):
+        return "v6e"
+    if "autov5" in vm_name or "autov5p" in vm_name:
+        return "v5p"
+    if "autov4" in vm_name:
+        return "v4"
+    return ""
 
 
 def request_id() -> str:
@@ -116,6 +141,45 @@ def parse_wandb_url(output_log: Path) -> tuple[str, str]:
     url = match.group(1).rstrip(".,)")
     run_id = url.rstrip("/").split("/")[-1]
     return url, run_id
+
+
+def classify_failure(exit_code: int, output_log: Path | None) -> tuple[str, str]:
+    if exit_code == 0:
+        return "FINISHED", "exit code 0"
+    text = ""
+    if output_log and output_log.exists():
+        try:
+            text = output_log.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            text = ""
+    if not text:
+        return "INFRA_RETRY", f"exit code {exit_code}; no output log"
+    infra_patterns = (
+        "[/usr/bin/ssh] exited with return code [255]",
+        "Terminating process because the coordinator detected missing heartbeats.",
+        "googlecloudsdk.command_lib.util.ssh.ssh.CommandError",
+        "ERROR: (gcloud.compute.tpus.tpu-vm.ssh)",
+        "UNKNOWN: TPU initialization failed:",
+        "ABORTED: The TPU is already in use by process",
+        "Unable to initialize backend",
+        "Command execution on worker 0 failed with exit status 134",
+        "(core dumped)",
+    )
+    for pattern in infra_patterns:
+        if pattern in text:
+            return "INFRA_RETRY", pattern
+    code_patterns = (
+        "Traceback (most recent call last)",
+        "RuntimeError:",
+        "ValueError:",
+        "AssertionError",
+        "ModuleNotFoundError",
+        "KeyError:",
+    )
+    for pattern in code_patterns:
+        if pattern in text:
+            return "FAILED", pattern
+    return "FAILED", f"exit code {exit_code}; no infra signature"
 
 
 def env_snapshot() -> tuple[dict[str, str], dict[str, str]]:
@@ -240,6 +304,126 @@ def update_observations(run: dict[str, Any]) -> bool:
     return changed
 
 
+def run_command(cmd: list[str], timeout: int = 30) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+
+
+def run_shell(command: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(command, shell=True, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+
+
+def run_itou() -> list[dict[str, str]]:
+    command = os.environ.get("ZHH_ITOU_COMMAND", "itou")
+    try:
+        proc = run_shell(command, timeout=int(os.environ.get("ZHH_ITOU_TIMEOUT", "30")))
+    except Exception as exc:
+        print(f"failed to run itou: {exc}", file=sys.stderr)
+        return []
+    if proc.returncode != 0:
+        print((proc.stderr or proc.stdout or "itou failed").strip(), file=sys.stderr)
+        return []
+    candidates: list[dict[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+    for raw_line in proc.stdout.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split()
+        if len(parts) < 2:
+            continue
+        vm_name, zone = parts[0], parts[1]
+        key = (vm_name, zone)
+        if key in seen:
+            continue
+        seen.add(key)
+        tpu_class, tpu_size = parse_tpu_type(vm_name)
+        candidates.append({"vm_name": vm_name, "zone": zone, "class": tpu_class, "size": tpu_size})
+    return candidates
+
+
+def has_legacy_lock(vm_name: str) -> bool:
+    if not LEGACY_LOCK_ROOT.exists():
+        return False
+    return any(LEGACY_LOCK_ROOT.glob(f"*_{vm_name}_*"))
+
+
+def lease_path(vm_name: str) -> Path:
+    return CENTER_ROOT / "leases" / f"{vm_name}.json"
+
+
+def has_center_lease(vm_name: str) -> bool:
+    return lease_path(vm_name).exists()
+
+
+def cloud_ready(vm_name: str, zone: str) -> bool:
+    if os.environ.get("ZHH_CENTER_SKIP_CLOUD_CHECK") == "1":
+        return True
+    try:
+        proc = run_command(["gcloud", "compute", "tpus", "tpu-vm", "describe", vm_name, f"--zone={zone}", "--format=value(state)"], timeout=25)
+    except Exception:
+        return False
+    return proc.returncode == 0 and proc.stdout.strip() == "READY"
+
+
+def remote_has_python(vm_name: str, zone: str) -> bool:
+    if os.environ.get("ZHH_CENTER_SKIP_REMOTE_BUSY_CHECK") == "1":
+        return False
+    marker = f"zhhcenter{random.randrange(1_000_000):06d}"
+    command = f"ps -ef | grep python | grep -E '(\\.py|-m)' | grep -v {marker} | grep -v grep"
+    try:
+        proc = run_command([str(SCRIPT_ROOT / "google-cloud-sdk/bin/gcloud") if (SCRIPT_ROOT / "google-cloud-sdk/bin/gcloud").exists() else "gcloud", "compute", "tpus", "tpu-vm", "ssh", vm_name, "--zone", zone, "--command", command], timeout=30)
+    except Exception:
+        return True
+    return bool(proc.stdout.strip())
+
+
+def available_tpus() -> list[dict[str, str]]:
+    ensure_layout()
+    available: list[dict[str, str]] = []
+    items: list[dict[str, str]] = []
+    raw = run_itou()
+    for item in raw:
+        vm_name = item["vm_name"]
+        zone = item["zone"]
+        reason = ""
+        if has_center_lease(vm_name):
+            reason = "center lease"
+        elif has_legacy_lock(vm_name):
+            reason = "legacy lock"
+        elif not cloud_ready(vm_name, zone):
+            reason = "not READY"
+        elif remote_has_python(vm_name, zone):
+            reason = "remote python process"
+        if reason:
+            item = {**item, "available": "false", "reason": reason}
+        else:
+            item = {**item, "available": "true", "reason": ""}
+            available.append(item)
+        item.setdefault("checked_at", now_ts())
+        items.append(item)
+    atomic_write_json(CENTER_ROOT / "inventory" / "latest.json", {"ts": now_ts(), "items": items, "available": available})
+    return available
+
+
+def run_matches_tpu(run: dict[str, Any], tpu: dict[str, str]) -> bool:
+    req = run.get("requirements") or {}
+    vm_req = str(req.get("vm_name") or "")
+    zone_req = str(req.get("zone") or "")
+    type_req = str(req.get("tpu_types") or "")
+    zones = [z.strip() for z in zone_req.split(",") if z.strip()]
+    if zones and tpu["zone"] not in zones:
+        return False
+    if vm_req and "auto" not in vm_req:
+        return tpu["vm_name"] == vm_req
+    cls = requirement_class(vm_req or "auto")
+    if cls and tpu.get("class") != cls:
+        return False
+    sizes = [s.strip() for s in type_req.split(",") if s.strip()]
+    if sizes and tpu.get("size") not in sizes:
+        return False
+    return True
+
+
 def ingest_once(verbose: bool = True) -> int:
     ensure_layout()
     count = 0
@@ -266,6 +450,164 @@ def load_runs() -> list[dict[str, Any]]:
         except Exception as exc:
             print(f"failed to read {path}: {exc}", file=sys.stderr)
     return runs
+
+
+def write_worker_env(run_dir: Path, run: dict[str, Any]) -> Path:
+    env: dict[str, str] = {}
+    submit_request_path = run_dir / "submit_request.json"
+    if submit_request_path.exists():
+        request = read_json(submit_request_path)
+        env.update({str(k): str(v) for k, v in (request.get("env") or {}).items()})
+    secret_path = run_dir / "secret_env.json"
+    if secret_path.exists():
+        env.update({str(k): str(v) for k, v in read_json(secret_path).items()})
+    env["ZHH_CENTER_ROOT"] = str(CENTER_ROOT)
+    env["ZHH_CENTER_RUN_ID"] = str(run["run_id"])
+    env["ZHH_SCRIPT_ROOT"] = str(SCRIPT_ROOT)
+    lines = ["# generated by zhh center"]
+    for key, value in sorted(env.items()):
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", key):
+            continue
+        lines.append(f"export {key}={shlex.quote(value)}")
+    path = run_dir / "worker_env.sh"
+    atomic_write_text(path, "\n".join(lines) + "\n", mode=0o600)
+    return path
+
+
+def create_lease(run: dict[str, Any], tpu: dict[str, str]) -> None:
+    lease = {
+        "run_id": run["run_id"],
+        "vm_name": tpu["vm_name"],
+        "zone": tpu["zone"],
+        "created_at": now_ts(),
+        "heartbeat_at": now_ts(),
+    }
+    atomic_write_json(lease_path(tpu["vm_name"]), lease)
+    LEGACY_LOCK_ROOT.mkdir(parents=True, exist_ok=True)
+    lock_name = f"center_{tpu['vm_name']}_{run['run_id']}_{time.strftime('%Y-%m-%d_%H-%M-%S', time.gmtime())}"
+    (LEGACY_LOCK_ROOT / lock_name).touch()
+
+
+def release_lease(vm_name: str) -> None:
+    lease_path(vm_name).unlink(missing_ok=True)
+    if LEGACY_LOCK_ROOT.exists():
+        for path in LEGACY_LOCK_ROOT.glob(f"center_{vm_name}_*"):
+            path.unlink(missing_ok=True)
+
+
+def launch_worker(run: dict[str, Any], tpu: dict[str, str]) -> bool:
+    run_dir = CENTER_ROOT / "runs" / run["run_id"]
+    run_path = run_dir / "run.json"
+    env_file = write_worker_env(run_dir, run)
+    session = tmux_name(run["run_id"])
+    extra_args = [str(x) for x in (run.get("extra_args") or [])]
+    quoted_args = " ".join(shlex.quote(x) for x in extra_args)
+    command = (
+        f"source {shlex.quote(str(env_file))} && "
+        f"exec {shlex.quote(str(SCRIPT_ROOT / 'main.sh'))} center-worker "
+        f"{shlex.quote(run['run_id'])} {shlex.quote(run['stage_dir'])} "
+        f"{shlex.quote(tpu['vm_name'])} {shlex.quote(tpu['zone'])} -- {quoted_args}"
+    )
+    create_lease(run, tpu)
+    run.update({
+        "status": "APPLYING",
+        "assigned_tpu": {"vm_name": tpu["vm_name"], "zone": tpu["zone"], "class": tpu.get("class", ""), "size": tpu.get("size", "")},
+        "worker": {"tmux_session": session, "started_at": now_ts(), "host": os.uname().nodename},
+    })
+    attempts = list(run.get("attempts") or [])
+    attempts.append({"ts": now_ts(), "vm_name": tpu["vm_name"], "zone": tpu["zone"], "event": "launch"})
+    run["attempts"] = attempts
+    atomic_write_json(run_path, run)
+    append_event(run_dir, "launch_worker", vm_name=tpu["vm_name"], zone=tpu["zone"], tmux_session=session)
+    proc = subprocess.run(["tmux", "new-session", "-d", "-s", session, "bash", "-lc", command], text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        release_lease(tpu["vm_name"])
+        run["status"] = "INFRA_RETRY"
+        run["assigned_tpu"] = None
+        run["last_error"] = proc.stderr.strip() or "tmux launch failed"
+        atomic_write_json(run_path, run)
+        append_event(run_dir, "launch_failed", error=run["last_error"])
+        return False
+    return True
+
+
+def schedule_once() -> int:
+    runs = load_runs()
+    queue = [r for r in runs if r.get("status") in ("QUEUED", "INFRA_RETRY")]
+    queue.sort(key=lambda r: (-int(r.get("priority", 0)), str(r.get("submitted_at", "")), str(r.get("run_id", ""))))
+    if not queue:
+        return 0
+    tpus = available_tpus()
+    scheduled = 0
+    for run in queue:
+        matches = [t for t in tpus if run_matches_tpu(run, t)]
+        if not matches:
+            continue
+        choice = random.choice(matches)
+        if launch_worker(run, choice):
+            scheduled += 1
+            tpus = [t for t in tpus if t["vm_name"] != choice["vm_name"]]
+    return scheduled
+
+
+def worker_log_dir(args: argparse.Namespace) -> int:
+    run_dir = CENTER_ROOT / "runs" / args.run_id
+    run_path = run_dir / "run.json"
+    run = read_json(run_path)
+    log_dir = str(Path(args.log_dir).resolve())
+    run["current_log_dir"] = log_dir
+    run["output_log"] = str(Path(log_dir) / "output.log")
+    run["status"] = "RUNNING"
+    update_observations(run)
+    atomic_write_json(run_path, run)
+    append_event(run_dir, "log_dir", log_dir=log_dir)
+    return 0
+
+
+def worker_finished(args: argparse.Namespace) -> int:
+    run_dir = CENTER_ROOT / "runs" / args.run_id
+    run_path = run_dir / "run.json"
+    run = read_json(run_path)
+    output_log = Path(run["output_log"]) if run.get("output_log") else None
+    status, reason = classify_failure(int(args.exit_code), output_log)
+    assigned = run.get("assigned_tpu") or {}
+    vm_name = assigned.get("vm_name") if isinstance(assigned, dict) else ""
+    if vm_name:
+        release_lease(str(vm_name))
+    run["last_error"] = None if status == "FINISHED" else reason
+    if status == "INFRA_RETRY":
+        run["status"] = "INFRA_RETRY"
+        run["assigned_tpu"] = None
+        run["worker"] = None
+    else:
+        run["status"] = status
+    update_observations(run)
+    atomic_write_json(run_path, run)
+    append_event(run_dir, "worker_finished", exit_code=int(args.exit_code), status=run["status"], reason=reason)
+    return 0
+
+
+def cancel(args: argparse.Namespace) -> int:
+    run_dir = CENTER_ROOT / "runs" / args.run_id
+    run_path = run_dir / "run.json"
+    if not run_path.exists():
+        print(f"run not found: {args.run_id}", file=sys.stderr)
+        return 1
+    run = read_json(run_path)
+    worker = run.get("worker") or {}
+    session = worker.get("tmux_session") if isinstance(worker, dict) else ""
+    if session:
+        subprocess.run(["tmux", "kill-session", "-t", str(session)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    assigned = run.get("assigned_tpu") or {}
+    if isinstance(assigned, dict) and assigned.get("vm_name") and assigned.get("zone") and not args.no_kill:
+        subprocess.run([str(SCRIPT_ROOT / "main.sh"), "kill", str(assigned["vm_name"]), str(assigned["zone"])])
+        release_lease(str(assigned["vm_name"]))
+    run["status"] = "CANCELLED"
+    run["last_error"] = "cancelled by user"
+    atomic_write_json(run_path, run)
+    append_event(run_dir, "cancelled", kill_tpu=not args.no_kill)
+    print(f"cancelled {args.run_id}")
+    return 0
 
 
 def fmt_age(ts: int | None) -> str:
@@ -306,6 +648,32 @@ def status(_: argparse.Namespace) -> int:
     return 0
 
 
+def tpus(args: argparse.Namespace) -> int:
+    ensure_layout()
+    if args.cached:
+        path = CENTER_ROOT / "inventory" / "latest.json"
+        if not path.exists():
+            print("No cached inventory found. Run `zhh center tpus` without --cached first.")
+            return 0
+        payload = read_json(path)
+        items = payload.get("items", [])
+        print(f"TPU inventory cached at {payload.get('ts', '-')}")
+    else:
+        available_tpus()
+        payload = read_json(CENTER_ROOT / "inventory" / "latest.json")
+        items = payload.get("items", [])
+        print(f"TPU inventory refreshed at {payload.get('ts', '-')}")
+    if not items:
+        print("No TPU candidates found.")
+        return 0
+    print(f"{'STATE':<10} {'TYPE':<8} {'VM_NAME':<48} {'ZONE':<18} REASON")
+    for item in items:
+        state = "free" if item.get("available") == "true" else "skip"
+        typ = f"{item.get('class', '')}-{item.get('size', '')}".strip("-")
+        print(f"{state:<10} {typ:<8} {item.get('vm_name', '-'):<48} {item.get('zone', '-'):<18} {item.get('reason', '')}")
+    return 0
+
+
 def start(args: argparse.Namespace) -> int:
     ensure_layout()
     lock_path = CENTER_ROOT / "center.lock"
@@ -319,8 +687,20 @@ def start(args: argparse.Namespace) -> int:
         while True:
             atomic_write_json(CENTER_ROOT / "center_heartbeat.json", {"pid": os.getpid(), "ts": now_ts()})
             ingest_once(verbose=not args.quiet)
+            if not args.no_schedule:
+                scheduled = schedule_once()
+                if scheduled and not args.quiet:
+                    print(f"scheduled {scheduled} run(s)")
             load_runs()
             time.sleep(args.interval)
+
+
+def tick(args: argparse.Namespace) -> int:
+    ingest_once(verbose=not args.quiet)
+    scheduled = 0 if args.no_schedule else schedule_once()
+    if not args.quiet:
+        print(f"scheduled {scheduled} run(s)")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -337,13 +717,38 @@ def build_parser() -> argparse.ArgumentParser:
     p_ingest = sub.add_parser("ingest-once", help="ingest inbox requests once")
     p_ingest.set_defaults(func=lambda args: 0 if ingest_once(verbose=True) >= 0 else 1)
 
+    p_tick = sub.add_parser("tick", help="ingest and schedule once")
+    p_tick.add_argument("--quiet", action="store_true")
+    p_tick.add_argument("--no-schedule", action="store_true")
+    p_tick.set_defaults(func=tick)
+
     p_status = sub.add_parser("s", aliases=["status"], help="show centralized run status")
     p_status.set_defaults(func=status)
+
+    p_tpus = sub.add_parser("tpus", help="show center TPU inventory")
+    p_tpus.add_argument("--cached", action="store_true")
+    p_tpus.set_defaults(func=tpus)
 
     p_start = sub.add_parser("start", help="start the center daemon loop")
     p_start.add_argument("--interval", type=float, default=5.0)
     p_start.add_argument("--quiet", action="store_true")
+    p_start.add_argument("--no-schedule", action="store_true")
     p_start.set_defaults(func=start)
+
+    p_log = sub.add_parser("worker-log-dir", help=argparse.SUPPRESS)
+    p_log.add_argument("--run-id", required=True)
+    p_log.add_argument("--log-dir", required=True)
+    p_log.set_defaults(func=worker_log_dir)
+
+    p_done = sub.add_parser("worker-finished", help=argparse.SUPPRESS)
+    p_done.add_argument("--run-id", required=True)
+    p_done.add_argument("--exit-code", type=int, required=True)
+    p_done.set_defaults(func=worker_finished)
+
+    p_cancel = sub.add_parser("cancel", help="cancel a run and kill its TPU if assigned")
+    p_cancel.add_argument("run_id")
+    p_cancel.add_argument("--no-kill", action="store_true")
+    p_cancel.set_defaults(func=cancel)
 
     return parser
 
