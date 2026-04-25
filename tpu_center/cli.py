@@ -69,7 +69,12 @@ def tmux_name(run_id: str) -> str:
     return f"zhh_center_{run_id[:12]}"
 
 
+def strip_ansi(text: str) -> str:
+    return re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", text)
+
+
 def parse_tpu_type(vm_name: str) -> tuple[str, str]:
+    vm_name = strip_ansi(vm_name)
     match = re.search(r"(v[0-9][a-z0-9]*)-([0-9]+)", vm_name)
     if not match:
         return "", ""
@@ -84,6 +89,41 @@ def requirement_class(vm_name: str) -> str:
     if "autov4" in vm_name:
         return "v4"
     return ""
+
+
+def parse_alias_from_bashrc(alias_name: str, bashrc: Path) -> str:
+    if not bashrc.exists():
+        return ""
+    try:
+        lines = bashrc.read_text(encoding="utf-8", errors="replace").splitlines()
+    except Exception:
+        return ""
+    pattern = re.compile(rf"^\s*alias\s+{re.escape(alias_name)}=(.+)\s*$")
+    for line in lines:
+        match = pattern.match(line)
+        if not match:
+            continue
+        value = match.group(1).strip()
+        if (value.startswith("'") and value.endswith("'")) or (value.startswith('"') and value.endswith('"')):
+            value = value[1:-1]
+        return value.strip()
+    return ""
+
+
+def resolve_itou_command() -> str:
+    configured = os.environ.get("ZHH_ITOU_COMMAND", "").strip()
+    if configured:
+        return configured
+
+    for bashrc in (Path.home() / ".bashrc", Path("/home/wxb/.bashrc"), Path(f"/home/{WORKER_USER}/.bashrc")):
+        command = parse_alias_from_bashrc("itou", bashrc)
+        if command:
+            return command
+
+    fallback = Path("/kmh-nfs-ssd-us-mount/code/zak/fast_tou.sh")
+    if fallback.exists():
+        return f"FAST_TOU_IDLE_ONLY=1 {shlex.quote(str(fallback))}"
+    return "itou"
 
 
 def should_sudo_to_worker_user() -> bool:
@@ -344,7 +384,7 @@ def run_shell(command: str, timeout: int = 30) -> subprocess.CompletedProcess[st
 
 
 def run_itou() -> list[dict[str, str]]:
-    command = os.environ.get("ZHH_ITOU_COMMAND", "itou")
+    command = resolve_itou_command()
     try:
         proc = run_shell_as_worker_user(command, timeout=int(os.environ.get("ZHH_ITOU_TIMEOUT", "30")))
     except Exception as exc:
@@ -356,7 +396,7 @@ def run_itou() -> list[dict[str, str]]:
     candidates: list[dict[str, str]] = []
     seen: set[tuple[str, str]] = set()
     for raw_line in proc.stdout.splitlines():
-        line = raw_line.strip()
+        line = strip_ansi(raw_line).strip()
         if not line or line.startswith("#"):
             continue
         parts = line.split()
