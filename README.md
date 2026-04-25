@@ -184,6 +184,12 @@ Optional env vars:
     zhh k
     ```
 
+    Kill a specific TPU without setting environment variables:
+
+    ```bash
+    zhh kill <vm_name> <zone>
+    ```
+
 2. run (`YOUR_ARGS` are the arguments passed into the `main.py` program)
 
     ```bash

@@ -126,6 +126,47 @@ zkill(){
     fi
 }
 
+zkill_explicit(){
+    local vm_name="$1"
+    local zone="$2"
+    local ret=0
+    local had_vm_name=false
+    local had_zone=false
+    local old_vm_name=""
+    local old_zone=""
+
+    if [ -z "$vm_name" ] || [ -z "$zone" ]; then
+        zhh_error "Usage: zhh kill <vm_name> <zone>"
+        return 1
+    fi
+
+    if [ "${VM_NAME+x}" = "x" ]; then
+        had_vm_name=true
+        old_vm_name="$VM_NAME"
+    fi
+    if [ "${ZONE+x}" = "x" ]; then
+        had_zone=true
+        old_zone="$ZONE"
+    fi
+
+    VM_NAME="$vm_name"
+    ZONE="$zone"
+    zkill && ret=0 || ret=$?
+
+    if $had_vm_name; then
+        VM_NAME="$old_vm_name"
+    else
+        unset VM_NAME
+    fi
+    if $had_zone; then
+        ZONE="$old_zone"
+    else
+        unset ZONE
+    fi
+
+    return $ret
+}
+
 killer_trap(){
     zhh_cleanup_ui
     echo -e "\n\033[33m[Info] Caught interrupt signal. Running kill...\033[0m"

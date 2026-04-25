@@ -83,7 +83,7 @@ get_tpu_legacy(){
     local apply_log_file=""
     local describe_cmd=""
     local delete_cmd=""
-    local max_apply_rounds="${ZHH_MAX_APPLY_ROUNDS:-5}"
+    local max_apply_rounds="${ZHH_MAX_APPLY_ROUNDS:-3}"
     local success=0
     
     if [ -z "$VM_NAME" ]; then
@@ -175,8 +175,6 @@ get_tpu_legacy(){
             else
                 echo -e "\033[32m[INFO] TPU VM $VM_NAME created successfully.\033[0m"
             fi
-            # if available, send email
-            semail --apply-success $VM_NAME "$try_start" "$(date)" $outer_loop
             # for this case, TPU must be set up
             # export DO_TPU_SETUP=1
             export TPU_IS_NEW=1
@@ -259,7 +257,6 @@ get_tpu_queue(){
             done;
         elif [[ "$status" == *"ACTIVE"* ]]; then
             echo -e "\033[32m[INFO] TPU $VM_NAME @ $ZONE is created.\033[0m"
-            semail --apply-success $VM_NAME "$try_start" "$(date)" $outer_loop
             break
         elif [[ "$status" == *"FAILED"* ]] || [[ "$status" == *"SUSPENDING"* ]] || [[ "$status" == *"SUSPENDED"* ]]; then
             echo "[INFO] TPU queue creation failed. Deleting and retrying..."
