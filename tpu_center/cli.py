@@ -531,6 +531,56 @@ def launch_worker(run: dict[str, Any], tpu: dict[str, str]) -> bool:
     return True
 
 
+def tmux_session_exists(session: str) -> bool:
+    if not session:
+        return False
+    proc = subprocess.run(["tmux", "has-session", "-t", session], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return proc.returncode == 0
+
+
+def reconcile_active_runs() -> int:
+    changed = 0
+    stale_seconds = int(os.environ.get("ZHH_CENTER_STALE_SECONDS", str(30 * 60)))
+    now = int(time.time())
+    for run in load_runs():
+        status = str(run.get("status") or "")
+        if status not in ("APPLYING", "RUNNING", "STALE"):
+            continue
+        run_dir = CENTER_ROOT / "runs" / run["run_id"]
+        run_path = run_dir / "run.json"
+        worker = run.get("worker") or {}
+        session = worker.get("tmux_session") if isinstance(worker, dict) else ""
+        assigned = run.get("assigned_tpu") or {}
+        vm_name = assigned.get("vm_name") if isinstance(assigned, dict) else ""
+        if not tmux_session_exists(str(session)):
+            if vm_name:
+                release_lease(str(vm_name))
+            run["status"] = "INFRA_RETRY"
+            run["assigned_tpu"] = None
+            run["worker"] = None
+            run["last_error"] = "worker tmux session is not running"
+            atomic_write_json(run_path, run)
+            append_event(run_dir, "worker_missing_requeued", tmux_session=session)
+            changed += 1
+            continue
+        output_log = Path(run["output_log"]) if run.get("output_log") else None
+        if output_log and output_log.exists():
+            mtime = int(output_log.stat().st_mtime)
+            if status == "STALE" and now - mtime < stale_seconds:
+                run["status"] = "RUNNING"
+                run["last_error"] = None
+                atomic_write_json(run_path, run)
+                append_event(run_dir, "stale_recovered")
+                changed += 1
+            elif status == "RUNNING" and now - mtime >= stale_seconds:
+                run["status"] = "STALE"
+                run["last_error"] = f"output log stale for {(now - mtime) // 60} min"
+                atomic_write_json(run_path, run)
+                append_event(run_dir, "marked_stale", last_log_mtime=mtime)
+                changed += 1
+    return changed
+
+
 def schedule_once() -> int:
     runs = load_runs()
     queue = [r for r in runs if r.get("status") in ("QUEUED", "INFRA_RETRY")]
@@ -687,6 +737,9 @@ def start(args: argparse.Namespace) -> int:
         while True:
             atomic_write_json(CENTER_ROOT / "center_heartbeat.json", {"pid": os.getpid(), "ts": now_ts()})
             ingest_once(verbose=not args.quiet)
+            reconciled = reconcile_active_runs()
+            if reconciled and not args.quiet:
+                print(f"reconciled {reconciled} active run(s)")
             if not args.no_schedule:
                 scheduled = schedule_once()
                 if scheduled and not args.quiet:
@@ -697,8 +750,10 @@ def start(args: argparse.Namespace) -> int:
 
 def tick(args: argparse.Namespace) -> int:
     ingest_once(verbose=not args.quiet)
+    reconciled = reconcile_active_runs()
     scheduled = 0 if args.no_schedule else schedule_once()
     if not args.quiet:
+        print(f"reconciled {reconciled} active run(s)")
         print(f"scheduled {scheduled} run(s)")
     return 0
 
