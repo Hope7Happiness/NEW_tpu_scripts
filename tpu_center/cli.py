@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import getpass
 import hashlib
 import json
 import os
@@ -21,6 +22,8 @@ CENTER_ROOT = Path(os.environ.get("ZHH_CENTER_ROOT", "/kmh-nfs-ssd-us-mount/stag
 RUN_STATUSES = ("QUEUED", "APPLYING", "RUNNING", "STALE", "INFRA_RETRY", "FAILED", "FINISHED", "CANCELLED")
 SCRIPT_ROOT = Path(os.environ.get("ZHH_SCRIPT_ROOT", Path(__file__).resolve().parents[1]))
 LEGACY_LOCK_ROOT = Path("/kmh-nfs-ssd-us-mount/code/qiao/tpu_lock")
+WORKER_USER = os.environ.get("ZHH_CENTER_WORKER_USER", "zak")
+SUDO_PASSWORD_FILE = Path(os.environ.get("ZHH_CENTER_SUDO_PASSWORD_FILE", SCRIPT_ROOT / ".center_sudo_password"))
 
 
 def now_ts() -> str:
@@ -81,6 +84,34 @@ def requirement_class(vm_name: str) -> str:
     if "autov4" in vm_name:
         return "v4"
     return ""
+
+
+def should_sudo_to_worker_user() -> bool:
+    return bool(WORKER_USER) and WORKER_USER != getpass.getuser()
+
+
+def sudo_root_shell_command(root_script: str) -> str:
+    quoted_script = shlex.quote(root_script)
+    if SUDO_PASSWORD_FILE.exists():
+        return f"printf '%s\\n' \"$(cat {shlex.quote(str(SUDO_PASSWORD_FILE))})\" | sudo -S -p '' bash -lc {quoted_script}"
+    return f"sudo -n bash -lc {quoted_script}"
+
+
+def worker_user_shell_command(inner_command: str, env_file: Path | None = None) -> str:
+    if not should_sudo_to_worker_user():
+        if env_file is None:
+            return inner_command
+        return f"source {shlex.quote(str(env_file))} && {inner_command}"
+
+    env_part = ""
+    if env_file is not None:
+        env_part = f"set -a; source {shlex.quote(str(env_file))}; set +a; "
+    root_script = f"{env_part}exec sudo -E -H -u {shlex.quote(WORKER_USER)} bash -lc {shlex.quote(inner_command)}"
+    return sudo_root_shell_command(root_script)
+
+
+def run_shell_as_worker_user(command: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
+    return run_shell(worker_user_shell_command(command), timeout=timeout)
 
 
 def request_id() -> str:
@@ -315,7 +346,7 @@ def run_shell(command: str, timeout: int = 30) -> subprocess.CompletedProcess[st
 def run_itou() -> list[dict[str, str]]:
     command = os.environ.get("ZHH_ITOU_COMMAND", "itou")
     try:
-        proc = run_shell(command, timeout=int(os.environ.get("ZHH_ITOU_TIMEOUT", "30")))
+        proc = run_shell_as_worker_user(command, timeout=int(os.environ.get("ZHH_ITOU_TIMEOUT", "30")))
     except Exception as exc:
         print(f"failed to run itou: {exc}", file=sys.stderr)
         return []
@@ -359,7 +390,11 @@ def cloud_ready(vm_name: str, zone: str) -> bool:
     if os.environ.get("ZHH_CENTER_SKIP_CLOUD_CHECK") == "1":
         return True
     try:
-        proc = run_command(["gcloud", "compute", "tpus", "tpu-vm", "describe", vm_name, f"--zone={zone}", "--format=value(state)"], timeout=25)
+        command = " ".join([
+            "gcloud", "compute", "tpus", "tpu-vm", "describe",
+            shlex.quote(vm_name), shlex.quote(f"--zone={zone}"), shlex.quote("--format=value(state)"),
+        ])
+        proc = run_shell_as_worker_user(command, timeout=25)
     except Exception:
         return False
     return proc.returncode == 0 and proc.stdout.strip() == "READY"
@@ -369,9 +404,14 @@ def remote_has_python(vm_name: str, zone: str) -> bool:
     if os.environ.get("ZHH_CENTER_SKIP_REMOTE_BUSY_CHECK") == "1":
         return False
     marker = f"zhhcenter{random.randrange(1_000_000):06d}"
-    command = f"ps -ef | grep python | grep -E '(\\.py|-m)' | grep -v {marker} | grep -v grep"
+    remote_command = f"ps -ef | grep python | grep -E '(\\.py|-m)' | grep -v {marker} | grep -v grep"
     try:
-        proc = run_command([str(SCRIPT_ROOT / "google-cloud-sdk/bin/gcloud") if (SCRIPT_ROOT / "google-cloud-sdk/bin/gcloud").exists() else "gcloud", "compute", "tpus", "tpu-vm", "ssh", vm_name, "--zone", zone, "--command", command], timeout=30)
+        gcloud = str(SCRIPT_ROOT / "google-cloud-sdk/bin/gcloud") if (SCRIPT_ROOT / "google-cloud-sdk/bin/gcloud").exists() else "gcloud"
+        command = " ".join([
+            shlex.quote(gcloud), "compute", "tpus", "tpu-vm", "ssh",
+            shlex.quote(vm_name), "--zone", shlex.quote(zone), "--command", shlex.quote(remote_command),
+        ])
+        proc = run_shell_as_worker_user(command, timeout=30)
     except Exception:
         return True
     return bool(proc.stdout.strip())
@@ -483,16 +523,28 @@ def create_lease(run: dict[str, Any], tpu: dict[str, str]) -> None:
         "heartbeat_at": now_ts(),
     }
     atomic_write_json(lease_path(tpu["vm_name"]), lease)
-    LEGACY_LOCK_ROOT.mkdir(parents=True, exist_ok=True)
     lock_name = f"center_{tpu['vm_name']}_{run['run_id']}_{time.strftime('%Y-%m-%d_%H-%M-%S', time.gmtime())}"
-    (LEGACY_LOCK_ROOT / lock_name).touch()
+    lock_path = LEGACY_LOCK_ROOT / lock_name
+    try:
+        LEGACY_LOCK_ROOT.mkdir(parents=True, exist_ok=True)
+        lock_path.touch()
+    except PermissionError:
+        command = f"mkdir -p {shlex.quote(str(LEGACY_LOCK_ROOT))} && touch {shlex.quote(str(lock_path))}"
+        run_shell(sudo_root_shell_command(command), timeout=15)
 
 
 def release_lease(vm_name: str) -> None:
     lease_path(vm_name).unlink(missing_ok=True)
     if LEGACY_LOCK_ROOT.exists():
-        for path in LEGACY_LOCK_ROOT.glob(f"center_{vm_name}_*"):
-            path.unlink(missing_ok=True)
+        try:
+            for path in LEGACY_LOCK_ROOT.glob(f"center_{vm_name}_*"):
+                path.unlink(missing_ok=True)
+        except PermissionError:
+            command = " ".join([
+                "find", shlex.quote(str(LEGACY_LOCK_ROOT)), "-maxdepth", "1", "-type", "f",
+                "-name", shlex.quote(f"center_{vm_name}_*"), "-delete",
+            ])
+            run_shell(sudo_root_shell_command(command), timeout=15)
 
 
 def launch_worker(run: dict[str, Any], tpu: dict[str, str]) -> bool:
@@ -502,12 +554,12 @@ def launch_worker(run: dict[str, Any], tpu: dict[str, str]) -> bool:
     session = tmux_name(run["run_id"])
     extra_args = [str(x) for x in (run.get("extra_args") or [])]
     quoted_args = " ".join(shlex.quote(x) for x in extra_args)
-    command = (
-        f"source {shlex.quote(str(env_file))} && "
+    inner_command = (
         f"exec {shlex.quote(str(SCRIPT_ROOT / 'main.sh'))} center-worker "
         f"{shlex.quote(run['run_id'])} {shlex.quote(run['stage_dir'])} "
         f"{shlex.quote(tpu['vm_name'])} {shlex.quote(tpu['zone'])} -- {quoted_args}"
     )
+    command = worker_user_shell_command(inner_command, env_file)
     create_lease(run, tpu)
     run.update({
         "status": "APPLYING",
@@ -650,7 +702,11 @@ def cancel(args: argparse.Namespace) -> int:
         subprocess.run(["tmux", "kill-session", "-t", str(session)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     assigned = run.get("assigned_tpu") or {}
     if isinstance(assigned, dict) and assigned.get("vm_name") and assigned.get("zone") and not args.no_kill:
-        subprocess.run([str(SCRIPT_ROOT / "main.sh"), "kill", str(assigned["vm_name"]), str(assigned["zone"])])
+        kill_command = " ".join([
+            "exec", shlex.quote(str(SCRIPT_ROOT / "main.sh")), "kill",
+            shlex.quote(str(assigned["vm_name"])), shlex.quote(str(assigned["zone"])),
+        ])
+        run_shell(worker_user_shell_command(kill_command), timeout=180)
         release_lease(str(assigned["vm_name"]))
     run["status"] = "CANCELLED"
     run["last_error"] = "cancelled by user"

@@ -167,6 +167,20 @@ Current MVP behavior:
 - `zhh center s` shows centralized runs.
 - `zhh center cancel <run_id>` cancels a run and kills its assigned TPU by default.
 - This first slice uses existing TPUs from `itou`; it does **not** create new TPU VMs yet.
+- The center can run as your current user; workers default to running as `zak` via `sudo`.
+- The sudo password file is `.center_sudo_password` in this repo root. It is gitignored and should be `0600`.
+
+To override the worker user:
+
+```bash
+export ZHH_CENTER_WORKER_USER=zak
+```
+
+To run workers as the current user instead:
+
+```bash
+export ZHH_CENTER_WORKER_USER=
+```
 
 Submit a run:
 
