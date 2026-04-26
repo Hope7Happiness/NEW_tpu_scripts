@@ -1301,6 +1301,64 @@ def cancel(args: argparse.Namespace) -> int:
     return 0 if ok else 1
 
 
+def unlink_log_file(path: Path) -> bool:
+    try:
+        if path.exists() and (path.is_file() or path.is_symlink()):
+            path.unlink()
+            return True
+    except PermissionError:
+        proc = run_shell(sudo_root_shell_command(f"rm -f {shlex.quote(str(path))}"), timeout=15)
+        return proc.returncode == 0 and not path.exists()
+    return False
+
+
+def prune_empty_dirs(root: Path) -> None:
+    if not root.exists() or not root.is_dir():
+        return
+    for path in sorted((p for p in root.rglob("*") if p.is_dir()), key=lambda p: len(p.parts), reverse=True):
+        try:
+            path.rmdir()
+        except OSError:
+            pass
+    try:
+        root.rmdir()
+    except OSError:
+        pass
+
+
+def cleanup_deleted_run_logs(run: dict[str, Any], run_dir: Path) -> int:
+    removed = 0
+    explicit_keys = ("worker_launch_log", "current_stage_log")
+    explicit_paths: set[Path] = set()
+    for key in explicit_keys:
+        value = run.get(key)
+        if value:
+            explicit_paths.add(Path(str(value)).expanduser())
+    worker = run.get("worker") or {}
+    if isinstance(worker, dict) and worker.get("launch_log"):
+        explicit_paths.add(Path(str(worker["launch_log"])).expanduser())
+
+    for path in explicit_paths:
+        if unlink_log_file(path):
+            removed += 1
+
+    stage_dir_text = str(run.get("stage_dir") or "")
+    logs_root = Path(stage_dir_text).expanduser() / "logs" if stage_dir_text else None
+    if logs_root and logs_root.exists() and logs_root.is_dir():
+        for path in logs_root.rglob("*.log"):
+            if path.name == "output.log":
+                continue
+            if unlink_log_file(path):
+                removed += 1
+        prune_empty_dirs(logs_root)
+
+    if run_dir.exists():
+        for path in run_dir.rglob("*.log"):
+            if unlink_log_file(path):
+                removed += 1
+    return removed
+
+
 def delete(args: argparse.Namespace) -> int:
     rid, run_path = resolve_run(args.run_id, quiet=True)
     if not rid or not run_path:
@@ -1328,7 +1386,9 @@ def delete(args: argparse.Namespace) -> int:
         if run_path is None:
             return 1
         run_dir = run_path.parent
+        run = read_json(run_path)
 
+    removed_logs = cleanup_deleted_run_logs(run, run_dir)
     try:
         shutil.rmtree(run_dir)
     except PermissionError:
@@ -1339,6 +1399,7 @@ def delete(args: argparse.Namespace) -> int:
             return 1
     print(f"Deleted run {ctext(BOLD, rid)}")
     print_kv("previous", status or "-")
+    print_kv("cleaned_logs", removed_logs)
     print_kv("removed", run_dir)
     return 0
 

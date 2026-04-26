@@ -252,7 +252,7 @@ Cancel a run:
 zhh center cancel <run_id>
 ```
 
-Delete a submitted run from the center list. Finished runs are removed directly; other states are cancelled first and their assigned TPU is killed before removal:
+Delete a submitted run from the center list. Finished runs are removed directly; other states are cancelled first and their assigned TPU is killed before removal. This also removes center worker logs and staged `logs/**/*.log` files except `output.log`:
 
 ```bash
 zhh delete <run_id>
