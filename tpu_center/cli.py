@@ -19,7 +19,8 @@ from typing import Any
 
 
 CENTER_ROOT = Path(os.environ.get("ZHH_CENTER_ROOT", "/kmh-nfs-ssd-us-mount/staging/.tpu_center"))
-RUN_STATUSES = ("QUEUED", "APPLYING", "RUNNING", "STALE", "INFRA_RETRY", "FAILED", "FINISHED", "CANCELLED")
+RUN_STATUSES = ("QUEUED", "RESUME_PENDING", "APPLYING", "RUNNING", "STALE", "INFRA_RETRY", "FAILED", "FINISHED", "CANCELLED")
+QUEUE_STATUSES = ("QUEUED", "INFRA_RETRY", "RESUME_PENDING")
 SCRIPT_ROOT = Path(os.environ.get("ZHH_SCRIPT_ROOT", Path(__file__).resolve().parents[1]))
 LEGACY_LOCK_ROOT = Path("/kmh-nfs-ssd-us-mount/code/qiao/tpu_lock")
 WORKER_USER = os.environ.get("ZHH_CENTER_WORKER_USER", "zak")
@@ -313,6 +314,41 @@ def classify_failure(exit_code: int, output_log: Path | None) -> tuple[str, str]
         if pattern in text:
             return "FAILED", pattern
     return "FAILED", f"exit code {exit_code}; no infra signature"
+
+
+def trust_failure_limit(run: dict[str, Any] | None = None) -> int:
+    if run and run.get("trust_failure_limit"):
+        try:
+            return max(1, int(run["trust_failure_limit"]))
+        except (TypeError, ValueError):
+            pass
+    return max(1, int(os.environ.get("ZHH_CENTER_TRUST_FAILURE_LIMIT", "3")))
+
+
+def record_trusted_failure(run: dict[str, Any], reason: str) -> str:
+    if not run.get("trusted"):
+        return "not_trusted"
+    limit = trust_failure_limit(run)
+    count = int(run.get("trust_failed_count", 0) or 0) + 1
+    run["trust_failed_count"] = count
+    run["trust_failure_limit"] = limit
+    run["trust_last_failure_at"] = now_ts()
+    run["trust_last_failure_reason"] = reason
+    if count >= limit:
+        run["trusted"] = False
+        run["trust_exhausted_at"] = now_ts()
+        return "exhausted"
+    return "resume"
+
+
+def trust_summary(run: dict[str, Any]) -> str:
+    limit = trust_failure_limit(run)
+    count = int(run.get("trust_failed_count", 0) or 0)
+    if run.get("trusted"):
+        return f"trusted; {count}/{limit} FAILED"
+    if run.get("trust_exhausted_at"):
+        return f"exhausted; {count}/{limit} FAILED"
+    return ""
 
 
 def env_snapshot() -> tuple[dict[str, str], dict[str, str]]:
@@ -1052,13 +1088,26 @@ def reconcile_active_runs() -> int:
         session = worker.get("tmux_session") if isinstance(worker, dict) else ""
         assigned = run.get("assigned_tpu") or {}
         vm_name = assigned.get("vm_name") if isinstance(assigned, dict) else ""
+        zone = assigned.get("zone") if isinstance(assigned, dict) else ""
         if not tmux_session_exists(str(session)):
             if vm_name:
                 release_lease(str(vm_name))
             missing_count = int(run.get("worker_missing_count", 0) or 0) + 1
             max_missing = int(os.environ.get("ZHH_CENTER_MAX_WORKER_MISSING_RETRIES", "3"))
+            reason = "worker tmux session exited before reporting status"
             if missing_count >= max_missing:
-                run["status"] = "FAILED"
+                trust_action = record_trusted_failure(run, reason)
+                if trust_action == "resume":
+                    if vm_name and zone:
+                        mark_tpu_bad(str(vm_name), str(zone), f"trusted failure: {reason}")
+                    run["status"] = "RESUME_PENDING"
+                    run["worker_missing_count"] = 0
+                    run["current_stage"] = f"Waiting to resume ({trust_summary(run)})"
+                else:
+                    if trust_action == "exhausted" and vm_name and zone:
+                        mark_tpu_bad(str(vm_name), str(zone), f"trusted failure: {reason}")
+                    run["status"] = "FAILED"
+                    run["current_stage"] = "Failed" if trust_action == "not_trusted" else f"Failed ({trust_summary(run)})"
                 run["next_retry_at_epoch"] = None
                 run["next_retry_at"] = None
             else:
@@ -1068,9 +1117,14 @@ def reconcile_active_runs() -> int:
                 run["next_retry_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(now + delay))
             run["assigned_tpu"] = None
             run["worker"] = None
-            run["worker_missing_count"] = missing_count
-            run["last_error"] = "worker tmux session exited before reporting status"
-            run["current_stage"] = "Worker exited before reporting status"
+            if run.get("status") != "RESUME_PENDING":
+                run["worker_missing_count"] = missing_count
+            run["last_error"] = reason
+            if run.get("status") not in ("FAILED", "RESUME_PENDING"):
+                run["current_stage"] = "Worker exited before reporting status"
+            run["updated_at"] = now_ts()
+            run["current_stage_at"] = run["updated_at"]
+            run["current_stage_epoch"] = now
             atomic_write_json(run_path, run)
             append_event(run_dir, "worker_missing", tmux_session=session, count=missing_count, status=run["status"])
             changed += 1
@@ -1099,7 +1153,7 @@ def schedule_once(verbose: bool = False) -> int:
     now = int(time.time())
     queue = [
         r for r in runs
-        if r.get("status") in ("QUEUED", "INFRA_RETRY") and int(r.get("next_retry_at_epoch", 0) or 0) <= now
+        if r.get("status") in QUEUE_STATUSES and int(r.get("next_retry_at_epoch", 0) or 0) <= now
     ]
     queue.sort(key=lambda r: (-int(r.get("priority", 0)), str(r.get("submitted_at", "")), str(r.get("run_id", ""))))
     candidates = [item for item in itou_inventory() if item.get("available") == "candidate"]
@@ -1180,9 +1234,25 @@ def worker_finished(args: argparse.Namespace) -> int:
         run["assigned_tpu"] = None
         run["worker"] = None
         run["current_stage"] = "Waiting for retry"
+    elif status == "FAILED" and (trust_action := record_trusted_failure(run, reason)) != "not_trusted":
+        if vm_name and zone:
+            mark_tpu_bad(str(vm_name), str(zone), f"trusted failure: {reason}")
+        if trust_action == "resume":
+            run["status"] = "RESUME_PENDING"
+            run["assigned_tpu"] = None
+            run["worker"] = None
+            run["next_retry_at_epoch"] = None
+            run["next_retry_at"] = None
+            run["current_stage"] = f"Waiting to resume ({trust_summary(run)})"
+        else:
+            run["status"] = "FAILED"
+            run["current_stage"] = f"Failed ({trust_summary(run)})"
     else:
         run["status"] = status
         run["current_stage"] = "Finished" if status == "FINISHED" else "Failed"
+    run["updated_at"] = now_ts()
+    run["current_stage_at"] = run["updated_at"]
+    run["current_stage_epoch"] = int(time.time())
     update_observations(run)
     atomic_write_json(run_path, run)
     append_event(run_dir, "worker_finished", exit_code=int(args.exit_code), status=run["status"], reason=reason)
@@ -1307,15 +1377,64 @@ def format_status(status: object) -> str:
         return ctext(RED + BOLD, text)
     if text in ("INFRA_RETRY", "STALE"):
         return ctext(YELLOW + BOLD, text)
-    if text in ("APPLYING", "QUEUED", "RUNNING"):
+    if text in ("APPLYING", "QUEUED", "RESUME_PENDING", "RUNNING"):
         return ctext(BLUE + BOLD, text)
     return text
+
+
+def trust(args: argparse.Namespace) -> int:
+    rid, run_path = resolve_run(args.run_id)
+    if not rid or not run_path:
+        return 1
+    run_dir = run_path.parent
+    run = read_json(run_path)
+    status = str(run.get("status") or "")
+    if status != "FAILED":
+        print(f"trust expects a FAILED run; {rid} is {status or '-'}", file=sys.stderr)
+        return 1
+
+    assigned = run.get("assigned_tpu") or {}
+    vm_name = assigned.get("vm_name") if isinstance(assigned, dict) else ""
+    zone = assigned.get("zone") if isinstance(assigned, dict) else ""
+    if vm_name:
+        release_lease(str(vm_name))
+    if vm_name and zone:
+        mark_tpu_bad(str(vm_name), str(zone), "trusted by user; try another TPU")
+
+    limit = trust_failure_limit()
+    run["trusted"] = True
+    run["trusted_at"] = now_ts()
+    run["trusted_by"] = getpass.getuser()
+    run["trust_generation"] = int(run.get("trust_generation", 0) or 0) + 1
+    run["trust_failed_count"] = 0
+    run["trust_failure_limit"] = limit
+    run["trust_exhausted_at"] = None
+    run["trust_last_failure_at"] = None
+    run["trust_last_failure_reason"] = None
+    run["status"] = "RESUME_PENDING"
+    run["assigned_tpu"] = None
+    run["worker"] = None
+    run["worker_missing_count"] = 0
+    run["next_retry_at_epoch"] = None
+    run["next_retry_at"] = None
+    run["current_stage"] = "Waiting to resume"
+    run["current_stage_at"] = now_ts()
+    run["current_stage_epoch"] = int(time.time())
+    run["updated_at"] = now_ts()
+    atomic_write_json(run_path, run)
+    append_event(run_dir, "trusted", previous_status=status, limit=limit, vm_name=vm_name, zone=zone)
+
+    print(f"Trusted run {ctext(BOLD, rid)}")
+    print_kv("status", format_status(run["status"]))
+    print_kv("trust", trust_summary(run))
+    print_kv("tpu", format_tpu_text(run.get("requirements") if isinstance(run.get("requirements"), dict) else None))
+    return 0
 
 
 def status(_: argparse.Namespace) -> int:
     prune_probe_files()
     runs = load_runs()
-    status_order = {name: i for i, name in enumerate(("RUNNING", "APPLYING", "STALE", "INFRA_RETRY", "QUEUED", "FAILED", "FINISHED", "CANCELLED"))}
+    status_order = {name: i for i, name in enumerate(("RUNNING", "APPLYING", "STALE", "INFRA_RETRY", "RESUME_PENDING", "QUEUED", "FAILED", "FINISHED", "CANCELLED"))}
     runs.sort(key=lambda r: (status_order.get(str(r.get("status")), 99), -int(r.get("priority", 0)), str(r.get("submitted_at", ""))))
     if not runs:
         print("No centralized runs found.")
@@ -1330,12 +1449,15 @@ def status(_: argparse.Namespace) -> int:
         print_kv("status", format_status(run.get("status", "-")), indent="\t")
         print_kv("priority", int(run.get("priority", 0)), indent="\t")
         print_kv("tpu", tpu_text, indent="\t")
+        trust_text = trust_summary(run)
+        if trust_text:
+            print_kv("trust", trust_text, indent="\t")
         if run.get("current_stage"):
             stage_text = str(run["current_stage"])
             if run.get("current_stage_epoch"):
                 stage_text += f" ({fmt_age(int(run['current_stage_epoch']))} ago)"
             print_kv("stage", stage_text, indent="\t")
-        if run.get("status") in ("QUEUED", "INFRA_RETRY"):
+        if run.get("status") in QUEUE_STATUSES:
             print_kv("probe", probe_summary_for_run(run), indent="\t")
         print_kv("last_log", fmt_age(run.get("last_log_mtime")), indent="\t")
         if run.get("wandb_url"):
@@ -1548,6 +1670,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_delete = sub.add_parser("delete", help="cancel if needed and remove a submitted run from center")
     p_delete.add_argument("run_id")
     p_delete.set_defaults(func=delete)
+
+    p_trust = sub.add_parser("trust", help="trust a FAILED run and queue it for resume on another TPU")
+    p_trust.add_argument("run_id")
+    p_trust.set_defaults(func=trust)
 
     p_change = sub.add_parser("change", help="interactively edit TPU requirements for a run")
     p_change.add_argument("run_id")
