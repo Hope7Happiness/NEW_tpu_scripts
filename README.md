@@ -220,7 +220,7 @@ zhh table
 
 For active center workers, the table shows the current setup stage, such as `Prepare TPU`, `Mount shared disk`, `Install TPU runtime`, `Check TPU environment`, `Wandb login`, and `Launch training`.
 
-Change TPU requirements for a submitted run:
+Change TPU requirements or priority for a submitted run:
 
 ```bash
 zhh change <run_id>

@@ -1496,7 +1496,13 @@ def status(_: argparse.Namespace) -> int:
     prune_probe_files()
     runs = load_runs()
     status_order = {name: i for i, name in enumerate(("RUNNING", "APPLYING", "STALE", "INFRA_RETRY", "RESUME_PENDING", "QUEUED", "FAILED", "FINISHED", "CANCELLED"))}
-    runs.sort(key=lambda r: (status_order.get(str(r.get("status")), 99), -int(r.get("priority", 0)), str(r.get("submitted_at", ""))))
+    active_statuses = {"RUNNING", "APPLYING", "STALE"}
+    runs.sort(key=lambda r: (
+        -int(r.get("priority", 0)),
+        0 if str(r.get("status") or "") in active_statuses else 1,
+        status_order.get(str(r.get("status")), 99),
+        str(r.get("submitted_at", "")),
+    ))
     if not runs:
         print("No centralized runs found.")
         return 0
@@ -1576,7 +1582,7 @@ def change(args: argparse.Namespace) -> int:
         return 1
     run = read_json(run_path)
     req = dict(run.get("requirements") or {})
-    print(f"Editing requirements for {ctext(BOLD, rid)}")
+    print(f"Editing run {ctext(BOLD, rid)}")
     print("Press Enter to keep the current value.")
     fields = (
         ("VM_NAME", "vm_name"),
@@ -1590,16 +1596,32 @@ def change(args: argparse.Namespace) -> int:
         if value:
             req[key] = value
             changed[key] = value
+    current_priority = int(run.get("priority", 0) or 0)
+    priority_value = input(f"{DIM}PRIORITY [{current_priority}]: {RESET}").strip()
+    priority_changed = False
+    if priority_value:
+        if not re.match(r"^-?[0-9]+$", priority_value):
+            print(f"priority must be an integer: {priority_value}", file=sys.stderr)
+            return 1
+        new_priority = int(priority_value)
+        if new_priority != current_priority:
+            run["priority"] = new_priority
+            priority_changed = True
     if not changed:
-        print("No changes.")
-        return 0
+        if not priority_changed:
+            print("No changes.")
+            return 0
     run["requirements"] = req
     run["updated_at"] = now_ts()
     atomic_write_json(run_path, run)
-    append_event(run_path.parent, "requirements_changed", **changed)
+    event_fields: dict[str, Any] = {**changed}
+    if priority_changed:
+        event_fields["priority"] = run["priority"]
+    append_event(run_path.parent, "run_changed", **event_fields)
     print(f"Updated {ctext(BOLD, rid)}")
     for _, key in fields:
         print_kv(key, req.get(key, ""))
+    print_kv("priority", run.get("priority", 0))
     return 0
 
 
