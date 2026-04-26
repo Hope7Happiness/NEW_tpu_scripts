@@ -226,6 +226,14 @@ Change TPU requirements for a submitted run:
 zhh change <run_id>
 ```
 
+Trust a failed run and queue it to resume on another TPU:
+
+```bash
+zhh trust <run_id>
+```
+
+Trusted runs enter `RESUME_PENDING`. If they hit `FAILED` again, the center will automatically requeue them until the trusted failure count reaches 3 or the run reaches `FINISHED`. After trust is exhausted, run `zhh trust <run_id>` again to grant another 3 failed attempts.
+
 Show the center TPU inventory:
 
 ```bash
