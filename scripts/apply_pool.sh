@@ -81,6 +81,7 @@ zapply_write_state(){
     python3 - <<'PY'
 import json
 import os
+import re
 import time
 from pathlib import Path
 
@@ -94,10 +95,30 @@ if path.exists():
 
 def normalize_error(text):
     text = str(text or "")
-    lowered = text.lower()
+    compact = " ".join(text.split())
+    lowered = compact.lower()
+    zone = ""
+    zone_match = re.search(r"locations/([^/]+)/nodes", compact) or re.search(r"zone ['\"]?([a-z]+-[a-z0-9]+-[a-z])['\"]?", compact)
+    if zone_match:
+        zone = zone_match.group(1)
+    if "no more capacity in the zone" in lowered:
+        return f"no capacity in {zone}" if zone else "no capacity in zone"
+    if "createrequestsperminute" in lowered or "createnode requests per minute" in lowered or "qps/create" in lowered or "rate_limit_exceeded" in lowered:
+        limit_match = re.search(r"['\"]quota_limit_value['\"]\s*:\s*['\"]?([0-9]+)", compact)
+        suffix = f" (limit {limit_match.group(1)}/min)" if limit_match else ""
+        return f"create request rate limit{suffix}"
+    quota_match = re.search(r"Quota limit '([^']+)' has been exceeded", compact) or re.search(r"Quota '([^']+)' exhausted", compact)
+    limit_match = re.search(r"Limit:?\s*([0-9]+)", compact)
+    if quota_match:
+        detail = quota_match.group(1)
+        if limit_match:
+            detail += f" limit {limit_match.group(1)}"
+        if zone:
+            detail += f" in {zone}"
+        return f"quota exhausted: {detail}"
     if "request a higher quota limit" in lowered or "request_increase" in lowered:
-        return "request quota limit"
-    return " ".join(text.split())
+        return "quota limit (details truncated)"
+    return compact
 
 payload = {
     "session": os.environ["ZAPPLY_SESSION"],
@@ -141,10 +162,22 @@ zapply_wait_ready(){
     local zone="$2"
     local round=0
     local status=""
+    local output=""
+    local ret=0
     local max_rounds="${ZHH_APPLY_READY_ROUNDS:-90}"
 
     while [ "$round" -lt "$max_rounds" ]; do
-        status=$("$CUSTOM_GCLOUD_EXE" compute tpus tpu-vm describe "$vm_name" --zone="$zone" --format="value(state)" 2>/dev/null || true)
+        output=$("$CUSTOM_GCLOUD_EXE" compute tpus tpu-vm describe "$vm_name" --zone="$zone" --format="value(state)" 2>&1)
+        ret=$?
+        if [ $ret -ne 0 ]; then
+            if [[ "$output" == *"NOT_FOUND"* ]]; then
+                echo "$output"
+                return 1
+            fi
+            status=""
+        else
+            status="$output"
+        fi
         if [ "$status" = "READY" ]; then
             return 0
         fi
@@ -160,9 +193,21 @@ zapply_wait_ready(){
 zapply_create_legacy_lock(){
     local vm_name="$1"
     local lock_file="/kmh-nfs-ssd-us-mount/code/qiao/tpu_lock/xianbang_${vm_name}_$(date -u +%Y-%m-%d_%H-%M-%S)"
-    sudo mkdir -p /kmh-nfs-ssd-us-mount/code/qiao/tpu_lock 2>/dev/null || true
-    sudo touch "$lock_file" 2>/dev/null || true
-    sudo chmod 666 "$lock_file" 2>/dev/null || true
+    zhh_sudo mkdir -p /kmh-nfs-ssd-us-mount/code/qiao/tpu_lock 2>/dev/null || true
+    zhh_sudo touch "$lock_file" 2>/dev/null || true
+    zhh_sudo chmod 666 "$lock_file" 2>/dev/null || true
+}
+
+zapply_register_tpu(){
+    local vm_name="$1"
+    local zone="$2"
+    if [ -z "$vm_name" ] || [ -z "$zone" ]; then
+        return 1
+    fi
+    zhh_sudo mkdir -p "$SSCRIPT_HOME/$vm_name" && \
+    printf '%s\n' "$zone" | zhh_sudo tee "$SSCRIPT_HOME/$vm_name/zone" >/dev/null && \
+    printf '%s\n' "ready" | zhh_sudo tee "$SSCRIPT_HOME/$vm_name/check_result" >/dev/null && \
+    printf '%s\n' "FINISHED" | zhh_sudo tee "$SSCRIPT_HOME/$vm_name/status" >/dev/null
 }
 
 zapply_start_matmul(){
@@ -284,7 +329,7 @@ zapply_worker(){
         if [ $ret -ne 0 ]; then
             zapply_write_state "$session" "KEEPALIVE_FAILED" "$tpu_type" "$zone" "$vm_name" "matmul exited $ret"
         else
-            register_tpu >> "$log_path" 2>&1 || true
+            zapply_register_tpu "$vm_name" "$zone" >> "$log_path" 2>&1 || true
             zapply_write_state "$session" "SLEEPING" "$tpu_type" "$zone" "$vm_name" ""
         fi
         sleep "$sleep_seconds"
@@ -329,6 +374,7 @@ zapply_what(){
     ZAPPLY_ROOT="$ZHH_APPLY_ROOT" ZAPPLY_PREFIX="$ZHH_APPLY_SESSION_PREFIX" python3 - <<'PY'
 import json
 import os
+import re
 import subprocess
 import time
 from pathlib import Path
@@ -352,10 +398,30 @@ def print_kv(label, value):
 
 def normalize_error(text):
     text = str(text or "")
-    lowered = text.lower()
+    compact = " ".join(text.split())
+    lowered = compact.lower()
+    zone = ""
+    zone_match = re.search(r"locations/([^/]+)/nodes", compact) or re.search(r"zone ['\"]?([a-z]+-[a-z0-9]+-[a-z])['\"]?", compact)
+    if zone_match:
+        zone = zone_match.group(1)
+    if "no more capacity in the zone" in lowered:
+        return f"no capacity in {zone}" if zone else "no capacity in zone"
+    if "createrequestsperminute" in lowered or "createnode requests per minute" in lowered or "qps/create" in lowered or "rate_limit_exceeded" in lowered:
+        limit_match = re.search(r"['\"]quota_limit_value['\"]\s*:\s*['\"]?([0-9]+)", compact)
+        suffix = f" (limit {limit_match.group(1)}/min)" if limit_match else ""
+        return f"create request rate limit{suffix}"
+    quota_match = re.search(r"Quota limit '([^']+)' has been exceeded", compact) or re.search(r"Quota '([^']+)' exhausted", compact)
+    limit_match = re.search(r"Limit:?\s*([0-9]+)", compact)
+    if quota_match:
+        detail = quota_match.group(1)
+        if limit_match:
+            detail += f" limit {limit_match.group(1)}"
+        if zone:
+            detail += f" in {zone}"
+        return f"quota exhausted: {detail}"
     if "request a higher quota limit" in lowered or "request_increase" in lowered:
-        return "request quota limit"
-    return " ".join(text.split())
+        return "quota limit (details truncated)"
+    return compact
 
 def format_status(status):
     status = str(status or "-")
@@ -445,7 +511,7 @@ for row in rows:
         print_kv("log", row.get("log"))
     err = normalize_error(row.get("last_error") or "")
     if err:
-        print_kv("last_error", err[:220])
+        print_kv("last_error", ctext(YELLOW + BOLD, err[:220]))
 PY
 }
 
