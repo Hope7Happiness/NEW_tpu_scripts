@@ -665,6 +665,70 @@ zsubmit(){
         -- "${extra_args[@]}"
 }
 
+zsub(){
+    local run_id=""
+    local force=0
+    local extra_args=()
+    local missing=()
+    local command=()
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -f|--force)
+                force=1
+                shift
+                ;;
+            -p|--priority|--priority=*)
+                zhh_error "wxb sub preserves the previous priority; use wxb change before or after replacing."
+                return 1
+                ;;
+            --)
+                shift
+                while [ $# -gt 0 ]; do
+                    extra_args+=("$1")
+                    shift
+                done
+                ;;
+            *)
+                if [ -z "$run_id" ]; then
+                    run_id="$1"
+                else
+                    extra_args+=("$1")
+                fi
+                shift
+                ;;
+        esac
+    done
+
+    if [ -z "$run_id" ]; then
+        zhh_error "Usage: wxb sub [--force] <run_id> [main.py args...]"
+        return 1
+    fi
+
+    export WHO="${WHO:-$WECODE_USER}"
+    [ -n "$PROJECT" ] || missing+=("PROJECT")
+    [ -n "$WANDB_API_KEY" ] || missing+=("WANDB_API_KEY")
+    [ -n "$TPU_TYPES" ] || missing+=("TPU_TYPES")
+    [ -n "$VM_NAME" ] || missing+=("VM_NAME")
+    [ -n "$WHO" ] || missing+=("WHO")
+    if [ ${#missing[@]} -ne 0 ]; then
+        zhh_error "Missing required environment variables: ${missing[*]}"
+        zhh_warn "Set them in .ka or your shell and submit again."
+        return 1
+    fi
+
+    stage || return 1
+    command=(python3 "$ZHH_SCRIPT_ROOT/tpu_center/cli.py" submit-replace-staged \
+        --run-id "$run_id" \
+        --stage-dir "$STAGE_DIR" \
+        --cwd "$PWD")
+    if [ "$force" -eq 1 ]; then
+        command+=(--force)
+    fi
+    command+=(-- "${extra_args[@]}")
+    "${command[@]}"
+}
+
 zcenter_worker(){
     local run_id="$1"
     local stage_dir="$2"

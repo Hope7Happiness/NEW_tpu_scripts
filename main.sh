@@ -16,13 +16,25 @@ trap 'zhh_cleanup_ui; exit 130' INT TERM
 # .ka has to be sourced in each TMUX window
 # source .ka
 no_need_check=$(
-    [[ "$1" == "s" || "$1" == "wall" || ("$1" == "w" && "$2" == "all") || "$1" == "dall" || ("$1" == "d" && "$2" == "all") || ("$1" == "c") || ("$1" == "kill") || ("$1" == "submit") || ("$1" == "change") || ("$1" == "delete") || ("$1" == "trust") || ("$1" == "table") || ("$1" == "center") || ("$1" == "center-worker") || ("$1" == "center-probe") || ("$1" == "apply") || ("$1" == "apply-worker") || ("$1" == "apply-what") || ("$1" == "apply-del") || ("$1" =~ ^h) ]] \
+    [[ "$1" == "s" || "$1" == "wall" || ("$1" == "w" && "$2" == "all") || "$1" == "dall" || ("$1" == "d" && "$2" == "all") || ("$1" == "c") || ("$1" == "kill") || ("$1" == "submit") || ("$1" == "sub") || ("$1" == "change") || ("$1" == "delete") || ("$1" == "trust") || ("$1" == "table") || ("$1" == "center") || ("$1" == "center-worker") || ("$1" == "center-probe") || ("$1" == "apply") || ("$1" == "apply-worker") || ("$1" == "apply-what") || ("$1" == "apply-del") || ("$1" =~ ^h) ]] \
     && echo true || echo false
 )
 need_concrete_card=$(
     [[ "$1" == "k" || "$1" == "q" || "$1" == "qq" || "$1" == "qrr" ]] \
     && echo true || echo false
 )
+
+if [ -n "${1:-}" ] && [[ "$1" != -* ]]; then
+    case "$1" in
+        rr|k|kill|submit|sub|change|delete|trust|table|center|center-worker|center-probe|apply|apply-worker|apply-what|apply-del|q|qq|qrr|s|w|wall|d|dall|c|g|l|mm|h*)
+            ;;
+        *)
+            echo "Error: unknown wxb command: $1" >&2
+            echo "Use \`wxb h\` for help. To pass training args, start with an option like \`--config.foo=bar\`." >&2
+            exit 1
+            ;;
+    esac
+fi
 
 if $need_concrete_card; then
     if [[ "$VM_NAME" == *auto* ]]; then
@@ -42,6 +54,8 @@ if $no_need_check || check_config_sanity; then
         zkill_explicit "$2" "$3"
     elif [ "$1" = "submit" ]; then
         zsubmit "${@:2}"
+    elif [ "$1" = "sub" ]; then
+        zsub "${@:2}"
     elif [ "$1" = "change" ]; then
         python3 "$ZHH_SCRIPT_ROOT/tpu_center/cli.py" change "$2"
     elif [ "$1" = "delete" ]; then

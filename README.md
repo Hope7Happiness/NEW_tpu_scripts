@@ -157,12 +157,15 @@ TODO List:
 
 ## Usage
 
+Examples below use `zhh`; if your shell alias is `wxb`, use `wxb` instead.
+
 ### Centralized TPU Center MVP
 
 The centralized path is intentionally separate from the legacy decentralized `zhh` workflow.
 
 Current MVP behavior:
 - `zhh submit` stages the current workspace and writes a durable request into `/kmh-nfs-ssd-us-mount/staging/.tpu_center/inbox`.
+- `zhh sub <run_id>` stages the current workspace, replaces a previous run id, and preserves that run's priority. It refuses to replace `RUNNING` or `APPLYING` runs unless `--force` is passed.
 - `zhh center start` ingests inbox requests, discovers candidate TPUs from `itou`, and starts matching runs in detached tmux workers.
 - `zhh center s` shows centralized runs.
 - `zhh center cancel <run_id>` cancels a run and kills its assigned TPU by default.
@@ -196,6 +199,18 @@ Pass extra training args through to the future worker:
 
 ```bash
 zhh submit --priority 100 -- --config.foo=bar
+```
+
+Replace a previous run id with the current workspace while preserving its priority:
+
+```bash
+zhh sub <run_id> -- --config.foo=bar
+```
+
+By default, `zhh sub` refuses to replace `RUNNING` or `APPLYING` runs. To explicitly cancel/kill the active run and replace it:
+
+```bash
+zhh sub --force <run_id>
 ```
 
 Run the center loop:

@@ -366,26 +366,27 @@ def env_snapshot() -> tuple[dict[str, str], dict[str, str]]:
     return metadata, secrets
 
 
-def submit(args: argparse.Namespace) -> int:
-    ensure_layout()
-    stage_dir = Path(args.stage_dir).expanduser().resolve()
+def normalize_extra_args(extra_args: list[str] | None) -> list[str]:
+    normalized = list(extra_args or [])
+    if normalized and normalized[0] == "--":
+        normalized = normalized[1:]
+    return normalized
+
+
+def build_submit_request(stage_dir_text: str, cwd: str, priority: int, extra_args: list[str], run_id: str | None = None) -> tuple[dict[str, Any], Path]:
+    stage_dir = Path(stage_dir_text).expanduser().resolve()
     if not stage_dir.exists() or not stage_dir.is_dir():
-        print(f"stage dir not found: {stage_dir}", file=sys.stderr)
-        return 1
-    priority = int(args.priority)
-    extra_args = list(args.extra_args or [])
-    if extra_args and extra_args[0] == "--":
-        extra_args = extra_args[1:]
+        raise ValueError(f"stage dir not found: {stage_dir}")
 
     metadata_env, secret_env = env_snapshot()
-    rid = run_id_from_stage_dir(str(stage_dir))
+    rid = run_id or run_id_from_stage_dir(str(stage_dir))
     req = request_id()
     request = {
         "schema_version": 1,
         "request_id": req,
         "run_id": rid,
         "stage_dir": str(stage_dir),
-        "cwd": str(Path(args.cwd).expanduser().resolve()) if args.cwd else "",
+        "cwd": str(Path(cwd).expanduser().resolve()) if cwd else "",
         "priority": priority,
         "submitted_at": now_ts(),
         "description": parse_wandb_notes(stage_dir),
@@ -398,14 +399,112 @@ def submit(args: argparse.Namespace) -> int:
         "secret_env": secret_env,
         "extra_args": extra_args,
     }
-    path = CENTER_ROOT / "inbox" / f"{req}.json"
+    return request, stage_dir
+
+
+def write_submit_request(request: dict[str, Any]) -> Path:
+    path = CENTER_ROOT / "inbox" / f"{request['request_id']}.json"
     atomic_write_json(path, request, mode=0o600)
-    print(f"Submitted run {ctext(BOLD, rid)}")
+    return path
+
+
+def print_submit_request(action: str, request: dict[str, Any], stage_dir: Path, path: Path) -> None:
+    print(f"{action} {ctext(BOLD, request['run_id'])}")
     print_kv("description", ctext(BOLD, request["description"] or "-"))
     print_kv("tpu", format_tpu_text(request["requirements"]))
     print_kv("stage_dir", stage_dir)
-    print_kv("priority", priority)
+    print_kv("priority", request["priority"])
     print_kv("inbox", path)
+
+
+def submit(args: argparse.Namespace) -> int:
+    ensure_layout()
+    try:
+        request, stage_dir = build_submit_request(
+            args.stage_dir,
+            args.cwd,
+            int(args.priority),
+            normalize_extra_args(args.extra_args),
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    path = write_submit_request(request)
+    print_submit_request("Submitted run", request, stage_dir, path)
+    return 0
+
+
+def submit_replace(args: argparse.Namespace) -> int:
+    ensure_layout()
+    rid, run_path = resolve_run(args.run_id, quiet=True)
+    request_path: Path | None = None
+    previous_status = "PENDING"
+    priority = 0
+
+    if rid and run_path:
+        previous = read_json(run_path)
+        previous_status = str(previous.get("status") or "")
+        try:
+            priority = int(previous.get("priority", 0) or 0)
+        except (TypeError, ValueError):
+            priority = 0
+        if previous_status in ("RUNNING", "APPLYING") and not args.force:
+            print(
+                f"refusing to replace active run {rid} ({previous_status}); use `wxb sub --force {rid}` to cancel and replace it",
+                file=sys.stderr,
+            )
+            return 1
+    else:
+        pending_rid, pending_path = resolve_pending_request(args.run_id)
+        if not pending_rid or not pending_path:
+            print(f"run not found: {args.run_id}", file=sys.stderr)
+            return 1
+        rid = pending_rid
+        request_path = pending_path
+        try:
+            priority = int(read_json(pending_path).get("priority", 0) or 0)
+        except (TypeError, ValueError):
+            priority = 0
+
+    try:
+        request, stage_dir = build_submit_request(
+            args.stage_dir,
+            args.cwd,
+            priority,
+            normalize_extra_args(args.extra_args),
+            run_id=rid,
+        )
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    request["replaces"] = {
+        "run_id": rid,
+        "previous_status": previous_status or "-",
+        "replaced_at": now_ts(),
+    }
+    staged_request_path = CENTER_ROOT / "processing" / f"replace_{request['request_id']}.json"
+    final_request_path = CENTER_ROOT / "inbox" / f"{request['request_id']}.json"
+    atomic_write_json(staged_request_path, request, mode=0o600)
+
+    try:
+        if run_path:
+            ok, deleted_status, _, _ = delete_run_path(rid, run_path, verbose=False)
+            if not ok:
+                staged_request_path.unlink(missing_ok=True)
+                return 1
+            previous_status = deleted_status or previous_status
+            delete_pending_requests_for_run_id(rid)
+        elif request_path:
+            request_path.unlink(missing_ok=True)
+        staged_request_path.replace(final_request_path)
+    except Exception as exc:
+        staged_request_path.unlink(missing_ok=True)
+        print(f"failed to replace run {rid}: {exc}", file=sys.stderr)
+        return 1
+
+    print_submit_request("Re-submitted run", request, stage_dir, final_request_path)
+    print_kv("previous", previous_status or "-")
     return 0
 
 
@@ -1405,6 +1504,54 @@ def cleanup_deleted_run_logs(run: dict[str, Any], run_dir: Path) -> int:
     return removed
 
 
+def delete_pending_requests_for_run_id(run_id: str) -> int:
+    removed = 0
+    for path in (CENTER_ROOT / "inbox").glob("*.json"):
+        try:
+            if str(read_json(path).get("run_id") or "") != run_id:
+                continue
+            path.unlink(missing_ok=True)
+            removed += 1
+        except Exception:
+            continue
+    return removed
+
+
+def delete_run_path(rid: str, run_path: Path, verbose: bool = True) -> tuple[bool, str, int, Path | None]:
+    run_dir = run_path.parent
+    run = read_json(run_path)
+    status = str(run.get("status") or "")
+    assigned = run.get("assigned_tpu") or {}
+    if status == "FINISHED":
+        if isinstance(assigned, dict) and assigned.get("vm_name"):
+            release_lease(str(assigned["vm_name"]))
+    else:
+        ok, rid, run_path = cancel_run(rid, no_kill=False, verbose=False)
+        if not ok:
+            print(f"cancel failed; keeping run {rid}", file=sys.stderr)
+            return False, status, 0, run_dir
+        if run_path is None:
+            return False, status, 0, None
+        run_dir = run_path.parent
+        run = read_json(run_path)
+
+    removed_logs = cleanup_deleted_run_logs(run, run_dir)
+    try:
+        shutil.rmtree(run_dir)
+    except PermissionError:
+        command = f"rm -rf {shlex.quote(str(run_dir))}"
+        proc = run_shell(sudo_root_shell_command(command), timeout=30)
+        if proc.returncode != 0:
+            print((proc.stderr or proc.stdout or f"failed to remove {run_dir}").strip(), file=sys.stderr)
+            return False, status, removed_logs, run_dir
+    if verbose:
+        print(f"Deleted run {ctext(BOLD, rid)}")
+        print_kv("previous", status or "-")
+        print_kv("cleaned_logs", removed_logs)
+        print_kv("removed", run_dir)
+    return True, status, removed_logs, run_dir
+
+
 def delete(args: argparse.Namespace) -> int:
     rid, run_path = resolve_run(args.run_id, quiet=True)
     if not rid or not run_path:
@@ -1417,36 +1564,9 @@ def delete(args: argparse.Namespace) -> int:
         print(f"run not found: {args.run_id}", file=sys.stderr)
         return 1
 
-    run_dir = run_path.parent
-    run = read_json(run_path)
-    status = str(run.get("status") or "")
-    assigned = run.get("assigned_tpu") or {}
-    if status == "FINISHED":
-        if isinstance(assigned, dict) and assigned.get("vm_name"):
-            release_lease(str(assigned["vm_name"]))
-    else:
-        ok, rid, run_path = cancel_run(rid, no_kill=False, verbose=False)
-        if not ok:
-            print(f"cancel failed; keeping run {rid}", file=sys.stderr)
-            return 1
-        if run_path is None:
-            return 1
-        run_dir = run_path.parent
-        run = read_json(run_path)
-
-    removed_logs = cleanup_deleted_run_logs(run, run_dir)
-    try:
-        shutil.rmtree(run_dir)
-    except PermissionError:
-        command = f"rm -rf {shlex.quote(str(run_dir))}"
-        proc = run_shell(sudo_root_shell_command(command), timeout=30)
-        if proc.returncode != 0:
-            print((proc.stderr or proc.stdout or f"failed to remove {run_dir}").strip(), file=sys.stderr)
-            return 1
-    print(f"Deleted run {ctext(BOLD, rid)}")
-    print_kv("previous", status or "-")
-    print_kv("cleaned_logs", removed_logs)
-    print_kv("removed", run_dir)
+    ok, _, _, _ = delete_run_path(rid, run_path, verbose=True)
+    if not ok:
+        return 1
     return 0
 
 
@@ -1740,6 +1860,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_submit.add_argument("--cwd", default="")
     p_submit.add_argument("extra_args", nargs=argparse.REMAINDER)
     p_submit.set_defaults(func=submit)
+
+    p_submit_replace = sub.add_parser("submit-replace-staged", help="replace an existing run id with an already staged directory")
+    p_submit_replace.add_argument("--run-id", required=True)
+    p_submit_replace.add_argument("--stage-dir", required=True)
+    p_submit_replace.add_argument("--cwd", default="")
+    p_submit_replace.add_argument("--force", action="store_true")
+    p_submit_replace.add_argument("extra_args", nargs=argparse.REMAINDER)
+    p_submit_replace.set_defaults(func=submit_replace)
 
     p_ingest = sub.add_parser("ingest-once", help="ingest inbox requests once")
     p_ingest.set_defaults(func=lambda args: 0 if ingest_once(verbose=True) >= 0 else 1)

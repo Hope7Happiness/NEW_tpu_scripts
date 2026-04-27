@@ -176,7 +176,14 @@ zapply_wait_ready(){
             fi
             status=""
         else
-            status="$output"
+            status=""
+            while IFS= read -r line; do
+                case "$line" in
+                    READY|CREATING|PREEMPTED|DELETED|STOPPING|STOPPED)
+                        status="$line"
+                        ;;
+                esac
+            done <<< "$output"
         fi
         if [ "$status" = "READY" ]; then
             return 0
@@ -498,20 +505,26 @@ for row in rows:
     tpu_type = str(row.get("tpu_type") or "-")
     zone = str(row.get("zone") or "-")
     current_vm = str(row.get("current_vm") or "-")
-    print()
-    print(f"{ctext(BOLD, session)} · {ctext(BOLD, ctext(CYAN, tpu_type))} @ {ctext(BOLD, ctext(CYAN, zone))}")
-    print_kv("status", format_status(row.get("status")))
-    print_kv("current_vm", ctext(CYAN, current_vm))
-    print_kv("attempts", row.get("attempt_count", 0))
-    print_kv("successes", row.get("success_count", 0))
-    print_kv("updated", f"{fmt_age(row.get('updated_at'))} ago")
-    if row.get("last_success_at"):
-        print_kv("last_success", f"{fmt_age(row.get('last_success_at'))} ago")
-    if row.get("log"):
-        print_kv("log", row.get("log"))
+    status = format_status(row.get("status"))
     err = normalize_error(row.get("last_error") or "")
+    attempts = row.get("attempt_count", 0)
+    successes = row.get("success_count", 0)
+    log_path = str(row.get("log") or "")
+    print()
+    header = f"{ctext(BOLD, ctext(CYAN, tpu_type))} @ {ctext(BOLD, ctext(CYAN, zone))}"
+    if current_vm and current_vm != "-":
+        header += f" · {ctext(CYAN, current_vm)}"
+    print(header)
     if err:
-        print_kv("last_error", ctext(YELLOW + BOLD, err[:220]))
+        print(f"{status} {DIM}->{RESET} {ctext(YELLOW, err[:220])}")
+    else:
+        print(f"{status}")
+    print(f"{ctext(DIM, 'attempts:')} {successes}/{attempts}")
+    print(f"{fmt_age(row.get('updated_at'))} ago")
+    if row.get("last_success_at"):
+        print(f"last success: {fmt_age(row.get('last_success_at'))} ago")
+    if log_path:
+        print(f"{ctext(DIM, log_path)}")
 PY
 }
 
