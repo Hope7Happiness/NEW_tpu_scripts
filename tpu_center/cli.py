@@ -19,7 +19,7 @@ from typing import Any
 
 
 CENTER_ROOT = Path(os.environ.get("ZHH_CENTER_ROOT", "/kmh-nfs-ssd-us-mount/staging/.tpu_center"))
-RUN_STATUSES = ("QUEUED", "RESUME_PENDING", "APPLYING", "RUNNING", "STALE", "INFRA_RETRY", "FAILED", "FINISHED", "CANCELLED")
+RUN_STATUSES = ("QUEUED", "RESUME_PENDING", "APPLYING", "RUNNING", "INFRA_RETRY", "FAILED", "FINISHED", "CANCELLED")
 QUEUE_STATUSES = ("QUEUED", "INFRA_RETRY", "RESUME_PENDING")
 SCRIPT_ROOT = Path(os.environ.get("ZHH_SCRIPT_ROOT", Path(__file__).resolve().parents[1]))
 LEGACY_LOCK_ROOT = Path("/kmh-nfs-ssd-us-mount/code/qiao/tpu_lock")
@@ -135,14 +135,21 @@ def probe_reason_is_retryable_setup(reason: str) -> bool:
     return "Have not mount disk" in reason or "Cannot find torch/jax" in reason
 
 
-def requirement_class(vm_name: str) -> str:
+def requirement_classes(vm_name: str) -> tuple[str, ...]:
+    if vm_name == "autov56":
+        return ("v5p", "v6e")
     if vm_name in ("auto", "autov6", "autov6e"):
-        return "v6e"
+        return ("v6e",)
     if "autov5" in vm_name or "autov5p" in vm_name:
-        return "v5p"
+        return ("v5p",)
     if "autov4" in vm_name:
-        return "v4"
-    return ""
+        return ("v4",)
+    return ()
+
+
+def requirement_class(vm_name: str) -> str:
+    classes = requirement_classes(vm_name)
+    return classes[0] if classes else ""
 
 
 def parse_alias_from_bashrc(alias_name: str, bashrc: Path) -> str:
@@ -704,8 +711,8 @@ def run_matches_tpu(run: dict[str, Any], tpu: dict[str, str]) -> bool:
         return False
     if vm_req and "auto" not in vm_req:
         return tpu["vm_name"] == vm_req
-    cls = requirement_class(vm_req or "auto")
-    if cls and tpu.get("class") != cls:
+    classes = requirement_classes(vm_req or "auto")
+    if classes and tpu.get("class") not in classes:
         return False
     sizes = [s.strip() for s in type_req.split(",") if s.strip()]
     if sizes and tpu.get("size") not in sizes:
@@ -911,6 +918,9 @@ def load_runs() -> list[dict[str, Any]]:
     for path in sorted((CENTER_ROOT / "runs").glob("*/run.json")):
         try:
             run = read_json(path)
+            if str(run.get("status") or "") == "STALE":
+                requeue_stale_run(run, path, stale_reason_for_run(run, int(time.time())))
+                run = read_json(path)
             if update_observations(run):
                 atomic_write_json(path, run)
             runs.append(run)
@@ -1074,13 +1084,58 @@ def tmux_session_exists(session: str) -> bool:
     return proc.returncode == 0
 
 
+def kill_tmux_session(session: str) -> None:
+    if not session:
+        return
+    subprocess.run(["tmux", "kill-session", "-t", session], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def stale_reason_for_run(run: dict[str, Any], now: int) -> str:
+    output_log = Path(str(run["output_log"])) if run.get("output_log") else None
+    if output_log and output_log.exists():
+        try:
+            mtime = int(output_log.stat().st_mtime)
+            return f"output log stale for {(now - mtime) // 60} min"
+        except OSError:
+            pass
+    return str(run.get("last_error") or "run marked STALE; requeued for resume")
+
+
+def requeue_stale_run(run: dict[str, Any], run_path: Path, reason: str) -> None:
+    run_dir = run_path.parent
+    worker = run.get("worker") or {}
+    session = worker.get("tmux_session") if isinstance(worker, dict) else ""
+    assigned = run.get("assigned_tpu") or {}
+    vm_name = assigned.get("vm_name") if isinstance(assigned, dict) else ""
+    zone = assigned.get("zone") if isinstance(assigned, dict) else ""
+    kill_tmux_session(str(session or ""))
+    if vm_name:
+        release_lease(str(vm_name))
+        if zone:
+            mark_tpu_bad(str(vm_name), str(zone), reason)
+    updated = now_ts()
+    run["status"] = "RESUME_PENDING"
+    run["last_error"] = reason
+    run["assigned_tpu"] = None
+    run["worker"] = None
+    run["worker_missing_count"] = 0
+    run["next_retry_at_epoch"] = None
+    run["next_retry_at"] = None
+    run["current_stage"] = "Waiting to resume after stale output"
+    run["updated_at"] = updated
+    run["current_stage_at"] = updated
+    run["current_stage_epoch"] = int(time.time())
+    atomic_write_json(run_path, run)
+    append_event(run_dir, "stale_requeued", reason=reason, tmux_session=str(session or ""), vm_name=str(vm_name or ""), zone=str(zone or ""))
+
+
 def reconcile_active_runs() -> int:
     changed = 0
     stale_seconds = int(os.environ.get("ZHH_CENTER_STALE_SECONDS", str(30 * 60)))
     now = int(time.time())
     for run in load_runs():
         status = str(run.get("status") or "")
-        if status not in ("APPLYING", "RUNNING", "STALE"):
+        if status not in ("APPLYING", "RUNNING"):
             continue
         run_dir = CENTER_ROOT / "runs" / run["run_id"]
         run_path = run_dir / "run.json"
@@ -1132,17 +1187,8 @@ def reconcile_active_runs() -> int:
         output_log = Path(run["output_log"]) if run.get("output_log") else None
         if output_log and output_log.exists():
             mtime = int(output_log.stat().st_mtime)
-            if status == "STALE" and now - mtime < stale_seconds:
-                run["status"] = "RUNNING"
-                run["last_error"] = None
-                atomic_write_json(run_path, run)
-                append_event(run_dir, "stale_recovered")
-                changed += 1
-            elif status == "RUNNING" and now - mtime >= stale_seconds:
-                run["status"] = "STALE"
-                run["last_error"] = f"output log stale for {(now - mtime) // 60} min"
-                atomic_write_json(run_path, run)
-                append_event(run_dir, "marked_stale", last_log_mtime=mtime)
+            if status == "RUNNING" and now - mtime >= stale_seconds:
+                requeue_stale_run(run, run_path, f"output log stale for {(now - mtime) // 60} min")
                 changed += 1
     return changed
 
@@ -1432,13 +1478,13 @@ def fmt_until(ts: int | None) -> str:
 
 def format_status(status: object) -> str:
     text = str(status or "-")
-    if text in ("FINISHED",):
+    if text in ("FINISHED", "RUNNING"):
         return ctext(GREEN + BOLD, text)
     if text in ("FAILED", "CANCELLED"):
         return ctext(RED + BOLD, text)
-    if text in ("INFRA_RETRY", "STALE"):
+    if text in ("INFRA_RETRY",):
         return ctext(YELLOW + BOLD, text)
-    if text in ("APPLYING", "QUEUED", "RESUME_PENDING", "RUNNING"):
+    if text in ("APPLYING", "QUEUED", "RESUME_PENDING"):
         return ctext(BLUE + BOLD, text)
     return text
 
@@ -1495,8 +1541,8 @@ def trust(args: argparse.Namespace) -> int:
 def status(_: argparse.Namespace) -> int:
     prune_probe_files()
     runs = load_runs()
-    status_order = {name: i for i, name in enumerate(("RUNNING", "APPLYING", "STALE", "INFRA_RETRY", "RESUME_PENDING", "QUEUED", "FAILED", "FINISHED", "CANCELLED"))}
-    active_statuses = {"RUNNING", "APPLYING", "STALE"}
+    status_order = {name: i for i, name in enumerate(("RUNNING", "APPLYING", "INFRA_RETRY", "RESUME_PENDING", "QUEUED", "FAILED", "FINISHED", "CANCELLED"))}
+    active_statuses = {"RUNNING", "APPLYING"}
     runs.sort(key=lambda r: (
         -int(r.get("priority", 0)),
         0 if str(r.get("status") or "") in active_statuses else 1,

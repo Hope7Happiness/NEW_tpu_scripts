@@ -1,6 +1,7 @@
 source $ZHH_SCRIPT_ROOT/scripts/apply.sh
 source $ZHH_SCRIPT_ROOT/scripts/sscript.sh
 source $ZHH_SCRIPT_ROOT/scripts/auto.sh
+source $ZHH_SCRIPT_ROOT/scripts/apply_pool.sh
 
 zone_to_gs_name(){
     if [ -z "$1" ]; then

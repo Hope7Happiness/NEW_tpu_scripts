@@ -169,6 +169,7 @@ Current MVP behavior:
 - This first slice uses existing TPUs from `itou`; it does **not** create new TPU VMs yet.
 - Center workers never run TPU apply/auto-select; they only prepare the assigned TPU and run the job.
 - The center loop stays fast: it reads `itou`/inbox in the main process and runs slow TPU environment probes in background subprocesses. Bad probe results suppress that TPU for 10 minutes.
+- Stale running jobs are killed, their current TPU is cooled down, and the run is requeued as `RESUME_PENDING`.
 - Probe files are garbage-collected automatically; by default probe history is kept for 1 hour and capped at 200 files.
 - The center can run as your current user; workers default to running as `zak` via `sudo`.
 - The sudo password file is `.center_sudo_password` in this repo root. It is gitignored and should be `0600`.
@@ -258,11 +259,19 @@ Delete a submitted run from the center list. Finished runs are removed directly;
 zhh delete <run_id>
 ```
 
+Prototype TPU apply loops. This starts background tmux sessions that repeatedly request the requested TPU type in one zone; when a TPU is created, the worker installs the runtime, starts a matrix-multiply keepalive, sleeps for 30 minutes, and then keeps requesting more:
+
+```bash
+zhh apply v6e-64 us-east5-b 8
+zhh apply-what
+zhh apply-del v6e-64 us-east5-b 3
+```
+
 ### 📄 Requirements
 
 **Environment vars**: You must have the following environment variables set:
 - `VM_NAME`: the name of your TPU VM
-    - `autovx` will automatically select a free TPU VM of type `x`. In this case `ZONE` can be left unset. `autov5` will default to `v5p` instead of `v5e`. `auto` is equivalent to `autov6`.
+    - `autovx` will automatically select a free TPU VM of type `x`. In this case `ZONE` can be left unset. `autov5` will default to `v5p` instead of `v5e`. `auto` is equivalent to `autov6`. `autov56` can select either `v5p` or `v6e`.
 - `ZONE`: the zone of your TPU VM
     - In `auto` mode, if your code can't support all tpus in the given type, use a comma-separated list to specify the zones to select from, e.g., `us-central1-b,us-east5-b`.
 - `WANDB_API_KEY`: your wandb api key

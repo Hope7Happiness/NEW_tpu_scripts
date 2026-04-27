@@ -16,7 +16,7 @@ trap 'zhh_cleanup_ui; exit 130' INT TERM
 # .ka has to be sourced in each TMUX window
 # source .ka
 no_need_check=$(
-    [[ "$1" == "s" || "$1" == "wall" || ("$1" == "w" && "$2" == "all") || "$1" == "dall" || ("$1" == "d" && "$2" == "all") || ("$1" == "c") || ("$1" == "kill") || ("$1" == "submit") || ("$1" == "change") || ("$1" == "delete") || ("$1" == "trust") || ("$1" == "table") || ("$1" == "center") || ("$1" == "center-worker") || ("$1" == "center-probe") || ("$1" =~ ^h) ]] \
+    [[ "$1" == "s" || "$1" == "wall" || ("$1" == "w" && "$2" == "all") || "$1" == "dall" || ("$1" == "d" && "$2" == "all") || ("$1" == "c") || ("$1" == "kill") || ("$1" == "submit") || ("$1" == "change") || ("$1" == "delete") || ("$1" == "trust") || ("$1" == "table") || ("$1" == "center") || ("$1" == "center-worker") || ("$1" == "center-probe") || ("$1" == "apply") || ("$1" == "apply-worker") || ("$1" == "apply-what") || ("$1" == "apply-del") || ("$1" =~ ^h) ]] \
     && echo true || echo false
 )
 need_concrete_card=$(
@@ -25,7 +25,7 @@ need_concrete_card=$(
 )
 
 if $need_concrete_card; then
-    if [[ "$VM_NAME" == "*auto*" ]]; then
+    if [[ "$VM_NAME" == *auto* ]]; then
         echo "Error: command \`zhh $1\` requires a concrete VM_NAME (not 'auto'). Please set VM_NAME to a specific TPU name." >&2
         exit 1
     fi
@@ -56,6 +56,14 @@ if $no_need_check || check_config_sanity; then
         zcenter_worker "${@:2}"
     elif [ "$1" = "center-probe" ]; then
         zcenter_probe "${@:2}"
+    elif [ "$1" = "apply" ]; then
+        zapply_start "${@:2}"
+    elif [ "$1" = "apply-worker" ]; then
+        zapply_worker "${@:2}"
+    elif [ "$1" = "apply-what" ]; then
+        zapply_what
+    elif [ "$1" = "apply-del" ]; then
+        zapply_del "${@:2}"
     elif [ "$1" = "q" ]; then
         zqueue "${@:2}"
     elif [ "$1" = "qq" ]; then

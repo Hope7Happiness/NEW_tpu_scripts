@@ -7,6 +7,27 @@ POOL_V6=(us-east5-b us-central1-b asia-northeast1-b)
 POOL_V5=(us-central1-a us-east5-a)
 POOL_V4=(us-central2-b)
 
+auto_class_for_zone(){
+    local zone="$1"
+    shift
+    local cls=""
+    for cls in "$@"; do
+        if [ "$cls" = "v5p" ] && [[ " ${POOL_V5[*]} " =~ " ${zone} " ]]; then
+            echo "v5p"
+            return 0
+        fi
+        if [ "$cls" = "v6e" ] && [[ " ${POOL_V6[*]} " =~ " ${zone} " ]]; then
+            echo "v6e"
+            return 0
+        fi
+        if [ "$cls" = "v4" ] && [[ " ${POOL_V4[*]} " =~ " ${zone} " ]]; then
+            echo "v4"
+            return 0
+        fi
+    done
+    echo "${1:-}"
+}
+
 trap_send_key(){
     CMD="zhh_cleanup_ui; echo -e \"\n\033[32m[INFO] Exiting. Remember to run this line: $1 \033[0m\" && [ -z \"$TMUX\" ] || tmux send-keys -t \"$TMUX_PANE\" \"$1\" "
     trap "$CMD" EXIT
@@ -16,17 +37,21 @@ TOU_RESULT_PATH="/kmh-nfs-ssd-us-mount/code/siri/tou_result.txt"
 
 auto_select(){
     # if 'auto' in VM_NAME
-    if [[ $VM_NAME == "autov6" || $VM_NAME == "autov6e" || $VM_NAME == "auto" ]]; then
+    local tpu_classes=()
+    if [[ $VM_NAME == "autov56" ]]; then
+        pool=("${POOL_V5[@]}" "${POOL_V6[@]}")
+        tpu_classes=(v5p v6e)
+    elif [[ $VM_NAME == "autov6" || $VM_NAME == "autov6e" || $VM_NAME == "auto" ]]; then
         pool=("${POOL_V6[@]}")
-        tpu_cls=v6e
+        tpu_classes=(v6e)
     elif [[ "$VM_NAME" =~ "autov5" || "$VM_NAME" =~ "autov5p" ]]; then
         pool=("${POOL_V5[@]}")
-        tpu_cls=v5p
+        tpu_classes=(v5p)
     elif [[ "$VM_NAME" =~ "autov4" ]]; then
         pool=("${POOL_V4[@]}")
-        tpu_cls=v4
+        tpu_classes=(v4)
     elif [[ "$VM_NAME" =~ "auto" ]]; then
-        echo -e "\033[31m[WARNING] Unsupported auto selection argument: $VM_NAME. Current support: autov6, auto\033[0m" >&2
+        echo -e "\033[31m[WARNING] Unsupported auto selection argument: $VM_NAME. Current support: autov56, autov6, auto\033[0m" >&2
         return 1
     else
         return 0
@@ -50,6 +75,7 @@ auto_select(){
     flock 200
 
     zhh_muted_info "Auto-selecting TPU from pool: ${pool[*]}"
+    zhh_muted_info "Allowed TPU classes: ${tpu_classes[*]}"
     found_tpu=false
     # infos=$(get_available_tpu_infos)
     # infos is empty
@@ -75,7 +101,14 @@ auto_select(){
     while read -r vm_name zone; do
 
         # ensure $tpu_cls in $vm_name
-        if [[ "$vm_name" != *"$tpu_cls"* ]]; then
+        matched_tpu_cls=""
+        for tpu_cls in "${tpu_classes[@]}"; do
+            if [[ "$vm_name" == *"$tpu_cls"* ]]; then
+                matched_tpu_cls="$tpu_cls"
+                break
+            fi
+        done
+        if [ -z "$matched_tpu_cls" ]; then
             continue
         fi
 
@@ -149,7 +182,7 @@ auto_select(){
             continue
         fi
 
-        zhh_success "Selected TPU VM $vm_name @ $zone (type $tpu_cls-$tpu_type)"
+        zhh_success "Selected TPU VM $vm_name @ $zone (type $matched_tpu_cls-$tpu_type)"
         export VM_NAME=$vm_name
         export ZONE=$zone
         found_tpu=true
@@ -208,6 +241,7 @@ auto_select(){
         export ZONE=${pool[0]}
         zhh_muted_info "Using zone: $ZONE"
     fi
+    tpu_cls=$(auto_class_for_zone "$ZONE" "${tpu_classes[@]}")
     # gonna apply for the smallest type in TPU_TYPES
     smallest_type=$(echo $TPU_TYPES | tr ',' '\n' | sort -n | head -n1)
     zhh_muted_info "Will request a new TPU VM of type $tpu_cls-$smallest_type in zone $ZONE"
