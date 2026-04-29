@@ -819,6 +819,16 @@ def run_matches_tpu(run: dict[str, Any], tpu: dict[str, str]) -> bool:
     return True
 
 
+def queue_ready_runs(runs: list[dict[str, Any]], now: int | None = None) -> list[dict[str, Any]]:
+    now = int(time.time()) if now is None else now
+    queue = [
+        r for r in runs
+        if r.get("status") in QUEUE_STATUSES and int(r.get("next_retry_at_epoch", 0) or 0) <= now
+    ]
+    queue.sort(key=lambda r: (-int(r.get("priority", 0)), str(r.get("submitted_at", "")), str(r.get("run_id", ""))))
+    return queue
+
+
 def probe_is_running(payload: dict[str, Any]) -> bool:
     pid = int(payload.get("pid", 0) or 0)
     if pid <= 0:
@@ -1153,14 +1163,22 @@ def launch_worker(run: dict[str, Any], tpu: dict[str, str]) -> bool:
         command, ";", "} 2>&1 | tee -a", shlex.quote(str(launch_log)),
     ])
     create_lease(run, tpu)
+    assigned_tpu = {"vm_name": tpu["vm_name"], "zone": tpu["zone"], "class": tpu.get("class", ""), "size": tpu.get("size", "")}
+    for key in ("source", "session"):
+        if tpu.get(key):
+            assigned_tpu[key] = tpu[key]
     run.update({
         "status": "APPLYING",
-        "assigned_tpu": {"vm_name": tpu["vm_name"], "zone": tpu["zone"], "class": tpu.get("class", ""), "size": tpu.get("size", "")},
+        "assigned_tpu": assigned_tpu,
         "worker": {"tmux_session": session, "started_at": now_ts(), "host": os.uname().nodename, "launch_log": str(launch_log)},
         "worker_launch_log": str(launch_log),
     })
     attempts = list(run.get("attempts") or [])
-    attempts.append({"ts": now_ts(), "vm_name": tpu["vm_name"], "zone": tpu["zone"], "event": "launch"})
+    attempt = {"ts": now_ts(), "vm_name": tpu["vm_name"], "zone": tpu["zone"], "event": "launch"}
+    for key in ("source", "session"):
+        if tpu.get(key):
+            attempt[key] = tpu[key]
+    attempts.append(attempt)
     run["attempts"] = attempts
     atomic_write_json(run_path, run)
     append_event(run_dir, "launch_worker", vm_name=tpu["vm_name"], zone=tpu["zone"], tmux_session=session)
@@ -1292,15 +1310,11 @@ def reconcile_active_runs() -> int:
     return changed
 
 
-def schedule_once(verbose: bool = False) -> int:
+def schedule_once_unlocked(verbose: bool = False) -> int:
     prune_probe_files()
     runs = load_runs()
     now = int(time.time())
-    queue = [
-        r for r in runs
-        if r.get("status") in QUEUE_STATUSES and int(r.get("next_retry_at_epoch", 0) or 0) <= now
-    ]
-    queue.sort(key=lambda r: (-int(r.get("priority", 0)), str(r.get("submitted_at", "")), str(r.get("run_id", ""))))
+    queue = queue_ready_runs(runs, now)
     candidates = [item for item in itou_inventory() if item.get("available") == "candidate"]
     if not queue:
         return 0
@@ -1322,6 +1336,50 @@ def schedule_once(verbose: bool = False) -> int:
         print_kv("top_run", f"{top.get('run_id', '-')} {format_tpu_text(top.get('requirements') if isinstance(top.get('requirements'), dict) else None)}")
         print_kv("top_probe", probe_summary_for_run(top))
     return scheduled
+
+
+def schedule_once(verbose: bool = False) -> int:
+    ensure_layout()
+    lock_path = CENTER_ROOT / "schedule.lock"
+    with lock_path.open("w", encoding="utf-8") as lock_file:
+        make_shared(lock_path, directory=False)
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        return schedule_once_unlocked(verbose=verbose)
+
+
+def apply_ready(args: argparse.Namespace) -> int:
+    ensure_layout()
+    tpu_class, tpu_size = parse_tpu_type(args.tpu_type or args.vm_name)
+    tpu = {
+        "vm_name": args.vm_name,
+        "zone": args.zone,
+        "class": tpu_class,
+        "size": tpu_size,
+        "source": "apply",
+        "session": args.session,
+    }
+    if not tpu["class"] or not tpu["size"]:
+        print(f"failed to parse TPU type from {args.tpu_type or args.vm_name}", file=sys.stderr)
+        return 1
+    lock_path = CENTER_ROOT / "schedule.lock"
+    with lock_path.open("w", encoding="utf-8") as lock_file:
+        make_shared(lock_path, directory=False)
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        if has_center_lease(args.vm_name):
+            print(f"apply shortcut skipped: {args.vm_name} already has center lease")
+            return 2
+        queue = queue_ready_runs(load_runs())
+        for run in queue:
+            if not run_matches_tpu(run, tpu):
+                continue
+            if launch_worker(run, tpu):
+                append_event(CENTER_ROOT / "runs" / run["run_id"], "apply_shortcut_assigned", vm_name=args.vm_name, zone=args.zone, session=args.session)
+                print(f"apply shortcut assigned {args.vm_name} @ {args.zone} to {run['run_id']}")
+                return 0
+            print(f"apply shortcut failed to launch worker for {run['run_id']}", file=sys.stderr)
+            return 1
+    print(f"apply shortcut found no matching queued run for {format_tpu_text(tpu)}")
+    return 2
 
 
 def worker_log_dir(args: argparse.Namespace) -> int:
@@ -1567,6 +1625,153 @@ def delete(args: argparse.Namespace) -> int:
     ok, _, _, _ = delete_run_path(rid, run_path, verbose=True)
     if not ok:
         return 1
+    return 0
+
+
+def remote_run_config_path(stage_dir: Path) -> Path:
+    candidates = [
+        stage_dir / "configs" / "remote_run_config.yml",
+        stage_dir / "configs" / "remote_run_configs.yml",
+    ]
+    for path in candidates:
+        if path.exists():
+            return path
+    raise ValueError(f"remote run config not found under {stage_dir / 'configs'}")
+
+
+def replace_training_num_steps(text: str, old_steps: int, new_steps: int) -> str:
+    lines = text.splitlines(keepends=True)
+    in_training = False
+    training_indent = 0
+    for idx, raw_line in enumerate(lines):
+        line_without_newline = raw_line.rstrip("\r\n")
+        code = line_without_newline.split("#", 1)[0].rstrip()
+        if not code.strip():
+            continue
+        indent = len(code) - len(code.lstrip(" "))
+        stripped = code.strip()
+        if not in_training:
+            if stripped == "training:":
+                in_training = True
+                training_indent = indent
+            continue
+        if indent <= training_indent:
+            break
+        match = re.match(r"^(\s*num_steps\s*:\s*)([-+]?\d+)([^\r\n]*)(\r?\n?)$", raw_line)
+        if not match:
+            continue
+        found_steps = int(match.group(2))
+        if found_steps != old_steps:
+            raise ValueError(f"parsed num_steps={old_steps}, but config text contains {found_steps}")
+        lines[idx] = f"{match.group(1)}{new_steps}{match.group(3)}{match.group(4)}"
+        return "".join(lines)
+    raise ValueError("training.num_steps not found in remote run config text")
+
+
+def bump_remote_num_steps(config_path: Path, extra_steps: int) -> tuple[int, int]:
+    text = config_path.read_text(encoding="utf-8")
+    try:
+        import yaml  # type: ignore
+    except Exception as exc:
+        raise ValueError(f"PyYAML is required to parse {config_path}: {exc}") from exc
+    try:
+        data = yaml.safe_load(text) or {}
+    except Exception as exc:
+        raise ValueError(f"failed to parse {config_path}: {exc}") from exc
+    if not isinstance(data, dict):
+        raise ValueError(f"remote run config must be a mapping: {config_path}")
+    if data.get("eval_only") is not False:
+        raise ValueError("continue expects eval_only: false")
+    training = data.get("training")
+    if not isinstance(training, dict):
+        raise ValueError("continue expects training config")
+    old_steps = training.get("num_steps")
+    if isinstance(old_steps, bool) or not isinstance(old_steps, int):
+        raise ValueError("continue expects integer training.num_steps")
+    new_steps = old_steps + extra_steps
+    mode = config_path.stat().st_mode & 0o777
+    atomic_write_text(config_path, replace_training_num_steps(text, old_steps, new_steps), mode=mode)
+    return old_steps, new_steps
+
+
+def continue_run(args: argparse.Namespace) -> int:
+    rid, run_path = resolve_run(args.run_id)
+    if not rid or not run_path:
+        return 1
+    try:
+        extra_steps = int(args.steps)
+    except (TypeError, ValueError):
+        print(f"steps must be a positive integer: {args.steps}", file=sys.stderr)
+        return 1
+    if extra_steps <= 0:
+        print(f"steps must be a positive integer: {args.steps}", file=sys.stderr)
+        return 1
+
+    run_dir = run_path.parent
+    run = read_json(run_path)
+    status = str(run.get("status") or "")
+    if status != "FINISHED":
+        print(f"continue expects a FINISHED run; {rid} is {status or '-'}", file=sys.stderr)
+        return 1
+    stage_dir = Path(str(run.get("stage_dir") or "")).expanduser()
+    if not stage_dir.exists() or not stage_dir.is_dir():
+        print(f"stage dir not found: {stage_dir}", file=sys.stderr)
+        return 1
+    try:
+        config_path = remote_run_config_path(stage_dir)
+        old_steps, new_steps = bump_remote_num_steps(config_path, extra_steps)
+    except ValueError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+    assigned = run.get("assigned_tpu") or {}
+    vm_name = assigned.get("vm_name") if isinstance(assigned, dict) else ""
+    if vm_name:
+        release_lease(str(vm_name))
+    worker = run.get("worker") or {}
+    session = worker.get("tmux_session") if isinstance(worker, dict) else ""
+    kill_tmux_session(str(session or ""))
+
+    updated = now_ts()
+    continuation = {
+        "ts": updated,
+        "by": getpass.getuser(),
+        "config": str(config_path),
+        "extra_steps": extra_steps,
+        "num_steps_before": old_steps,
+        "num_steps_after": new_steps,
+    }
+    existing_continuations = run.get("continuations")
+    continuations = list(existing_continuations) if isinstance(existing_continuations, list) else []
+    continuations.append(continuation)
+    run["continuations"] = continuations
+    run["status"] = "RESUME_PENDING"
+    run["last_error"] = None
+    run["assigned_tpu"] = None
+    run["worker"] = None
+    run["worker_missing_count"] = 0
+    run["next_retry_at_epoch"] = None
+    run["next_retry_at"] = None
+    run["trusted"] = False
+    run["trusted_at"] = None
+    run["trusted_by"] = None
+    run["trust_failed_count"] = 0
+    run["trust_failure_limit"] = trust_failure_limit()
+    run["trust_exhausted_at"] = None
+    run["trust_last_failure_at"] = None
+    run["trust_last_failure_reason"] = None
+    run["current_stage"] = f"Waiting to continue (+{extra_steps} steps; num_steps {old_steps}->{new_steps})"
+    run["current_stage_at"] = updated
+    run["current_stage_epoch"] = int(time.time())
+    run["updated_at"] = updated
+    atomic_write_json(run_path, run)
+    append_event(run_dir, "continued", **continuation)
+
+    print(f"Continuing run {ctext(BOLD, rid)}")
+    print_kv("status", format_status(run["status"]))
+    print_kv("num_steps", f"{old_steps} -> {new_steps} (+{extra_steps})")
+    print_kv("config", config_path)
+    print_kv("tpu", format_tpu_text(run.get("requirements") if isinstance(run.get("requirements"), dict) else None))
     return 0
 
 
@@ -1919,6 +2124,13 @@ def build_parser() -> argparse.ArgumentParser:
     p_probe.add_argument("--zone", required=True)
     p_probe.set_defaults(func=probe_worker)
 
+    p_apply_ready = sub.add_parser("apply-ready", help=argparse.SUPPRESS)
+    p_apply_ready.add_argument("--vm-name", required=True)
+    p_apply_ready.add_argument("--zone", required=True)
+    p_apply_ready.add_argument("--tpu-type", required=True)
+    p_apply_ready.add_argument("--session", default="")
+    p_apply_ready.set_defaults(func=apply_ready)
+
     p_cancel = sub.add_parser("cancel", help="cancel a run and kill its TPU if assigned")
     p_cancel.add_argument("run_id")
     p_cancel.add_argument("--no-kill", action="store_true")
@@ -1927,6 +2139,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_delete = sub.add_parser("delete", help="cancel if needed and remove a submitted run from center")
     p_delete.add_argument("run_id")
     p_delete.set_defaults(func=delete)
+
+    p_continue = sub.add_parser("continue", help="continue a FINISHED training run for more steps")
+    p_continue.add_argument("run_id")
+    p_continue.add_argument("steps")
+    p_continue.set_defaults(func=continue_run)
 
     p_trust = sub.add_parser("trust", help="trust a FAILED run and queue it for resume on another TPU")
     p_trust.add_argument("run_id")

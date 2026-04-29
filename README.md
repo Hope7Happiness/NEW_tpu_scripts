@@ -166,6 +166,7 @@ The centralized path is intentionally separate from the legacy decentralized `zh
 Current MVP behavior:
 - `zhh submit` stages the current workspace and writes a durable request into `/kmh-nfs-ssd-us-mount/staging/.tpu_center/inbox`.
 - `zhh sub <run_id>` stages the current workspace, replaces a previous run id, and preserves that run's priority. It refuses to replace `RUNNING` or `APPLYING` runs unless `--force` is passed.
+- `zhh continue <run_id> <steps>` extends a `FINISHED` training run by increasing `training.num_steps` in its staged remote run config and requeueing it for resume.
 - `zhh center start` ingests inbox requests, discovers candidate TPUs from `itou`, and starts matching runs in detached tmux workers.
 - `zhh center s` shows centralized runs.
 - `zhh center cancel <run_id>` cancels a run and kills its assigned TPU by default.
@@ -250,6 +251,14 @@ zhh trust <run_id>
 
 Trusted runs enter `RESUME_PENDING`. If they hit `FAILED` again, the center will automatically requeue them until the trusted failure count reaches 3 or the run reaches `FINISHED`. After trust is exhausted, run `zhh trust <run_id>` again to grant another 3 failed attempts.
 
+Continue a finished training run for more steps:
+
+```bash
+zhh continue <run_id> <steps>
+```
+
+This requires `configs/remote_run_config.yml` or `configs/remote_run_configs.yml` in the run's stage dir to have `eval_only: false` and integer `training.num_steps`. The command adds `<steps>` to `training.num_steps`, clears old trust state, and moves the run to `RESUME_PENDING`.
+
 Show the center TPU inventory:
 
 ```bash
@@ -274,13 +283,16 @@ Delete a submitted run from the center list. Finished runs are removed directly;
 zhh delete <run_id>
 ```
 
-Prototype TPU apply loops. This starts background tmux sessions that repeatedly request the requested TPU type in one zone; when a TPU is created, the worker installs the runtime, starts a matrix-multiply keepalive, sleeps for 30 minutes, and then keeps requesting more:
+Prototype TPU apply loops. This starts background tmux sessions that repeatedly request the requested TPU type in one zone. When a TPU is created and READY, the worker first offers it to the center as a shortcut for queued matching runs. If the center assigns it, the apply worker immediately keeps applying for more. Otherwise, it starts a matrix-multiply keepalive, sleeps for 10 minutes, and then keeps requesting more:
 
 ```bash
 zhh apply v6e-64 us-east5-b 8
 zhh apply-what
 zhh apply-del v6e-64 us-east5-b 3
 ```
+
+Each apply worker truncates its log every 50 apply attempts by default. Override with `ZHH_APPLY_LOG_CLEAR_ATTEMPTS`.
+Set `ZHH_APPLY_CENTER_SHORTCUT=0` to disable the immediate center handoff shortcut.
 
 ### 📄 Requirements
 

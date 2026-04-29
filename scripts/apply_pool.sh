@@ -78,6 +78,7 @@ zapply_write_state(){
     ZAPPLY_VM_NAME="$vm_name" \
     ZAPPLY_LAST_ERROR="$last_error" \
     ZAPPLY_LOG_PATH="$log_path" \
+    ZAPPLY_LOG_CLEAR_ATTEMPTS="${ZHH_APPLY_LOG_CLEAR_ATTEMPTS:-50}" \
     python3 - <<'PY'
 import json
 import os
@@ -86,6 +87,7 @@ import time
 from pathlib import Path
 
 path = Path(os.environ["ZAPPLY_STATE_PATH"])
+log_path = Path(os.environ["ZAPPLY_LOG_PATH"])
 old = {}
 if path.exists():
     try:
@@ -134,13 +136,38 @@ payload = {
     "attempt_count": int(old.get("attempt_count") or 0),
     "last_error": normalize_error(os.environ["ZAPPLY_LAST_ERROR"]),
     "log": os.environ["ZAPPLY_LOG_PATH"],
+    "log_cleared_at": old.get("log_cleared_at"),
+    "log_cleared_at_attempt": int(old.get("log_cleared_at_attempt") or 0),
 }
-if payload["status"] in ("CREATED", "KEEPALIVE", "SLEEPING"):
+successful_vms = old.get("successful_vms") if isinstance(old.get("successful_vms"), list) else []
+successful_vms = [str(vm) for vm in successful_vms if str(vm)]
+if not successful_vms and old.get("last_success_at") and old.get("current_vm"):
+    successful_vms.append(str(old.get("current_vm")))
+payload["success_count"] = max(payload["success_count"], len(successful_vms))
+if payload["status"] in ("CREATED", "HANDED_OFF", "SLEEPING") and payload["current_vm"]:
     payload["last_success_at"] = payload["updated_at"]
-    if old.get("current_vm") != payload["current_vm"]:
+    if payload["current_vm"] not in successful_vms:
+        successful_vms.append(payload["current_vm"])
         payload["success_count"] += 1
-if payload["status"] in ("APPLYING", "CREATE_FAILED", "WAIT_READY", "SETUP", "KEEPALIVE"):
+payload["successful_vms"] = successful_vms
+if payload["status"] in ("APPLYING",):
     payload["attempt_count"] += 1
+try:
+    clear_threshold = int(os.environ.get("ZAPPLY_LOG_CLEAR_ATTEMPTS") or 50)
+except ValueError:
+    clear_threshold = 50
+if (
+    payload["status"] == "APPLYING"
+    and clear_threshold > 0
+    and payload["attempt_count"] - payload["log_cleared_at_attempt"] >= clear_threshold
+):
+    payload["log_cleared_at"] = payload["updated_at"]
+    payload["log_cleared_at_attempt"] = payload["attempt_count"]
+    log_path.write_text(
+        f"[{payload['updated_at']}] log cleared after {payload['attempt_count']} apply attempts\n",
+        encoding="utf-8",
+    )
+    os.chmod(log_path, 0o666)
 tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}")
 tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", encoding="utf-8")
 os.chmod(tmp, 0o666)
@@ -197,6 +224,21 @@ zapply_wait_ready(){
     return 1
 }
 
+zapply_offer_to_center(){
+    local vm_name="$1"
+    local zone="$2"
+    local tpu_type="$3"
+    local session="$4"
+    if [ "${ZHH_APPLY_CENTER_SHORTCUT:-1}" = "0" ]; then
+        return 1
+    fi
+    python3 "$ZHH_SCRIPT_ROOT/tpu_center/cli.py" apply-ready \
+        --vm-name "$vm_name" \
+        --zone "$zone" \
+        --tpu-type "$tpu_type" \
+        --session "$session"
+}
+
 zapply_create_legacy_lock(){
     local vm_name="$1"
     local lock_file="/kmh-nfs-ssd-us-mount/code/qiao/tpu_lock/xianbang_${vm_name}_$(date -u +%Y-%m-%d_%H-%M-%S)"
@@ -239,15 +281,13 @@ zapply_worker(){
     local tpu_type="$1"
     local zone="$2"
     local session="$3"
-    local sleep_seconds="${ZHH_APPLY_SUCCESS_SLEEP_SECONDS:-1800}"
+    local sleep_seconds="${ZHH_APPLY_SUCCESS_SLEEP_SECONDS:-600}"
     local vm_name=""
     local output=""
     local ret=0
     local accelerator_version=""
     local service_account=""
     local log_path=""
-    local old_script_debug=""
-    local had_script_debug=false
 
     set +e
     zapply_validate_tpu_type "$tpu_type" || return 1
@@ -306,35 +346,18 @@ zapply_worker(){
             continue
         fi
 
-        zapply_create_legacy_lock "$vm_name"
-        export TPU_IS_NEW=1
-        export ZHH_SETUP_TRIAL=1
-        if [ "${SCRIPT_DEBUG+x}" = "x" ]; then
-            had_script_debug=true
-            old_script_debug="$SCRIPT_DEBUG"
-        else
-            had_script_debug=false
-        fi
-        export SCRIPT_DEBUG=1
-        zapply_write_state "$session" "SETUP" "$tpu_type" "$zone" "$vm_name" ""
-        run_setup_script "$vm_name" "$zone" >> "$log_path" 2>&1
-        ret=$?
-        if $had_script_debug; then
-            export SCRIPT_DEBUG="$old_script_debug"
-        else
-            unset SCRIPT_DEBUG
-        fi
-        unset TPU_IS_NEW
-        unset ZHH_SETUP_TRIAL
-        if [ $ret -ne 0 ]; then
-            zapply_write_state "$session" "SETUP_FAILED" "$tpu_type" "$zone" "$vm_name" "setup exited $ret"
+        if zapply_offer_to_center "$vm_name" "$zone" "$tpu_type" "$session" >> "$log_path" 2>&1; then
+            zapply_write_state "$session" "HANDED_OFF" "$tpu_type" "$zone" "$vm_name" ""
+            continue
         fi
 
+        zapply_create_legacy_lock "$vm_name"
         zapply_write_state "$session" "KEEPALIVE" "$tpu_type" "$zone" "$vm_name" ""
         zapply_start_matmul "$vm_name" "$zone" >> "$log_path" 2>&1
         ret=$?
         if [ $ret -ne 0 ]; then
             zapply_write_state "$session" "KEEPALIVE_FAILED" "$tpu_type" "$zone" "$vm_name" "matmul exited $ret"
+            continue
         else
             zapply_register_tpu "$vm_name" "$zone" >> "$log_path" 2>&1 || true
             zapply_write_state "$session" "SLEEPING" "$tpu_type" "$zone" "$vm_name" ""
@@ -379,6 +402,7 @@ zapply_start(){
 zapply_what(){
     zapply_ensure_layout
     ZAPPLY_ROOT="$ZHH_APPLY_ROOT" ZAPPLY_PREFIX="$ZHH_APPLY_SESSION_PREFIX" python3 - <<'PY'
+import calendar
 import json
 import os
 import re
@@ -432,7 +456,7 @@ def normalize_error(text):
 
 def format_status(status):
     status = str(status or "-")
-    if status in ("KEEPALIVE", "SLEEPING", "CREATED"):
+    if status in ("KEEPALIVE", "SLEEPING", "CREATED", "HANDED_OFF"):
         return ctext(GREEN + BOLD, status)
     if status in ("CREATE_FAILED", "READY_FAILED"):
         return ctext(YELLOW + BOLD, status)
@@ -446,7 +470,7 @@ def parse_epoch(value):
     if not value:
         return 0
     try:
-        return int(time.mktime(time.strptime(str(value), "%Y-%m-%dT%H:%M:%SZ")))
+        return int(calendar.timegm(time.strptime(str(value), "%Y-%m-%dT%H:%M:%SZ")))
     except Exception:
         return 0
 
@@ -507,8 +531,12 @@ for row in rows:
     current_vm = str(row.get("current_vm") or "-")
     status = format_status(row.get("status"))
     err = normalize_error(row.get("last_error") or "")
-    attempts = row.get("attempt_count", 0)
-    successes = row.get("success_count", 0)
+    attempts = int(row.get("attempt_count") or 0)
+    successes = int(row.get("success_count") or 0)
+    successful_vms = row.get("successful_vms") if isinstance(row.get("successful_vms"), list) else []
+    successes = max(successes, len(successful_vms))
+    if successes == 0 and row.get("last_success_at") and str(row.get("status") or "") in ("CREATED", "HANDED_OFF", "SLEEPING"):
+        successes = 1
     log_path = str(row.get("log") or "")
     print()
     header = f"{ctext(BOLD, ctext(CYAN, tpu_type))} @ {ctext(BOLD, ctext(CYAN, zone))}"

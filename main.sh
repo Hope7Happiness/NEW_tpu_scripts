@@ -16,7 +16,7 @@ trap 'zhh_cleanup_ui; exit 130' INT TERM
 # .ka has to be sourced in each TMUX window
 # source .ka
 no_need_check=$(
-    [[ "$1" == "s" || "$1" == "wall" || ("$1" == "w" && "$2" == "all") || "$1" == "dall" || ("$1" == "d" && "$2" == "all") || ("$1" == "c") || ("$1" == "kill") || ("$1" == "submit") || ("$1" == "sub") || ("$1" == "change") || ("$1" == "delete") || ("$1" == "trust") || ("$1" == "table") || ("$1" == "center") || ("$1" == "center-worker") || ("$1" == "center-probe") || ("$1" == "apply") || ("$1" == "apply-worker") || ("$1" == "apply-what") || ("$1" == "apply-del") || ("$1" =~ ^h) ]] \
+    [[ "$1" == "s" || "$1" == "wall" || ("$1" == "w" && "$2" == "all") || "$1" == "dall" || ("$1" == "d" && "$2" == "all") || ("$1" == "c") || ("$1" == "kill") || ("$1" == "submit") || ("$1" == "sub") || ("$1" == "continue") || ("$1" == "change") || ("$1" == "delete") || ("$1" == "trust") || ("$1" == "table") || ("$1" == "center") || ("$1" == "center-worker") || ("$1" == "center-probe") || ("$1" == "apply") || ("$1" == "apply-worker") || ("$1" == "apply-what") || ("$1" == "apply-del") || ("$1" =~ ^h) ]] \
     && echo true || echo false
 )
 need_concrete_card=$(
@@ -26,7 +26,7 @@ need_concrete_card=$(
 
 if [ -n "${1:-}" ] && [[ "$1" != -* ]]; then
     case "$1" in
-        rr|k|kill|submit|sub|change|delete|trust|table|center|center-worker|center-probe|apply|apply-worker|apply-what|apply-del|q|qq|qrr|s|w|wall|d|dall|c|g|l|mm|h*)
+        rr|k|kill|submit|sub|continue|change|delete|trust|table|center|center-worker|center-probe|apply|apply-worker|apply-what|apply-del|q|qq|qrr|s|w|wall|d|dall|c|g|l|mm|h*)
             ;;
         *)
             echo "Error: unknown wxb command: $1" >&2
@@ -56,6 +56,8 @@ if $no_need_check || check_config_sanity; then
         zsubmit "${@:2}"
     elif [ "$1" = "sub" ]; then
         zsub "${@:2}"
+    elif [ "$1" = "continue" ]; then
+        python3 "$ZHH_SCRIPT_ROOT/tpu_center/cli.py" continue "${@:2}"
     elif [ "$1" = "change" ]; then
         python3 "$ZHH_SCRIPT_ROOT/tpu_center/cli.py" change "$2"
     elif [ "$1" = "delete" ]; then
